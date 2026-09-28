@@ -117,8 +117,9 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
   - the standings, rules and schedule;
   - every game and line;
   - the audit log;
-  - their own entries' bets, always;
-  - other entries' bets only as each leg's game kicks off. Before that, the league sees only that a pick was placed, as on Splash.
+  - their own entries' bets, always (a co-manager added later sees the bets placed before they joined only as those games kick off, like everyone else);
+  - other entries' bets only as each leg's game kicks off. Before that, the league sees only that a pick was placed, as on Splash;
+  - another entry's parlay odds and payout only once every leg has kicked off, since the combined odds would give away the hidden legs.
 - **Nobody writes tables directly.** Bets go through `place-slip`, and admin actions go through admin-only server functions that each write an audit row.
 - **Admins** (the commissioner and the owner) can:
   - edit the rules (as a new version);
@@ -129,7 +130,11 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
   - open the next week;
   - import the Splash standings.
 
-  Admin powers do **not** include seeing anyone's picks before kickoff. The database rules apply to admins the same way.
+  Admin powers do **not** include seeing anyone's picks before kickoff. The database rules apply to admins the same way, and the admin tools are built so they can't be used to peek:
+  - making yourself an entry's manager doesn't show you the bets it already placed;
+  - a kickoff can't be set in the past or moved once it has passed, and a game that has started can't reopen for betting;
+  - the admin log never shows a hidden bet's stake, or an entry's available units (which would show how much is riding on hidden bets);
+  - only games in a week that hasn't opened can be moved to another week, so a refusal never tells an admin where bets are.
 - **Hosting caveat:** whoever owns the Supabase project can read the database directly, as with any self-hosted site. The site itself never reveals picks early, and every change to a bank is in the ledger and the audit log.
 
 ## 6. Money math
@@ -146,7 +151,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 - **Teaser:**
   - each leg moves by the teaser points in the bettor's favor, then is graded like a spread or total;
   - any loss loses the card;
-  - pushes follow the version's push rule.
+  - pushes follow the version's push rule. Under "reduce", a card cut down by pushes or voids pays the table price for the legs left, never less than the 2-leg price, so the table must have every row from 2 legs up, each paying more than the one before.
 - **Leg grading:**
   - spread: team score + point against the opponent's score;
   - total: combined score against the point;
@@ -158,19 +163,22 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
   - pushed bets count as wagered; bets undone by the member or voided by an admin don't;
   - the deduction can never push a bank below zero;
   - the rest of the entry's bank carries into the next week.
-- **Standings:** ranked by bank; ties broken by net, then total winnings. Net, Record, Risk and Return follow Splash's definitions, to be confirmed from the inventory.
+- **Corrections:** an admin can correct a final score, or void a final game. Either reopens the bets already graded on that game: each payout is taken back with its own ledger row, and the grading job grades the bet again within 10 minutes. Bets an admin voided stay void.
+- **Standings:** ranked by bank; ties broken by net, then total winnings. Net, Record, Risk and Return follow Splash's definitions, to be confirmed from the inventory. "This week" and "Last week" count bets by the week they belong to, so a Monday-night bet graded after midnight still counts in its own week.
 
 ## 7. Jobs
 
 | Job | When | What |
 |---|---|---|
-| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers |
-| Pull scores | Every 10 minutes, but it calls the API only while a game is live or waiting on a final | Updates scores and statuses (2 credits) |
-| Grade | After each score pull | Settles every slip whose legs are all final, and writes the payout to the ledger |
+| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers. Bets share one refresh at a time, and a slip is checked before it can trigger one, so bets can't run the credits down |
+| Pull scores | Every 10 minutes, but it calls the API only while a game is live or waiting on a final | Updates scores and statuses (2 credits). A game goes final when two pulls in a row report the same final score, so one bad reading isn't paid out. A game the feed has scores for closes to betting at once |
+| Grade | After each score pull | Settles every slip whose legs are all final, and writes the payout to the ledger. A bet that can't be settled is reported and retried; it doesn't hold up the others or the week |
 | Close / open week | When every game of the open week is final and graded, or when an admin opens the next week | Applies weekly-minimum deductions, records banks and minimums for the new week, opens its games |
 | Credit guard | Every Odds API call | Stops pulling if the plan's remaining credits drop below 5,000, and flags it to the admins |
 
 Weeks run Tuesday to Monday, Eastern. A game belongs to the week its kickoff falls in unless an admin moves it; week 1 of 2026 started Tuesday, Sept 8. Playoff rounds are labeled by name, and the empty Pro Bowl week is skipped.
+
+The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in (from the feed, which keeps checking for 3 days, or entered by an admin). The season's last week is closed by an admin from the Admin page, since no later week will open it.
 
 ## 8. Pages (draft; to be checked against the Splash inventory)
 
@@ -193,14 +201,15 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 1. Go-live is Tuesday, Oct 6 (week 5). Week 4 is a trial: the owner and the commissioner copy their Splash bets into the new site, and we compare the grading after Monday night, Oct 5.
 2. The commissioner (or owner) supplies Splash's standings then.
 3. Each entry's bank comes in as an `import` ledger row. Its record, net, risk and return become its baseline.
-4. Pick history stays on Splash as a static snapshot and isn't migrated.
+4. The trial entries (the owner's and the commissioner's) are imported once, after week 3, and then carry their own week 4 bets. At go-live they aren't imported again (an entry with bets can't be); if a trial entry's bank differs from Splash's after week 4, an admin adjusts it with a reason.
+5. Pick history stays on Splash as a static snapshot and isn't migrated.
 
 ## 10. Testing and review
 
 - **Rules code:** hand-checked test cases for every grading path. That covers straight, parlay and teaser, each with pushes, ties and voids, under all three teaser push rules and across more than one rule-set version. It also covers exact-cent rounding.
 - **Database:** tests run on a local Postgres. They check that kickoff locks can't be beaten, that two simultaneous slips can't overspend, that hidden picks stay hidden (for admins too), and that the rules can't change mid-week. They also cover the weekly-minimum close and imports.
 - **Jobs:** tested against saved Odds API responses.
-- **Before anything goes live:** a separate adversarial review pass, as the handoff asks.
+- **Before anything goes live:** a separate adversarial review pass, as the handoff asks. The first pass (Sept 28) found about 30 distinct problems across the database, the betting math and the site; each confirmed one is fixed, with a test that reproduces it (`supabase/tests/review.test.ts` and the unit tests).
 
 ## 11. Owner setup (later, when we deploy)
 
@@ -215,3 +224,12 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 1. **Standings definitions** for Net, Risk and Return, from the Splash inventory.
 2. **Branding:** the name is BALTIMORE DEGENERATES; colors, logo and web address are still open.
 3. **The commissioner's own complaints** about Splash.
+4. **The review-fix defaults** listed under "Awaiting the owner" in `DECISIONS.md`.
+
+## 13. Known limits
+
+- **An early close shows totals.** If an admin closes a week while some of its bets are still hidden (a postponed game), the weekly-minimum result shows each entry's total wagered that week, including those bets' stakes (not their picks).
+- **Co-managers see totals.** A manager added mid-week sees the entry's available units and at-risk total, which include bets placed before they joined, though not those bets' picks.
+- **Sign-in says who's a member.** Asking for a code for an email that isn't on the list says so. Supabase can add a CAPTCHA to the sign-in form if abuse ever becomes a problem.
+- **Credits under abuse.** A member who scripted real bets could still trigger at most one line refresh every 2 minutes (about 2,200 credits a day), well inside the plan; the credit floor stops pulls before the plan runs out.
+- **The project owner can read everything.** Whoever owns the Supabase project can read the database directly (see section 5).

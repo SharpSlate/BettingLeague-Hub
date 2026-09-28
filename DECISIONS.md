@@ -2,6 +2,25 @@
 
 Settled choices for the league site, newest first. Anything not listed here is still open; see `docs/DESIGN.md` section 12.
 
+## Awaiting the owner
+
+Defaults chosen while fixing the review findings (Sept 28–29). Each is built and tested; say the word to change any of them.
+
+| Default | Why |
+|---|---|
+| A game goes final only when two score pulls in a row agree (grading waits about 10 minutes). | One bad reading from the feed isn't paid out. |
+| Correcting a final score regrades that game's bets automatically: payouts are taken back and paid again, each as its own ledger row. Bets an admin voided stay void. | The design promised "void or regrade"; before, a wrong score couldn't be fixed. |
+| A co-manager added mid-week sees the entry's hidden bets placed before they joined only at kickoff, like everyone else. | Otherwise an admin could add themselves to any entry and see its picks. |
+| Other members see a parlay's odds and payout only after every leg kicks off. | The combined odds give away the hidden legs. |
+| A bet can't be undone once its week has been closed, even inside the 5 minutes. | An early close could otherwise be used to dodge the 30% minimum. |
+| The season's last week is closed by an admin ("Open next week" closes it when no later week has games). | The site can't tell "the season is over" from "next week's games aren't posted yet". |
+| A new rules version can't start before one that's already scheduled. | Keeps "the newest version applies from its week on" unambiguous. |
+| Standings' "This week" and "Last week" count bets by their week, not by when they were graded. | A Monday-night bet graded after midnight belongs to its week. |
+| A game postponed after kickoff keeps its bets riding and takes no new bets; it's graded when its final comes in. | Reopening a game after kickoff would allow betting with hindsight. |
+| New members must be given a display name; it's never taken from their email. | Display names are public. |
+
+## Settled
+
 | Date | Decision | By | Notes |
 |---|---|---|---|
 | 2026-09-28 | **Site name:** BALTIMORE DEGENERATES. | Owner | Colors, logo and web address are still open. |

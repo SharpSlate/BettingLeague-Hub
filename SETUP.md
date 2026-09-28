@@ -97,8 +97,15 @@ During the week, copy your Splash bets onto the site. After Monday night, compar
 ## 8. Go-live for week 5
 
 After week 4 finishes on Splash:
-1. Add every member and entry.
-2. Import each entry's Splash standings after week 4.
+1. Add every member (each needs a display name, which everyone sees) and every other entry.
+2. Import each of those entries' Splash standings after week 4.
 3. Link each entry to its managers.
+4. **The trial entries** (yours and the commissioner's) already have their week 4 bets here, so they aren't imported again (the site refuses to import an entry with bets). Compare each one's bank with Splash's after week 4. If one differs, for example because a bet wasn't copied, use **Entries & banks → Adjust a bank** with the reason.
 
 Once week 4's last game is final, week 5 opens on its own.
+
+## During the season
+
+- **A wrong final score:** **Games & lines → Correct the final score.** The site takes back what the game's bets paid and grades them again within 10 minutes. Everyone sees the correction in the admin log.
+- **A postponed game:** set it to **Postponed**. Its bets ride. The week won't close by itself while the game is unplayed, so use **Open next week** to move on; the game is graded whenever its final comes in.
+- **The last week of the season:** after its last game, click **Open next week** on the Admin page. With no later week on the board, that closes the week (and applies its 30% minimum) and opens nothing.
