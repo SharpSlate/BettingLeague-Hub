@@ -13,11 +13,13 @@ const TABS = [
 ];
 
 function Brand({ league }: { league: League | undefined }) {
+  // One word per line, so the whole name fits in the sidebar and the phone's top bar.
+  const words = (league?.name ?? "BALTIMORE DEGENERATES").split(/\s+/).filter(Boolean);
   return (
     <Link to="/" className="brand" aria-label="Standings">
       <span className="brand-mark" aria-hidden="true">BD</span>
       <span style={{ minWidth: 0 }}>
-        <div className="brand-name">{league?.name ?? "BALTIMORE DEGENERATES"}</div>
+        <div className="brand-name">{words.map((w, i) => <span key={i}>{w}</span>)}</div>
         <div className="brand-sub">{league?.openWeek ? `${league.openWeek.label} is open` : "Betting closed"}</div>
       </span>
     </Link>
