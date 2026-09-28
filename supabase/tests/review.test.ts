@@ -22,7 +22,7 @@ import {
 } from "./db.ts";
 
 let db: Db;
-let owner: string, alice: string, bob: string;
+let owner: string, commish: string, alice: string, bob: string;
 let aliceEntry: string, bobEntry: string;
 const board: Event[] = [];
 const ids: Record<string, string> = {};
@@ -65,7 +65,9 @@ beforeAll(async () => {
   owner = await makeUser(db, "owner@example.com", "Owner");
   alice = await makeUser(db, "alice@example.com", "Alice");
   bob = await makeUser(db, "bob@example.com", "Bob");
+  commish = await makeUser(db, "commish@example.com", "Commish");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await db.q(member(owner), "select public.admin_set_admin($1, true)", [commish]);
   aliceEntry = (await db.q(member(owner), "select public.admin_add_entry('Alice', 1000000) as id"))[0].id;
   bobEntry = (await db.q(member(owner), "select public.admin_add_entry('Bob', 1000000) as id"))[0].id;
   await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, alice]);
@@ -80,9 +82,13 @@ beforeAll(async () => {
 afterAll(async () => db?.close());
 
 describe("managers and hidden bets", () => {
-  it("an admin who makes themselves a manager doesn't see bets placed before they joined", async () => {
+  it("an admin can't make themselves a manager of someone else's entry", async () => {
+    await fails(db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, owner]), "self_add_blocked");
+  });
+
+  it("an admin another admin adds as a manager doesn't see bets placed before they joined", async () => {
     const id = await straight(aliceEntry, alice, "VIS");
-    await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, owner]);
+    await db.q(member(commish), "select public.admin_set_manager($1, $2, true)", [aliceEntry, owner]);
     const seen = async (user: string) => ({
       slips: (await db.q(member(user), "select id from public.slips where id = $1", [id])).length,
       legs: (await db.q(member(user), "select leg_no from public.slip_legs where slip_id = $1", [id])).length,

@@ -200,13 +200,22 @@ export class SupabaseApi implements Api {
   }
 
   async placeSlip(req: PlacementRequest): Promise<PlaceResult> {
-    const { data, error } = await this.db.functions.invoke("place-slip", { body: req as unknown as Record<string, unknown> });
+    // No answer in 20 seconds: the bet may still have gone in. Resending the slip is safe
+    // (it carries the same id, so it can't be placed twice), but check My Bets first.
+    const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 20_000));
+    const call = this.db.functions.invoke("place-slip", { body: req as unknown as Record<string, unknown> });
+    const res = await Promise.race([call, timeout]);
+    if (res === "timeout") {
+      return { ok: false, kind: "error", message: "No answer from the server yet. Check My Bets: the bet may have gone in. Trying again is safe; it can't be placed twice." };
+    }
+    const { data, error } = res;
     if (!error) return { ok: true, slipId: data.slipId, payoutCents: data.payoutCents, american: data.american };
     let body: any = null;
     if (error instanceof FunctionsHttpError) body = await error.context.json().catch(() => null);
     if (body?.error === "line_moved" && Array.isArray(body.lines)) return { ok: false, kind: "moved", message: body.message, lines: body.lines };
     if (body?.error === "invalid") return { ok: false, kind: "invalid", problems: body.problems ?? [] };
-    return { ok: false, kind: "error", message: body?.message ?? "Couldn't place the bet. Try again." };
+    if (!body) return { ok: false, kind: "error", message: "Couldn't reach the server. Check My Bets, then try again; it can't be placed twice." };
+    return { ok: false, kind: "error", message: body.message ?? "Couldn't place the bet. Try again.", code: body.error };
   }
 
   async undoSlip(slipId: string) {

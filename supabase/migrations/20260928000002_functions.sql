@@ -300,18 +300,28 @@ begin
 end $$;
 
 -- A bet asks for fresh lines when they're older than p_min_seconds. Only one bet per
--- p_min_seconds gets to pull, however many arrive at once, so bets can't run the
--- Odds API credits down. Returns true to the one that should pull.
-create or replace function public.claim_bet_refresh_internal(p_min_seconds int) returns boolean
+-- p_min_seconds gets to pull, however many arrive at once; one member's bets get at most
+-- one refresh per bet_refresh_member_minutes; and bets get at most bet_refresh_daily_cap
+-- refreshes a day. So neither a burst of bets nor a script of slips that are refused
+-- afterwards can run the Odds API credits down. Returns true to the bet that should pull.
+create or replace function public.claim_bet_refresh_internal(p_min_seconds int, p_user uuid default null) returns boolean
 language plpgsql security definer set search_path = public, pg_temp
 as $$
-declare v_now timestamptz := clock_timestamp();
+declare v_now timestamptz; v_set public.league_settings%rowtype;
 begin
-  update public.league_settings
-     set bet_refresh_claimed_at = v_now
-   where bet_refresh_claimed_at is null
-      or bet_refresh_claimed_at < v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30));
-  return found;
+  perform pg_advisory_xact_lock(hashtext('bet_refresh'));
+  v_now := clock_timestamp();
+  select * into v_set from public.league_settings;
+  if v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return false; end if;
+  if p_user is not null and exists (
+    select 1 from public.bet_refreshes where user_id = p_user and at > v_now - make_interval(mins => v_set.bet_refresh_member_minutes)
+  ) then
+    return false;
+  end if;
+  if (select count(*) from public.bet_refreshes where at > v_now - interval '24 hours') >= v_set.bet_refresh_daily_cap then return false; end if;
+  update public.league_settings set bet_refresh_claimed_at = v_now;
+  insert into public.bet_refreshes (user_id, at) values (p_user, v_now);
+  return true;
 end $$;
 
 -- How many games need scores: kicked off in the last 3 days and not final or void. A
@@ -454,7 +464,13 @@ begin
   if p_client_ref is not null then
     select * into v_existing from public.slips where client_ref = p_client_ref;
     if found then
-      if v_existing.entry_id <> p_entry or v_existing.placed_by <> p_user then raise exception 'client_ref_conflict'; end if;
+      -- Only a retry of the same bet gets the bet back; the ref on a different bet, or on
+      -- one that's been undone or voided since, is refused.
+      if v_existing.entry_id <> p_entry or v_existing.placed_by <> p_user or v_existing.type <> p_type
+         or v_existing.stake_cents <> p_stake_cents or v_existing.leg_count <> jsonb_array_length(p_legs) then
+        raise exception 'client_ref_conflict';
+      end if;
+      if v_existing.status in ('undone', 'void') then raise exception 'client_ref_used'; end if;
       return v_existing.id;
     end if;
   end if;
@@ -1099,6 +1115,12 @@ declare v_actor uuid := app.require_admin();
 begin
   if not exists (select 1 from public.entries where id = p_entry) then raise exception 'not_found'; end if;
   if not exists (select 1 from public.profiles where id = p_user) then raise exception 'not_found'; end if;
+  -- An admin joining someone else's entry would see its bets from then on, so another
+  -- admin has to do it.
+  if p_add and p_user = v_actor
+     and exists (select 1 from public.entry_managers where entry_id = p_entry and user_id <> v_actor) then
+    raise exception 'self_add_blocked';
+  end if;
   if p_add then
     insert into public.entry_managers (entry_id, user_id) values (p_entry, p_user) on conflict do nothing;
   else

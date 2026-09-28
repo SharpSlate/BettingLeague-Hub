@@ -201,6 +201,7 @@ class FakeStore implements Store {
     pullWindowStart: "08:00",
     pullWindowEnd: "01:00",
     refreshOnBetSeconds: 120,
+    maxLineAgeMinutes: 35,
     creditFloor: 5_000,
     books: ["draftkings", "fanduel"],
   };

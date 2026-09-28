@@ -54,11 +54,16 @@ Deno.serve(async (req) => {
   const store = new SupabaseStore(db);
   try {
     if (input.clientRef) {
-      const prior = (await db.from("slips").select("id, entry_id, placed_by, quoted_american, potential_payout_cents")
+      const prior = (await db.from("slips").select("id, entry_id, placed_by, type, stake_cents, leg_count, status, quoted_american, potential_payout_cents")
         .eq("client_ref", input.clientRef).maybeSingle()).data;
       if (prior) {
-        if (prior.entry_id !== input.entryId || prior.placed_by !== user.id) {
-          return json(req, origins, 409, { error: "client_ref_conflict", message: friendlyMessage("client_ref_conflict") });
+        // A retry of the same bet gets the bet back. The same ref on a different bet, or on
+        // one that's since been undone or voided, isn't a retry.
+        const same = prior.entry_id === input.entryId && prior.placed_by === user.id && prior.type === input.type
+          && Number(prior.stake_cents) === input.stakeCents && prior.leg_count === input.legs.length;
+        if (!same) return json(req, origins, 409, { error: "client_ref_conflict", message: friendlyMessage("client_ref_conflict") });
+        if (prior.status === "undone" || prior.status === "void") {
+          return json(req, origins, 409, { error: "client_ref_used", message: friendlyMessage("client_ref_used") });
         }
         return json(req, origins, 200, { slipId: prior.id, american: Number(prior.quoted_american), payoutCents: Number(prior.potential_payout_cents) });
       }
@@ -89,8 +94,18 @@ Deno.serve(async (req) => {
       return json(req, origins, 422, { error: "invalid", problems: check.problems });
     }
     const settings = await store.settings();
-    if (isStale(await store.lastGoodLinesPull(), new Date(), settings.refreshOnBetSeconds)) {
-      await pullLines(store, env("ODDS_API_KEY"), fetch, "bet");
+    const before = await store.lastGoodLinesPull();
+    if (isStale(before, new Date(), settings.refreshOnBetSeconds)) {
+      const pulled = await pullLines(store, env("ODDS_API_KEY"), fetch, "bet", new Date(), user.id);
+      // Too stale to bet on and another bet's refresh is on its way: wait a moment for it
+      // rather than refusing this bet as stale.
+      if (pulled.status === "skipped" && isStale(before, new Date(), settings.maxLineAgeMinutes * 60)) {
+        for (let i = 0; i < 10; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const latest = await store.lastGoodLinesPull();
+          if (latest && (!before || latest > before)) break;
+        }
+      }
       lines = await loadLines();
       check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date());
     }

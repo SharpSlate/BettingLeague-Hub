@@ -37,6 +37,15 @@ function NumInput({ value, onChange, label, className = "input num", style }: {
   );
 }
 
+/** The per-bet cap: blank means no cap; anything else unreadable is kept as NaN so the rules check flags it. */
+function MaxPctInput({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const [text, setText] = useState(value === null ? "" : String(value));
+  return (
+    <input className="input num" inputMode="decimal" value={text}
+      onChange={(e) => { setText(e.target.value); onChange(e.target.value.trim() === "" ? null : parseNumber(e.target.value)); }} />
+  );
+}
+
 function Num({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
   return (
     <label className="field">
@@ -177,7 +186,7 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
           <div className="row">
             <Num label="Stake steps (units)" value={doc.stake.incrementUnits} onChange={(n) => edit((d) => { d.stake.incrementUnits = n; })} />
             <label className="field"><span>Max % of bank per bet (blank = none)</span>
-              <input className="input num" type="number" value={doc.stake.maxPctOfBank ?? ""} onChange={(e) => edit((d) => { d.stake.maxPctOfBank = e.target.value === "" ? null : Number(e.target.value); })} />
+              <MaxPctInput value={doc.stake.maxPctOfBank} onChange={(v) => edit((d) => { d.stake.maxPctOfBank = v; })} />
             </label>
           </div>
           <Num label="Undo window (minutes)" value={doc.undoMinutes} onChange={(n) => edit((d) => { d.undoMinutes = n; })} />
@@ -223,6 +232,7 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
         {problems.map((p, i) => <div className="problem" key={i}>{p.message}</div>)}
         {openWeek !== null && week <= openWeek ? <div className="problem">Rules can only change from a week that hasn't opened yet (after week {openWeek}).</div> : null}
         {week < current.effectiveWeek ? <div className="problem">Version {current.version} is scheduled from week {current.effectiveWeek}, so this one can start no earlier than that.</div> : null}
+        {!Number.isInteger(week) ? <div className="problem">Enter the week this takes effect from as a whole number.</div> : null}
         {msg ? <div className={`banner ${msg.ok ? "" : "bad"}`}>{msg.text}</div> : null}
         <button
           className="btn primary"

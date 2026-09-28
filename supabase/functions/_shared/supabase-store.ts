@@ -28,6 +28,7 @@ export class SupabaseStore implements Store {
       pullWindowStart: String(s.pull_window_start).slice(0, 5),
       pullWindowEnd: String(s.pull_window_end).slice(0, 5),
       refreshOnBetSeconds: s.refresh_on_bet_seconds,
+      maxLineAgeMinutes: s.max_line_age_minutes,
       creditFloor: s.credit_floor,
       books: s.books,
     };
@@ -73,8 +74,8 @@ export class SupabaseStore implements Store {
     );
   }
 
-  async claimBetRefresh(minSeconds: number) {
-    return (await must<boolean>(this.db.rpc("claim_bet_refresh_internal", { p_min_seconds: minSeconds }), "claim refresh")) === true;
+  async claimBetRefresh(minSeconds: number, userId: string | null) {
+    return (await must<boolean>(this.db.rpc("claim_bet_refresh_internal", { p_min_seconds: minSeconds, p_user: userId }), "claim refresh")) === true;
   }
 
   async gamesAwaitingScores(now: Date) {

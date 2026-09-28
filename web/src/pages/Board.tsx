@@ -100,7 +100,7 @@ export function Board() {
       {slip.open ? (
         <>
           <div className="sheet-backdrop" onClick={() => slip.setOpen(false)} />
-          <div className="sheet" role="dialog" aria-label="Bet slip">
+          <div className={`sheet${toast ? " with-toast" : ""}`} role="dialog" aria-label="Bet slip">
             <div className="sheet-grip" />
             <div className="row spread" style={{ marginBottom: 10 }}>
               <h2>Bet slip</h2>

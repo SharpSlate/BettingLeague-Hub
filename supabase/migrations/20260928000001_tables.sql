@@ -22,7 +22,11 @@ create table public.league_settings (
   books text[] not null default array['draftkings', 'fanduel'],
   -- When a bet last claimed a line refresh. Bets share one refresh at a time, so
   -- many bets (or a script) can't run the Odds API credits down.
-  bet_refresh_claimed_at timestamptz
+  bet_refresh_claimed_at timestamptz,
+  -- A member's bets can trigger at most one refresh this often, and bets as a whole
+  -- at most this many a day; past either, bets use the scheduled pulls' lines.
+  bet_refresh_member_minutes int not null default 10,
+  bet_refresh_daily_cap int not null default 200
 );
 
 create table public.profiles (
@@ -123,6 +127,15 @@ create table public.book_lines (
   check ((market = 'moneyline') = (point is null)),
   check ((market = 'total') = (side in ('over', 'under')))
 );
+
+-- Line refreshes that bets triggered, for the per-member and daily limits.
+create table public.bet_refreshes (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.profiles (id) on delete set null,
+  at timestamptz not null default now()
+);
+create index on public.bet_refreshes (at desc);
+create index on public.bet_refreshes (user_id, at desc);
 
 -- Every change to a book line, for the record.
 create table public.line_history (

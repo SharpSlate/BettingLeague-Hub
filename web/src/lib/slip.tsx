@@ -36,12 +36,18 @@ export interface SlipState {
   /** Stake text per pick for straight bets, and under "combo" for a parlay or teaser. */
   stakes: Record<string, string>;
   entryId: string | null;
+  /**
+   * The id sent with each bet not yet confirmed placed, by slip item, with the bet it was
+   * for. Saved with the slip, so a reload after a lost answer resends the same id and the
+   * server returns the bet instead of placing it twice.
+   */
+  refs: Record<string, { fingerprint: string; ref: string }>;
 }
 
 export const pickKey = (gameId: string, market: Market, side: Side) => `${gameId}:${market}:${side}`;
 
 const STORAGE = "bd.slip.v2";
-const empty: SlipState = { picks: [], mode: "straight", teaserPoints: 6, stakes: {}, entryId: null };
+const empty: SlipState = { picks: [], mode: "straight", teaserPoints: 6, stakes: {}, entryId: null, refs: {} };
 
 function load(): SlipState {
   try {
@@ -103,7 +109,8 @@ export function SlipProvider({ children }: { children: ReactNode }) {
   const [s, set] = useState<SlipState>(load);
   const [open, setOpen] = useState(false);
   const [status, setStatusState] = useState<SlipStatus>(idle);
-  const refs = useRef(new Map<string, { fingerprint: string; ref: string }>());
+  // Read and written synchronously while a submit runs, and mirrored into the saved slip.
+  const refs = useRef<SlipState["refs"]>(s.refs ?? {});
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE, JSON.stringify(s));
@@ -125,7 +132,10 @@ export function SlipProvider({ children }: { children: ReactNode }) {
           return { ...x, picks, mode: x.picks.length === 0 ? "straight" : x.mode };
         }),
       remove: (key) => set((x) => ({ ...x, picks: x.picks.filter((p) => p.key !== key) })),
-      clear: (keepEntry = true) => set((x) => ({ ...empty, entryId: keepEntry ? x.entryId : null, mode: x.mode, teaserPoints: x.teaserPoints })),
+      clear: (keepEntry = true) => {
+        refs.current = {};
+        set((x) => ({ ...empty, entryId: keepEntry ? x.entryId : null, mode: x.mode, teaserPoints: x.teaserPoints }));
+      },
       setMode: (mode) => set((x) => ({ ...x, mode })),
       setTeaserPoints: (teaserPoints) => set((x) => ({ ...x, teaserPoints })),
       setStake: (key, text) => set((x) => ({ ...x, stakes: { ...x.stakes, [key]: text } })),
@@ -135,14 +145,17 @@ export function SlipProvider({ children }: { children: ReactNode }) {
       status,
       setStatus: (p) => setStatusState((x) => ({ ...x, ...p })),
       clientRef: (key, fingerprint) => {
-        const cur = refs.current.get(key);
+        const cur = refs.current[key];
         if (cur && cur.fingerprint === fingerprint) return cur.ref;
         const ref = newClientRef();
-        refs.current.set(key, { fingerprint, ref });
+        refs.current = { ...refs.current, [key]: { fingerprint, ref } };
+        set((x) => ({ ...x, refs: refs.current }));
         return ref;
       },
       forgetRef: (key) => {
-        refs.current.delete(key);
+        const { [key]: _gone, ...rest } = refs.current;
+        refs.current = rest;
+        set((x) => ({ ...x, refs: refs.current }));
       },
     }),
     [s, open, status],

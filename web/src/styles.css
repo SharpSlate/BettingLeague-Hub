@@ -328,7 +328,11 @@ h3 { font-size: 15px; font-weight: 700; }
 @media (min-width: 900px) { .toast { bottom: 24px; } }
 /* With the phone slip open (after a bet that didn't go in), the toast moves above it
    so it doesn't cover the slip's buttons. */
-@media (max-width: 1099px) { .toast.over-sheet { top: calc(12px + env(safe-area-inset-top)); bottom: auto; } }
+@media (max-width: 1099px) {
+  .toast.over-sheet { top: calc(12px + env(safe-area-inset-top)); bottom: auto; }
+  /* Leave the toast room above the sheet, even on a phone held sideways. */
+  .sheet.with-toast { max-height: min(88vh, calc(100vh - 84px - env(safe-area-inset-top))); }
+}
 
 /* ---------- bets ---------- */
 

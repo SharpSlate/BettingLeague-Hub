@@ -137,6 +137,42 @@ describe("regrading on demand", () => {
   });
 });
 
+describe("bet-triggered line refreshes", () => {
+  const claim = async (user: string | null) => (await db.q(service, "select public.claim_bet_refresh_internal(120, $1) as ok", [user]))[0].ok as boolean;
+  const later = () => db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
+  it("allow one per member every 10 minutes", async () => {
+    expect(await claim(alice)).toBe(true);
+    await later();
+    expect(await claim(alice)).toBe(false);
+    expect(await claim(bob)).toBe(true);
+  });
+  it("and a set number a day in all", async () => {
+    await db.su("update public.league_settings set bet_refresh_daily_cap = 3");
+    await later();
+    expect(await claim(null)).toBe(true);
+    await later();
+    expect(await claim(null)).toBe(false);
+    await db.su("update public.league_settings set bet_refresh_daily_cap = 200");
+  });
+});
+
+describe("resending a bet", () => {
+  const ref = "0a4f5c2e-0000-4000-8000-000000000009";
+  const args = () => ({
+    entry: aliceEntry, user: alice, type: "straight" as const, stakeCents: 10_000, potentialPayoutCents: 19_091,
+    legs: [{ gameId: ids.EARLY!, market: "spread", side: "away", point: 3, price: -110 }], clientRef: ref,
+  });
+  it("with the same id but a different stake is refused", async () => {
+    await place(db, args());
+    await fails(place(db, { ...args(), stakeCents: 20_000, potentialPayoutCents: 38_182 }), "client_ref_conflict");
+  });
+  it("whose bet was undone is refused, so the site sends it as a new bet", async () => {
+    const [{ id }] = await db.su("select id from public.slips where client_ref = $1", [ref]);
+    await db.q(member(alice), "select public.undo_slip($1)", [id]);
+    await fails(place(db, args()), "client_ref_used");
+  });
+});
+
 describe("managers", () => {
   it("whoever placed a bet always sees it, even after being removed and re-added as a manager", async () => {
     const id = await straight("MINE");

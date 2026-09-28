@@ -66,6 +66,7 @@ export function describeRules(r: RuleSet): RuleSection[] {
     "A pushed or voided parlay leg drops out and the rest are multiplied. If every leg pushes, the stake comes back.",
     pushRuleText(r),
     "A leg on a game that's voided drops out, and the card is priced on the legs that are left.",
+    "If a final score is corrected, every bet on the game is graded again. Winnings already paid are taken back first, which can leave a bank below zero until it's won back; an entry can't bet while it has nothing available.",
   ];
 
   const s = r.stake;

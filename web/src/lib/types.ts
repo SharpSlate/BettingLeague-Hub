@@ -196,7 +196,7 @@ export type PlaceResult =
   | { ok: true; slipId: string; payoutCents: number; american: number }
   | { ok: false; kind: "moved"; message: string; lines: { leg: number; point: number | null; price: number }[] }
   | { ok: false; kind: "invalid"; problems: Problem[] }
-  | { ok: false; kind: "error"; message: string };
+  | { ok: false; kind: "error"; message: string; code?: string };
 
 export interface SplashImport {
   entryId: string;

@@ -171,7 +171,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 
 | Job | When | What |
 |---|---|---|
-| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers. Bets share one refresh at a time, and a slip is checked before it can trigger one, so bets can't run the credits down |
+| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers. A slip is checked before it can trigger a refresh, and bet refreshes are limited (one at a time, one per member per 10 minutes, 200 a day), so bets can't run the credits down |
 | Pull scores | Every 10 minutes, but it calls the API only while a game is live or waiting on a final | Updates scores and statuses (2 credits). A game goes final when two pulls in a row report the same final score, so one bad reading isn't paid out. A game the feed has scores for closes to betting at once |
 | Grade | After each score pull | Settles every slip whose legs are all final, and writes the payout to the ledger. A bet that can't be settled is reported and retried; it doesn't hold up the others or the week |
 | Close / open week | When every game of the open week is final and graded, or when an admin opens the next week | Applies weekly-minimum deductions, records banks and minimums for the new week, opens its games |
@@ -232,5 +232,5 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 - **An early close shows totals.** If an admin closes a week while some of its bets are still hidden (a postponed game), the weekly-minimum result shows each entry's total wagered that week, including those bets' stakes (not their picks).
 - **Co-managers see totals.** A manager added mid-week sees the entry's available units and at-risk total, which include bets placed before they joined, though not those bets' picks.
 - **Sign-in says who's a member.** Asking for a code for an email that isn't on the list says so. Supabase can add a CAPTCHA to the sign-in form if abuse ever becomes a problem.
-- **Credits under abuse.** A member who scripted real bets could still trigger at most one line refresh every 2 minutes (about 2,200 credits a day), well inside the plan; the credit floor stops pulls before the plan runs out.
+- **Credits under abuse.** Bets can trigger line refreshes, but at most one every 2 minutes overall, one every 10 minutes per member, and 200 a day in all (about 600 credits, whatever anyone sends); past that, bets use the scheduled pulls' lines, which are at most about 30 minutes old. The credit floor stops pulls before the plan runs out.
 - **The project owner can read everything.** Whoever owns the Supabase project can read the database directly (see section 5).

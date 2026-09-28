@@ -26,6 +26,7 @@ alter table public.ledger enable row level security;
 alter table public.week_entry_status enable row level security;
 alter table public.entry_baselines enable row level security;
 alter table public.audit_log enable row level security;
+alter table public.bet_refreshes enable row level security;
 
 revoke all on all tables in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;
@@ -41,6 +42,8 @@ grant select (id, entry_id, placed_by, week, type, teaser_points, stake_cents, l
   on public.slips to authenticated;
 revoke select on public.line_pulls from authenticated;
 grant select (id, at, kind, trigger, ok, events, credits_used, credits_remaining) on public.line_pulls to authenticated;
+-- Who triggered which refresh is for the limits only.
+revoke select on public.bet_refreshes from authenticated;
 
 -- League-wide information every member can read.
 create policy members_read on public.league_settings for select to authenticated using (true);

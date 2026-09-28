@@ -86,8 +86,12 @@ export function SlipBody({ rules, entries, onPlaced }: {
     try {
       for (const item of plan.items) {
         const req = { entryId: entry.entryId, type: item.input.type, teaserPoints: item.input.teaserPoints ?? null, stakeCents: item.input.stakeCents, legs: item.input.legs };
-        const clientRef = slip.clientRef(item.key, JSON.stringify(req));
-        const r = await api.placeSlip({ ...req, clientRef });
+        let r = await api.placeSlip({ ...req, clientRef: slip.clientRef(item.key, JSON.stringify(req)) });
+        if (!r.ok && r.kind === "error" && r.code === "client_ref_used") {
+          // That id went with a bet since undone or voided: this is a new bet.
+          slip.forgetRef(item.key);
+          r = await api.placeSlip({ ...req, clientRef: slip.clientRef(item.key, JSON.stringify(req)) });
+        }
         if (r.ok) {
           placed.push(r.slipId);
           slip.forgetRef(item.key);
