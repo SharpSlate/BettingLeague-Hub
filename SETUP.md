@@ -109,3 +109,4 @@ Once week 4's last game is final, week 5 opens on its own.
 - **A wrong final score:** **Games & lines → Correct the final score.** The site takes back what the game's bets paid and grades them again within 10 minutes. Everyone sees the correction in the admin log.
 - **A postponed game:** set it to **Postponed**. Its bets ride. The week won't close by itself while the game is unplayed, so use **Open next week** to move on; the game is graded whenever its final comes in.
 - **The last week of the season:** after its last game, click **Open next week** on the Admin page. With no later week on the board, that closes the week (and applies its 30% minimum) and opens nothing.
+- **Something looks stuck:** **Week & feeds → Recent problems** lists failed line and score pulls, and any bet the grader couldn't settle, from the last 3 days.

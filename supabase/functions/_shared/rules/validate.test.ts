@@ -178,6 +178,11 @@ describe("validateRuleSet", () => {
 });
 
 describe("validateSlip: payout size", () => {
+  it("refuses a win that wouldn't pay back more than the stake", () => {
+    // 1 unit at -100000 pays 100.1 cents, which rounds to the 100-cent stake.
+    expect(codes({ type: "straight", legs: [ml("home", -100_000)], stakeCents: 100 })).toEqual(["payout_too_small"]);
+    expect(codes({ type: "straight", legs: [ml("home", -100_000)], stakeCents: 100_000 })).toEqual([]);
+  });
   it("refuses a payout too large to count exactly", () => {
     const tenLongShots = games(10, (g) => ml("away", 1000, g));
     expect(codes(parlay(tenLongShots, 25_000_000))).toEqual(["payout_too_large"]);

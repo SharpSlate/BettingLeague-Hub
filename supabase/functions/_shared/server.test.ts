@@ -108,7 +108,7 @@ describe("gradePending", () => {
       ],
       games,
     );
-    expect(out).toEqual([{ slipId: "won", result: "won", payoutCents: 19_091, legResults: [{ legNo: 1, result: "won" }] }]);
+    expect(out).toEqual([{ slipId: "won", result: "won", payoutCents: 19_091, legResults: [{ legNo: 1, result: "won" }], gameVersions: [] }]);
   });
   it("loses a parlay as soon as a leg loses, leaving later legs pending", () => {
     const p = slip({
@@ -120,7 +120,7 @@ describe("gradePending", () => {
       ],
     });
     const out = gradePending([p], new Map([["a", final("a", 27, 20)], ["b", live("b")]]));
-    expect(out[0]).toEqual({ slipId: "p", result: "lost", payoutCents: 0, legResults: [{ legNo: 1, result: "lost" }, { legNo: 2, result: "pending" }] });
+    expect(out[0]).toEqual({ slipId: "p", result: "lost", payoutCents: 0, legResults: [{ legNo: 1, result: "lost" }, { legNo: 2, result: "pending" }], gameVersions: [] });
   });
   it("teases the legs by the slip's points", () => {
     // home -7 teased 6 -> -1 on a 24-20 win: won. over 44.5 teased 6 -> 38.5 on 44 total: won.
@@ -363,6 +363,16 @@ describe("runScores", () => {
     expect(store.settled).toEqual(["good"]);
     expect(r.errors).toEqual(["bad: Error: settle: bad_payout"]);
     expect(r.advancedTo).toBe(6);
+    // Recorded for the Admin page, since nobody reads a scheduled run's reply.
+    expect(store.pulls).toContainEqual({ kind: "scores", trigger: "schedule", ok: false, error: "grading: bad: Error: settle: bad_payout" });
+  });
+  it("sends the versions of the games each grade used", () => {
+    const slip = {
+      id: "s", type: "straight" as const, stakeCents: 10_000, teaserPoints: null, rules: DAY_ONE_RULES,
+      legs: [{ legNo: 1, gameId: "a", market: "total" as const, side: "under" as const, point: 47.5, price: -110 }],
+    };
+    const games = new Map([["a", { ...final("a", 27, 20), version: "2026-10-04T20:15:03.123456+00:00" }]]);
+    expect(gradePending([slip], games)[0]!.gameVersions).toEqual([{ gameId: "a", version: "2026-10-04T20:15:03.123456+00:00" }]);
   });
   it("reports a bet that can't be graded and grades the rest", async () => {
     const store = new FakeStore();

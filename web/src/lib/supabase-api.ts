@@ -3,7 +3,7 @@
 import { createClient, FunctionsHttpError, type SupabaseClient } from "@supabase/supabase-js";
 import type { RuleSet } from "@rules";
 import type {
-  AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest, PlaceResult,
+  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest, PlaceResult,
   RuleVersion, SlipView, SplashImport, StandingRow, Team, WeekInfo,
 } from "./types.ts";
 
@@ -219,6 +219,10 @@ export class SupabaseApi implements Api {
   async adminUsers(): Promise<AdminUser[]> {
     const rows = check(await this.db.rpc("admin_list_users")) as any[];
     return rows.map((r) => ({ userId: r.user_id, email: r.email, displayName: r.display_name, isAdmin: r.is_admin, entryNames: r.entry_names ?? [] }));
+  }
+  async adminRecentProblems(): Promise<AdminProblem[]> {
+    const rows = check(await this.db.rpc("admin_recent_problems", { p_limit: 10 })) as any[];
+    return rows.map((r) => ({ at: r.at, kind: r.kind, trigger: r.trigger, error: r.error }));
   }
   private async invoke(name: string, body: Record<string, unknown>) {
     const { data, error } = await this.db.functions.invoke(name, { body });

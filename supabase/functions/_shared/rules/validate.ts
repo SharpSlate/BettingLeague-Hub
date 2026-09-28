@@ -62,7 +62,11 @@ export function validateSlip(slip: SlipInput, rules: RuleSet, ctx: ValidationCon
   checkStake(slip.stakeCents, rules, ctx, add);
   if (!problems.length) {
     try {
-      quoteSlip(slip, rules);
+      // A win has to pay back more than the stake; at an extreme price and a tiny
+      // stake the rounded payout can come out equal to it.
+      if (quoteSlip(slip, rules).payoutCents <= slip.stakeCents) {
+        add("payout_too_small", "At that price a win wouldn't pay back more than the stake. Raise the stake.");
+      }
     } catch (e) {
       if (!(e instanceof RangeError)) throw e;
       add("payout_too_large", "That payout is too large for the site to handle. Lower the stake.");

@@ -103,6 +103,7 @@ grant execute on function public.admin_set_final_score(uuid, int, int, text) to 
 grant execute on function public.admin_move_game(uuid, int, text) to authenticated;
 grant execute on function public.admin_void_slip(uuid, text) to authenticated;
 grant execute on function public.admin_list_users() to authenticated;
+grant execute on function public.admin_recent_problems(int) to authenticated;
 
 -- Edge Functions only.
 grant execute on all functions in schema public to service_role;

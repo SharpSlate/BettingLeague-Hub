@@ -558,17 +558,30 @@ begin
 end $$;
 
 -- Settles a slip with the grade the grading job computed from the slip's own rule set.
--- Returns false if the slip was already settled. Guards keep a bad grade from paying
--- out more than the slip could ever win.
--- p_leg_results: [{legNo, result}]
+-- Returns false if the slip was already settled, or if the grade is stale: the job
+-- sends the versions (updated_at) of the games it graded from, and if an admin has
+-- changed one since (a corrected score, a void), the slip is left for the next run.
+-- The games are locked before the slip, the same order the admin corrections use.
+-- Guards keep a bad grade from paying out more than the slip could ever win.
+-- p_leg_results: [{legNo, result}]; p_game_versions: [{gameId, version}]
 create or replace function public.settle_slip_internal(
-  p_slip uuid, p_result text, p_payout_cents bigint, p_leg_results jsonb
+  p_slip uuid, p_result text, p_payout_cents bigint, p_leg_results jsonb, p_game_versions jsonb default null
 ) returns boolean
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
   v public.slips%rowtype;
 begin
+  perform 1 from public.games g where g.id in (select l.game_id from public.slip_legs l where l.slip_id = p_slip) order by g.id for share;
+  if p_game_versions is not null and exists (
+    select 1 from public.slip_legs l join public.games g on g.id = l.game_id
+    where l.slip_id = p_slip
+      and g.updated_at is distinct from (
+        select (x ->> 'version')::timestamptz from jsonb_array_elements(p_game_versions) x where x ->> 'gameId' = g.id::text limit 1
+      )
+  ) then
+    return false;
+  end if;
   select * into v from public.slips where id = p_slip for update;
   if not found then raise exception 'not_found'; end if;
   if v.status <> 'pending' then return false; end if;
@@ -587,6 +600,7 @@ begin
     insert into public.ledger (entry_id, amount_cents, kind, slip_id, week)
     values (v.entry_id, p_payout_cents, case when p_result = 'won' then 'payout' else 'refund' end, v.id, v.week);
   end if;
+  perform app.recheck_minimum(v.week, v.entry_id);
   return true;
 end $$;
 
@@ -640,6 +654,43 @@ begin
      where week = p_week and entry_id = r.entry_id;
   end loop;
   update public.weeks set status = 'closed', closed_at = now() where week = p_week;
+end $$;
+
+-- Redoes an entry's weekly minimum for a week that has already closed, after one of
+-- its bets changed in a way that changes what counts as wagered (a regrade that turns
+-- a void bet into a graded one or back, or an admin void), and posts the difference
+-- as its own ledger row. Does nothing for a week that hasn't closed.
+create or replace function app.recheck_minimum(p_week int, p_entry uuid) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  w public.week_entry_status%rowtype;
+  v_doc jsonb;
+  v_wagered bigint;
+  v_short bigint;
+  v_target bigint;
+  v_delta bigint;
+begin
+  select * into w from public.week_entry_status where week = p_week and entry_id = p_entry for update;
+  if not found or w.wagered_cents is null then return; end if;
+  select rs.document into v_doc from public.weeks wk join public.rule_sets rs on rs.version = wk.rule_set_version where wk.week = p_week;
+  select coalesce(sum(stake_cents), 0) into v_wagered from public.slips
+   where entry_id = p_entry and week = p_week and status not in ('undone', 'void');
+  if v_wagered = w.wagered_cents then return; end if;
+  v_short := greatest(0, w.required_cents - v_wagered);
+  v_target := case when v_doc -> 'weeklyMinimum' ->> 'penalty' = 'deduct_shortfall' then v_short else 0 end;
+  -- Positive gives back an over-deduction; negative takes more, never below zero.
+  v_delta := coalesce(w.deducted_cents, 0) - v_target;
+  if v_delta < 0 then v_delta := -least(-v_delta, greatest(0, app.available_cents(p_entry))); end if;
+  if v_delta <> 0 then
+    insert into public.ledger (entry_id, amount_cents, kind, week, note)
+    values (p_entry, v_delta, 'weekly_minimum', p_week,
+            format('Week %s minimum redone after a bet changed: wagered %s of %s units', p_week,
+                   to_char(v_wagered / 100.0, 'FM999999990.00'), to_char(w.required_cents / 100.0, 'FM999999990.00')));
+  end if;
+  update public.week_entry_status
+     set wagered_cents = v_wagered, shortfall_cents = v_short, deducted_cents = coalesce(w.deducted_cents, 0) - v_delta
+   where week = p_week and entry_id = p_entry;
 end $$;
 
 create or replace function app.open_week(p_week int, p_actor uuid) returns void
@@ -1088,6 +1139,7 @@ begin
     end if;
     update public.slip_legs set result = 'pending' where slip_id = r.id;
     update public.slips set status = 'pending', payout_cents = null, settled_at = null where id = r.id;
+    perform app.recheck_minimum(r.week, r.entry_id);
     v_n := v_n + 1;
   end loop;
   perform set_config('app.reopening', 'off', true);
@@ -1201,11 +1253,28 @@ begin
   values (v.entry_id, v.stake_cents, 'void_refund', v.id, v.week, v_reason, v_actor);
   update public.slips set status = 'void', void_reason = v_reason, payout_cents = v.stake_cents, settled_at = now()
    where id = p_slip;
+  perform app.recheck_minimum(v.week, v.entry_id);
   v_shown := app.slip_reveal_at(v.id) <= now();
   perform app.audit(v_actor, 'bet_voided', 'slip', p_slip::text,
     jsonb_build_object('entryId', v.entry_id, 'status', v.status)
       || case when v_shown then jsonb_build_object('stakeCents', v.stake_cents, 'payoutCents', v.payout_cents) else '{}'::jsonb end,
     jsonb_build_object('status', 'void'), v_reason);
+end $$;
+
+-- Recent failed pulls and grading problems, with their (already masked) error text,
+-- for the admin screens only. Members can't read line_pulls.error.
+create or replace function public.admin_recent_problems(p_limit int default 10)
+returns table (at timestamptz, kind text, trigger text, error text)
+language plpgsql stable security definer set search_path = public, pg_temp
+as $$
+begin
+  perform app.require_admin();
+  return query
+    select lp.at, lp.kind, lp.trigger, coalesce(lp.error, '')
+    from public.line_pulls lp
+    where not lp.ok and lp.at > now() - interval '3 days'
+    order by lp.at desc
+    limit least(greatest(coalesce(p_limit, 10), 1), 50);
 end $$;
 
 -- Members and their emails, for the admin screens only.

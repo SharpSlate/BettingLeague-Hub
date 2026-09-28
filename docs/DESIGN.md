@@ -162,8 +162,9 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
   - when the week closes, `shortfall = max(0, required − wagered)` comes off the bank as its own ledger row;
   - pushed bets count as wagered; bets undone by the member or voided by an admin don't;
   - the deduction can never push a bank below zero;
-  - the rest of the entry's bank carries into the next week.
-- **Corrections:** an admin can correct a final score, or void a final game. Either reopens the bets already graded on that game: each payout is taken back with its own ledger row, and the grading job grades the bet again within 10 minutes. Bets an admin voided stay void.
+  - the rest of the entry's bank carries into the next week;
+  - if a bet in a week that has already closed changes later (a regrade turns a voided bet into a graded one, or an admin voids a bet), that entry's minimum is worked out again and the difference goes on the ledger as its own row.
+- **Corrections:** an admin can correct a final score, or void a final game. Either reopens the bets already graded on that game: each payout is taken back with its own ledger row, and the grading job grades the bet again within 10 minutes. Bets an admin voided stay void. A grade the job worked out just before a correction is refused when it arrives (it carries the version of each game it used), so it can't slip in with the old score.
 - **Standings:** ranked by bank; ties broken by net, then total winnings. Net, Record, Risk and Return follow Splash's definitions, to be confirmed from the inventory. "This week" and "Last week" count bets by the week they belong to, so a Monday-night bet graded after midnight still counts in its own week.
 
 ## 7. Jobs

@@ -7,6 +7,12 @@ export interface GameResult {
   status: "scheduled" | "live" | "final" | "postponed" | "void";
   homeScore: number | null;
   awayScore: number | null;
+  /**
+   * The game row's version (its updated_at, exactly as the database sent it). A grade
+   * carries the versions it was worked out from, and the database refuses it if a game
+   * has changed since, e.g. an admin corrected the score in the meantime.
+   */
+  version?: string;
 }
 
 export interface PendingSlip {
@@ -23,6 +29,8 @@ export interface Settlement {
   result: Exclude<SlipResult, "pending">;
   payoutCents: number;
   legResults: { legNo: number; result: LegResult }[];
+  /** The versions of the slip's games this grade used (see GameResult.version). */
+  gameVersions: { gameId: string; version: string }[];
 }
 
 export function legResult(leg: Leg, game: GameResult | undefined, teaserPoints: number | null): LegResult {
@@ -56,11 +64,17 @@ export function gradePending(
       continue;
     }
     if (grade.result === "pending") continue;
+    const versions = new Map<string, string>();
+    for (const leg of slip.legs) {
+      const v = games.get(leg.gameId)?.version;
+      if (v !== undefined) versions.set(leg.gameId, v);
+    }
     out.push({
       slipId: slip.id,
       result: grade.result,
       payoutCents: grade.payoutCents,
       legResults: slip.legs.map((leg, i) => ({ legNo: leg.legNo, result: results[i]! })),
+      gameVersions: [...versions].map(([gameId, version]) => ({ gameId, version })),
     });
   }
   return out;

@@ -166,6 +166,14 @@ export interface AuditRow {
   createdAt: string;
 }
 
+/** A failed line or score pull, or a grading problem, for the admins. */
+export interface AdminProblem {
+  at: string;
+  kind: string;
+  trigger: string;
+  error: string;
+}
+
 export interface AdminUser {
   userId: string;
   email: string;
@@ -232,6 +240,8 @@ export interface Api {
   setDisplayName(name: string): Promise<void>;
 
   adminUsers(): Promise<AdminUser[]>;
+  /** Failed pulls and grading problems from the last 3 days, newest first. */
+  adminRecentProblems(): Promise<AdminProblem[]>;
   adminAddMember(email: string, displayName: string, entryId: string | null): Promise<void>;
   adminAddEntry(name: string, startingBankCents: number): Promise<string>;
   adminSetManager(entryId: string, userId: string, add: boolean): Promise<void>;

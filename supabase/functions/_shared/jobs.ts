@@ -195,5 +195,10 @@ export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, 
   } catch (e) {
     errors.push(`advance week: ${safeError(e)}`);
   }
+  // Scheduled runs have no one reading their reply, so problems are recorded where the
+  // Admin page shows them.
+  if (errors.length) {
+    await store.recordPull("scores", trigger, false, `grading: ${errors.join("; ")}`.slice(0, 500), null, null).catch(() => undefined);
+  }
   return { scores, settled, advancedTo, errors };
 }

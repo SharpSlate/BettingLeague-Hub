@@ -79,9 +79,12 @@ export function Admin() {
   );
 }
 
+const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading" };
+
 function Status({ reload }: { reload: () => void }) {
   const api = useApi();
   const league = useLoad(() => api.league(), []);
+  const problems = useLoad(() => api.adminRecentProblems(), [], 60_000);
   const [reason, setReason] = useState("");
   const [armed, setArmed] = useState(false);
   const lg = league.data;
@@ -97,6 +100,24 @@ function Status({ reload }: { reload: () => void }) {
             <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min</dd>
           </dl>
         ) : <Loading />}
+      </div>
+      <div className="card pad stack-sm">
+        <h3>Recent problems</h3>
+        {problems.data?.length ? (
+          <div className="feed">
+            {problems.data.map((p, i) => (
+              <div className="feed-item" key={i}>
+                <div className="grow">
+                  <div><b>{PROBLEM_KIND[p.kind] ?? p.kind}</b> <span className="muted">({p.trigger})</span></div>
+                  <div className="tiny muted" style={{ overflowWrap: "anywhere" }}>{p.error}</div>
+                </div>
+                <span className="when">{ago(p.at)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="small muted">{problems.loading ? "Checking…" : "None in the last 3 days. Failed line or score pulls, and bets the grader couldn't settle, show here."}</div>
+        )}
       </div>
       <Action title="Run a job now" submit="Pull lines" onSubmit={async () => { const r = await api.adminRunJob("pull-lines"); league.reload(); reload(); return r; }}
         note="Lines refresh on their own; use this if the feed looks behind. Each pull costs 3 credits.">

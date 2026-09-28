@@ -6,7 +6,7 @@ import { gradePending, type GameResult, type PendingSlip } from "../../../supaba
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
 import { TEAMS, team } from "./teams.ts";
 import type {
-  AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest,
+  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest,
   PlaceResult, RuleVersion, SlipView, SplashImport, StandingRow, WeekInfo,
 } from "./types.ts";
 
@@ -375,6 +375,9 @@ export class DemoApi implements Api {
       userId: u.id, email: u.email, displayName: u.displayName, isAdmin: u.isAdmin,
       entryNames: this.s.entries.filter((e) => e.managers.includes(u.id)).map((e) => e.name),
     }));
+  }
+  async adminRecentProblems(): Promise<AdminProblem[]> {
+    return [];
   }
   async adminAddMember(email: string, displayName: string, entryId: string | null) {
     await wait();

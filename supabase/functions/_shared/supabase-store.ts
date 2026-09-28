@@ -122,15 +122,17 @@ export class SupabaseStore implements Store {
   }
 
   async games(ids: string[]) {
-    const rows = await must<any[]>(this.db.from("games").select("id, status, home_score, away_score").in("id", ids), "games");
+    const rows = await must<any[]>(this.db.from("games").select("id, status, home_score, away_score, updated_at").in("id", ids), "games");
     return new Map<string, GameResult>(
-      rows.map((g) => [g.id, { id: g.id, status: g.status, homeScore: g.home_score, awayScore: g.away_score }]),
+      rows.map((g) => [g.id, { id: g.id, status: g.status, homeScore: g.home_score, awayScore: g.away_score, version: String(g.updated_at) }]),
     );
   }
 
   settle(s: Settlement) {
     return must<boolean>(
-      this.db.rpc("settle_slip_internal", { p_slip: s.slipId, p_result: s.result, p_payout_cents: s.payoutCents, p_leg_results: s.legResults }),
+      this.db.rpc("settle_slip_internal", {
+        p_slip: s.slipId, p_result: s.result, p_payout_cents: s.payoutCents, p_leg_results: s.legResults, p_game_versions: s.gameVersions,
+      }),
       "settle",
     );
   }
