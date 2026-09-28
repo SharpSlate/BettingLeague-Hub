@@ -227,6 +227,9 @@ export class SupabaseApi implements Api {
   async adminSetManager(entryId: string, userId: string, add: boolean) {
     check(await this.db.rpc("admin_set_manager", { p_entry: entryId, p_user: userId, p_add: add }));
   }
+  async adminSetAdmin(userId: string, isAdmin: boolean) {
+    check(await this.db.rpc("admin_set_admin", { p_user: userId, p_is_admin: isAdmin }));
+  }
   async adminImportSplash(a: SplashImport) {
     check(await this.db.rpc("admin_import_splash", {
       p_entry: a.entryId, p_bank_cents: a.bankCents, p_net_cents: a.netCents, p_wins: a.wins, p_losses: a.losses, p_pushes: a.pushes,

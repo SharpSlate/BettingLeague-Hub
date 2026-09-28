@@ -377,6 +377,13 @@ export class DemoApi implements Api {
     e.managers = add ? [...new Set([...e.managers, userId])] : e.managers.filter((m) => m !== userId);
     this.audit(add ? "manager_added" : "manager_removed", "entry", entryId, { userId }, "");
   }
+  async adminSetAdmin(userId: string, isAdmin: boolean) {
+    const u = this.s.users.find((x) => x.id === userId);
+    if (!u) throw new Error("not_found");
+    if (!isAdmin && this.s.users.filter((x) => x.isAdmin && x.id !== userId).length === 0) throw new Error("last_admin");
+    u.isAdmin = isAdmin;
+    this.audit(isAdmin ? "admin_granted" : "admin_removed", "profile", userId, null, "");
+  }
   async adminImportSplash(a: SplashImport) {
     const e = this.entry(a.entryId);
     if (this.s.slips.some((s) => s.entryId === e.id)) throw new Error("entry_has_bets");

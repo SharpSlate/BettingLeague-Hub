@@ -124,6 +124,7 @@ function Members() {
   const entrants = useLoad(() => api.entrants(), []);
   const [f, setF] = useState({ email: "", name: "", entry: "" });
   const [link, setLink] = useState({ user: "", entry: "", add: "add" });
+  const [adminForm, setAdminForm] = useState({ user: "", on: "yes" });
   const entries = entrants.data ?? [];
   return (
     <div className="grid-2">
@@ -156,6 +157,21 @@ function Members() {
           <select className="input" value={link.add} onChange={(e) => setLink({ ...link, add: e.target.value })}>
             <option value="add">Make them a manager</option>
             <option value="remove">Remove them as a manager</option>
+          </select>
+        </Field>
+      </Action>
+      <Action title="Admins" submit="Save" note="Admins can use this page. Admin powers never include seeing anyone's picks before kickoff."
+        onSubmit={async () => { await api.adminSetAdmin(adminForm.user, adminForm.on === "yes"); users.reload(); }}>
+        <Field label="Member">
+          <select className="input" required value={adminForm.user} onChange={(e) => setAdminForm({ ...adminForm, user: e.target.value })}>
+            <option value="">Choose…</option>
+            {(users.data ?? []).map((u) => <option key={u.userId} value={u.userId}>{u.displayName}{u.isAdmin ? " (admin)" : ""}</option>)}
+          </select>
+        </Field>
+        <Field label="Action">
+          <select className="input" value={adminForm.on} onChange={(e) => setAdminForm({ ...adminForm, on: e.target.value })}>
+            <option value="yes">Make admin</option>
+            <option value="no">Remove admin</option>
           </select>
         </Field>
       </Action>

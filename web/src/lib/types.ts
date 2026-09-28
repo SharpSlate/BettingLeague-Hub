@@ -231,6 +231,7 @@ export interface Api {
   adminAddMember(email: string, displayName: string, entryId: string | null): Promise<void>;
   adminAddEntry(name: string, startingBankCents: number): Promise<string>;
   adminSetManager(entryId: string, userId: string, add: boolean): Promise<void>;
+  adminSetAdmin(userId: string, isAdmin: boolean): Promise<void>;
   adminImportSplash(args: SplashImport): Promise<void>;
   adminAdjustBank(entryId: string, amountCents: number, reason: string): Promise<void>;
   adminOpenNextWeek(reason: string): Promise<number>;

@@ -1,0 +1,121 @@
+# Deploys on every push to main: tests first, then the database, functions and
+# settings to Supabase, then the site to GitHub Pages.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables):
+#   SUPABASE_PROJECT_REF, SUPABASE_URL, SUPABASE_ANON_KEY, SITE_URL
+# Repository secrets (same page, Secrets tab):
+#   SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD, ODDS_API_KEY, CRON_SECRET,
+#   SMTP_USER, SMTP_PASS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+# SMTP and Google are optional on the first deploy: whichever isn't set yet is
+# left off, and turns on the first deploy after its secrets are added.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  supabase:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.118.0
+      - name: Check the required settings
+        run: |
+          missing=""
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROJECT_REF SUPABASE_URL SITE_URL ODDS_API_KEY CRON_SECRET; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then echo "::error::Missing settings:$missing (see SETUP.md)"; exit 1; fi
+      - name: Leave off sign-in options that aren't set up yet
+        run: |
+          if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
+            echo "::warning::No league email yet: sign-in codes only reach the Supabase project's own members."
+            python3 - <<'PY'
+          import re
+          p = "supabase/config.toml"
+          s = open(p).read()
+          s = re.sub(r"(\[auth\.email\.smtp\]\nenabled = )true", r"\1false", s)
+          open(p, "w").write(s)
+          PY
+          fi
+          if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
+            echo "::warning::No Google sign-in client yet: the Google button won't work."
+            python3 - <<'PY'
+          import re
+          p = "supabase/config.toml"
+          s = open(p).read()
+          s = re.sub(r"(\[auth\.external\.google\]\nenabled = )true", r"\1false", s)
+          open(p, "w").write(s)
+          PY
+          fi
+          echo "SITE_ORIGIN=$(echo "$SITE_URL" | sed -E 's#^(https?://[^/]+).*#\1#')" >> "$GITHUB_ENV"
+      - name: Link the project
+        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Apply database migrations (and Vault secrets for the schedule)
+        run: supabase db push --password "$SUPABASE_DB_PASSWORD" --yes
+      - name: Apply auth settings
+        run: supabase config push --project-ref "$PROJECT_REF" --yes
+      - name: Set function secrets
+        run: |
+          supabase secrets set --project-ref "$PROJECT_REF" \
+            "ODDS_API_KEY=$ODDS_API_KEY" "CRON_SECRET=$CRON_SECRET" "SITE_ORIGIN=$SITE_ORIGIN"
+      - name: Deploy Edge Functions
+        run: supabase functions deploy --project-ref "$PROJECT_REF" --use-api
+
+  pages:
+    needs: supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the site
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4
