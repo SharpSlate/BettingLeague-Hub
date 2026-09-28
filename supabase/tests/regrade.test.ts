@@ -57,32 +57,34 @@ describe("a grade that races a score correction", () => {
 
 describe("the minimum of a week that has closed", () => {
   let bet: string;
-  it("is redone when a regrade turns a voided bet back into a graded one", async () => {
-    // Carol has 10,000 units, so she must wager 3,000, and she bets exactly that on a game that's then voided.
+  it("counts a bet on a game that was called off, and a regrade leaves it counting", async () => {
+    // Carol has 10,000 units, so she must wager 3,000, and she bets exactly that on a game that's then called off.
     bet = await place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 300_000, potentialPayoutCents: 572_727, legs: [{ gameId: gVoid, market: "spread", side: "home", point: -3, price: -110 }] });
     await db.su("update public.games set kickoff_at = now() - interval '3 hours' where id = $1", [gVoid]);
     await db.q(member(owner), "select public.admin_set_game_status($1, 'void', null, 'Called off')", [gVoid]);
     expect(await settle(bet, "void", 300_000, [{ gameId: gVoid, version: await version(gVoid) }])).toBe(true);
-    // Every game of week 4 is final or void, so the week closes, and the voided bet doesn't count.
+    // Every game of week 4 is final or void, so the week closes. The voided bet counts, so
+    // she met her minimum and gets her stake back.
     expect((await db.q(service, "select public.advance_week_internal() as w"))[0].w).toBe(5);
-    expect(await weekStatus(carolEntry)).toEqual({ wagered: 0, short: 300_000, deducted: 300_000 });
-    expect(await available(carolEntry)).toBe(700_000);
+    expect(await weekStatus(carolEntry)).toEqual({ wagered: 300_000, short: 0, deducted: 0 });
+    expect(await available(carolEntry)).toBe(1_000_000);
 
-    // The game was played after all: the real score regrades the bet, which now counts.
+    // The game was played after all: the real score regrades the bet, which still counts.
     await db.q(member(owner), "select public.admin_set_final_score($1, 27, 20, 'It was played')", [gVoid]);
     expect(await weekStatus(carolEntry)).toEqual({ wagered: 300_000, short: 0, deducted: 0 });
     expect(await settle(bet, "won", 572_727, [{ gameId: gVoid, version: await version(gVoid) }])).toBe(true);
-    // 10,000 - 3,000 staked + 5,727.27 back = 12,727.27, with no deduction.
+    // 10,000 - 3,000 staked + 5,727.27 back = 12,727.27, and no minimum was ever taken.
     expect(await available(carolEntry)).toBe(1_272_727);
-    const [redo] = await db.q(member(dave), "select amount_cents::int as a, note from public.ledger where entry_id = $1 and kind = 'weekly_minimum' order by id desc limit 1", [carolEntry]);
-    expect(redo).toEqual({ a: 300_000, note: "Week 4 minimum redone after a bet changed: wagered 3000.00 of 3000.00 units" });
+    expect((await db.su("select count(*)::int as n from public.ledger where entry_id = $1 and kind = 'weekly_minimum'", [carolEntry]))[0].n).toBe(0);
   });
 
-  it("is redone the other way when an admin voids a bet that counted", async () => {
+  it("is redone when an admin voids a bet that counted", async () => {
     await db.q(member(owner), "select public.admin_void_slip($1, 'Placed in error')", [bet]);
     expect(await weekStatus(carolEntry)).toEqual({ wagered: 0, short: 300_000, deducted: 300_000 });
     // The stake comes back, the winnings go back, and the shortfall is charged: 10,000 - 3,000.
     expect(await available(carolEntry)).toBe(700_000);
+    const [redo] = await db.q(member(dave), "select amount_cents::int as a, note from public.ledger where entry_id = $1 and kind = 'weekly_minimum' order by id desc limit 1", [carolEntry]);
+    expect(redo).toEqual({ a: -300_000, note: "Week 4 minimum redone after a bet changed: wagered 0.00 of 3000.00 units" });
   });
 });
 

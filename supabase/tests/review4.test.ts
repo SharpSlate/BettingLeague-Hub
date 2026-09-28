@@ -2,7 +2,8 @@
 // betting that stayed open on a game the feed showed under way, a closed week's minimum
 // that came out differently depending on the order corrections arrived in, a stuck game
 // nobody was told about, rules values the database reads unchecked, and resent bets
-// with upper-case ids.
+// with upper-case ids. The minimum tests follow the owner's rule (Sept 28) that bets on
+// a game that's called off count toward it, like pushes.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DAY_ONE_RULES } from "../functions/_shared/rules/defaults.ts";
 import {
@@ -154,7 +155,7 @@ describe("resending a bet", () => {
   });
 });
 
-describe("the minimum of a week that has closed comes out the same whatever order corrections arrive in", () => {
+describe("the minimum of a week that has closed", () => {
   const status = async (entry: string) =>
     (await db.su(
       "select wagered_cents::int as wagered, shortfall_cents::int as short, deducted_cents::int as deducted, waived_cents::int as waived, unpaid_cents::int as unpaid from public.week_entry_status where week = 4 and entry_id = $1",
@@ -162,7 +163,7 @@ describe("the minimum of a week that has closed comes out the same whatever orde
     ))[0];
   let x: string, x2: string;
 
-  it("sets up two entries and closes the week", async () => {
+  it("counts a bet on a game called off before the close", async () => {
     // Dan: 1,000 on GX (wins, paying 1,909.09) and 500 on GY (loses).
     x = await bet(danEntry, dan, "GX", 100_000);
     const y = await bet(danEntry, dan, "GY", 50_000);
@@ -180,42 +181,51 @@ describe("the minimum of a week that has closed comes out the same whatever orde
     await settle(x2, "void", 100_000);
     await settle(y2, "lost", 0);
     await db.q(member(owner), "select public.admin_adjust_bank($1, -840000, 'Side bet')", [miaEntry]);
+    // Her progress toward the minimum counts it during the week too.
+    expect((await db.q(member(mia), "select wagered_cents::int as w from public.my_entries()"))[0].w).toBe(250_000);
+    expect((await db.q(member(mia), "select wagered_cents::int as w from public.standings() where entry_id = $1", [miaEntry]))[0].w).toBe(250_000);
     expect((await db.q(member(owner), "select public.admin_open_next_week(4, 'Closing early') as w"))[0].w).toBe(5);
 
     // Dan wagered 1,500 of 3,000 and had plenty: 1,500 taken.
     expect(await status(danEntry)).toEqual({ wagered: 150_000, short: 150_000, deducted: 150_000, waived: 0, unpaid: 0 });
-    // Mia wagered 1,500 of 3,000 with 100 free: 100 taken, 1,400 waived.
-    expect(await status(miaEntry)).toEqual({ wagered: 150_000, short: 150_000, deducted: 10_000, waived: 140_000, unpaid: 0 });
+    // Mia's bet on the called-off game counts: 2,500 of 3,000, so 500 short, with 100 free: 100 taken, 400 waived.
+    expect(await status(miaEntry)).toEqual({ wagered: 250_000, short: 50_000, deducted: 10_000, waived: 40_000, unpaid: 0 });
   });
 
-  it("a win voided while the bank is spent, then restored, leaves the bank where it was", async () => {
+  it("a game called off after the close, then played, leaves the minimum and the bank as they were", async () => {
     // Dan bets most of what's left in week 5, leaving 209.09 free.
     await bet(danEntry, dan, "NEXT", 870_000);
     expect(await available(danEntry)).toBe(20_909);
-    // GX is voided: the win is taken back and the stake refunded, and the bet stops counting.
+    // GX is called off: the win is taken back and the stake refunded, and the bet still counts.
     await db.q(member(owner), "select public.admin_set_game_status($1, 'void', null, 'Wrong game')", [ids.GX]);
     await settle(x, "void", 100_000);
-    // He's 1,000 more short, but has nothing free: it's left unpaid.
-    expect(await status(danEntry)).toMatchObject({ short: 250_000, deducted: 150_000, unpaid: 100_000 });
-    // The score is put back, and the bet counts and wins again.
+    expect(await status(danEntry)).toMatchObject({ wagered: 150_000, short: 150_000, deducted: 150_000, unpaid: 0 });
+    // The score is put back, and the bet wins again.
     await db.q(member(owner), "select public.admin_set_final_score($1, 27, 20, 'It was played')", [ids.GX]);
     await settle(x, "won", 190_909);
-    expect(await status(danEntry)).toMatchObject({ short: 150_000, deducted: 150_000, unpaid: 0 });
     expect(await available(danEntry)).toBe(20_909);
     expect(await minimumRows(danEntry)).toBe(-150_000);
   });
 
-  it("a bet that starts counting and then stops again leaves the deduction as it was at the close", async () => {
-    // GV was played after all: Mia's bet counts (and loses), so she's only 500 short,
-    // which the 1,400 waived covers. The 100 taken comes back.
+  it("an admin void adds the bet's stake to the shortfall, taken only from units free now", async () => {
+    // An admin voids Dan's win: it's taken back and the stake refunded, and the bet stops
+    // counting, so he's 1,000 more short. He has nothing free, so it's left unpaid.
+    await db.q(member(owner), "select public.admin_void_slip($1, 'Placed in error')", [x]);
+    expect(await status(danEntry)).toMatchObject({ wagered: 50_000, short: 250_000, deducted: 150_000, unpaid: 100_000 });
+    expect(await available(danEntry)).toBe(20_909 - 190_909 + 100_000);
+    expect(await minimumRows(danEntry)).toBe(-150_000);
+  });
+
+  it("and the part waived at the close stays waived", async () => {
+    // GV was played after all: Mia's bet is graded (a loss) and still counts.
     await db.q(member(owner), "select public.admin_set_final_score($1, 20, 27, 'It was played')", [ids.GV]);
-    expect(await status(miaEntry)).toMatchObject({ short: 50_000, deducted: 0, unpaid: 0 });
+    expect(await status(miaEntry)).toMatchObject({ short: 50_000, deducted: 10_000, waived: 40_000 });
     await settle(x2, "lost", 0);
-    // Later, with units again, an admin voids that bet: back to the close's 1,500 short,
-    // and the 100 is taken again. The 1,400 waived stays waived.
+    // With units again, an admin voids that bet: she's 1,500 short, less the 400 waived at
+    // the close, so 1,100 is owed and 1,000 more is taken.
     await db.q(member(owner), "select public.admin_adjust_bank($1, 500000, 'Bonus')", [miaEntry]);
     await db.q(member(owner), "select public.admin_void_slip($1, 'Placed in error')", [x2]);
-    expect(await status(miaEntry)).toMatchObject({ short: 150_000, deducted: 10_000, waived: 140_000, unpaid: 0 });
-    expect(await minimumRows(miaEntry)).toBe(-10_000);
+    expect(await status(miaEntry)).toMatchObject({ short: 150_000, deducted: 110_000, waived: 40_000, unpaid: 0 });
+    expect(await minimumRows(miaEntry)).toBe(-110_000);
   });
 });

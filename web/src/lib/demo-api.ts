@@ -180,6 +180,8 @@ export class DemoApi implements Api {
   private game(id: string) { return this.s.games.find((g) => g.id === id)!; }
   private firstKickoff(s: DSlip) { return Math.min(...s.legs.map((l) => this.game(l.gameId).kickoffAt)); }
   private revealed(s: DSlip, now = Date.now()) { return this.firstKickoff(s) <= now; }
+  /** Counts toward the weekly minimum: everything but an undone bet or one an admin voided. */
+  private counts(s: DSlip) { return s.status !== "undone" && !(s.status === "void" && s.voidedByAdmin); }
   /** Every leg's game has kicked off, so a parlay's odds no longer give anything away. */
   private fullyRevealed(s: DSlip, now = Date.now()) { return s.legs.every((l) => this.game(l.gameId).kickoffAt <= now); }
   private audit(action: string, targetType: string, targetId: string, after: unknown, reason: string) {
@@ -227,7 +229,7 @@ export class DemoApi implements Api {
         .reduce((a, l) => a + l.amount, 0);
       const mine = this.mine(e.id);
       const pend = this.s.slips.filter((s) => s.entryId === e.id && s.status === "pending" && (mine || this.revealed(s)));
-      const wk = this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && !["undone", "void"].includes(s.status) && (mine || this.revealed(s)));
+      const wk = this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && this.counts(s) && (mine || this.revealed(s)));
       const b = e.baseline;
       const seasonWinnings = b.winnings + this.s.slips.filter((s) => s.entryId === e.id && s.status === "won").reduce((a, s) => a + s.payoutCents! - s.stakeCents, 0);
       return {
@@ -261,7 +263,7 @@ export class DemoApi implements Api {
     return this.s.entries.filter((e) => this.mine(e.id)).map((e) => ({
       entryId: e.id, name: e.name, availableCents: this.available(e), pendingCents: this.pending(e), bankCents: this.bank(e), week: OPEN_WEEK,
       requiredCents: requiredMinimumCents(this.weekStartBank(e), 30),
-      wageredCents: this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && !["undone", "void"].includes(s.status)).reduce((a, s) => a + s.stakeCents, 0),
+      wageredCents: this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && this.counts(s)).reduce((a, s) => a + s.stakeCents, 0),
     }));
   }
 

@@ -69,6 +69,13 @@ create or replace function app.pending_cents(p_entry uuid) returns bigint
 language sql stable security definer set search_path = public, pg_temp
 as $$ select coalesce(sum(stake_cents), 0)::bigint from public.slips where entry_id = p_entry and status = 'pending' $$;
 
+-- Whether a bet counts toward its week's minimum. Every bet does except one the member
+-- undid or an admin voided (void_reason is set only by an admin void): pushes count, and
+-- so do bets graded void because their game was cancelled.
+create or replace function app.counts_toward_minimum(p_status text, p_void_reason text) returns boolean
+language sql immutable
+as $$ select p_status <> 'undone' and not (p_status = 'void' and p_void_reason is not null) $$;
+
 -- Bank = available + stakes still riding. Placing a bet doesn't change it.
 create or replace function app.bank_cents(p_entry uuid) returns bigint
 language sql stable security definer set search_path = public, pg_temp
@@ -755,9 +762,8 @@ begin
     select wes.entry_id, wes.required_cents from public.week_entry_status wes
     where wes.week = p_week order by wes.entry_id
   loop
-    -- Pushes count as wagered; undone bets and voided bets don't.
     select coalesce(sum(stake_cents), 0) into v_wagered from public.slips
-     where entry_id = r.entry_id and week = p_week and status not in ('undone', 'void');
+     where entry_id = r.entry_id and week = p_week and app.counts_toward_minimum(status, void_reason);
     v_short := greatest(0, r.required_cents - v_wagered);
     v_ded := 0;
     if v_short > 0 and v_deduct then
@@ -778,9 +784,9 @@ begin
 end $$;
 
 -- Redoes an entry's weekly minimum for a week that has already closed, after one of
--- its bets changed in a way that changes what counts as wagered (a regrade that turns
--- a void bet into a graded one or back, or an admin void), and posts the difference
--- as its own ledger row. Does nothing for a week that hasn't closed.
+-- its bets changed in a way that changes what counts as wagered (an admin voiding it;
+-- see app.counts_toward_minimum), and posts the difference as its own ledger row. Does
+-- nothing for a week that hasn't closed, or when what counts hasn't changed.
 -- What the entry owes for the week is its shortfall now, less what was waived at the
 -- close for lack of units (that stays waived). Owing more, it pays from the units free
 -- now, and whatever it can't pay is waived too ("unpaid"). Owing less, it first cancels
@@ -803,7 +809,7 @@ begin
   if not found or w.wagered_cents is null then return; end if;
   select rs.document into v_doc from public.weeks wk join public.rule_sets rs on rs.version = wk.rule_set_version where wk.week = p_week;
   select coalesce(sum(stake_cents), 0) into v_wagered from public.slips
-   where entry_id = p_entry and week = p_week and status not in ('undone', 'void');
+   where entry_id = p_entry and week = p_week and app.counts_toward_minimum(status, void_reason);
   if v_wagered = w.wagered_cents then return; end if;
   v_short := greatest(0, w.required_cents - v_wagered);
   v_unpaid := coalesce(w.unpaid_cents, 0);
@@ -977,7 +983,7 @@ as $$
   select e.id, e.name, app.available_cents(e.id), app.pending_cents(e.id), app.bank_cents(e.id),
          w.week, wes.required_cents,
          (select coalesce(sum(s.stake_cents), 0)::bigint from public.slips s
-           where s.entry_id = e.id and s.week = w.week and s.status not in ('undone', 'void'))
+           where s.entry_id = e.id and s.week = w.week and app.counts_toward_minimum(s.status, s.void_reason))
   from public.entries e
   join public.entry_managers m on m.entry_id = e.id and m.user_id = auth.uid()
   left join public.weeks w on w.status = 'open'
@@ -1045,7 +1051,7 @@ as $$
       sum(s.stake_cents) as all_wagered,
       coalesce(sum(s.stake_cents) filter (where app.slip_reveal_at(s.id) <= now()), 0) as revealed_wagered
     from public.slips s join ow on s.week = ow.week
-    where s.status not in ('undone', 'void')
+    where app.counts_toward_minimum(s.status, s.void_reason)
     group by s.entry_id
   )
   select
