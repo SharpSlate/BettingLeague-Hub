@@ -42,7 +42,9 @@ function PriceButton({ game, line, market, side, rules }: { game: GameView; line
 }
 
 export function GameCard({ game, now, rules }: { game: GameView; now: number; rules?: RuleSet }) {
-  const started = game.status !== "scheduled" || new Date(game.kickoffAt).getTime() <= now;
+  // Picks show once a game kicks off (its kickoff passes, or its scores start coming in).
+  const kicked = game.status === "live" || game.status === "final" || new Date(game.kickoffAt).getTime() <= now;
+  const started = game.status !== "scheduled" || kicked;
   // Betting can close before the kickoff here, when the odds feed shows the game starting;
   // its picks still wait for the kickoff (or its first score).
   const locked = started || new Date(game.locksAt).getTime() <= now;
@@ -86,8 +88,9 @@ export function GameCard({ game, now, rules }: { game: GameView; now: number; ru
           {teamRow("away")}
           {teamRow("home")}
           <div className="tiny muted">
-            {started
-              ? "Locked at kickoff. Picks on this game are now visible in League Picks."
+            {kicked ? "Locked at kickoff. Picks on this game are now visible in League Picks."
+              : game.status === "postponed" ? "Postponed. Betting on it is closed for now; picks on it show at kickoff."
+              : game.status === "void" ? "Called off. Bets on it are void."
               : "Betting has closed: the odds feed shows this game starting. Picks on it show at kickoff."}
           </div>
         </div>
