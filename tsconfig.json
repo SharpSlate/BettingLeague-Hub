@@ -20,13 +20,22 @@
     "skipLibCheck": true,
     "jsx": "react-jsx",
     "types": [
-      "node"
-    ]
+      "node",
+      "vite/client"
+    ],
+    "paths": {
+      "@rules": [
+        "./supabase/functions/_shared/rules/index.ts"
+      ]
+    }
   },
   "include": [
     "supabase/functions/**/*.ts",
     "supabase/tests/**/*.ts",
     "scripts/**/*.ts",
+    "web/src/**/*.ts",
+    "web/src/**/*.tsx",
+    "web/*.ts",
     "*.ts"
   ]
 }

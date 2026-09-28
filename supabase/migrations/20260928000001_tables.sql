@@ -166,6 +166,8 @@ create table public.slips (
   stake_cents bigint not null check (stake_cents > 0),
   quoted_american int not null,
   potential_payout_cents bigint not null check (potential_payout_cents >= stake_cents),
+  -- How many legs the slip has, so a partly revealed parlay can say how many are still hidden.
+  leg_count int not null check (leg_count >= 1),
   rule_set_version int not null references public.rule_sets (version),
   status text not null default 'pending' check (status in ('pending', 'won', 'lost', 'push', 'void', 'undone')),
   payout_cents bigint check (payout_cents >= 0),

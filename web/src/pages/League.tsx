@@ -1,0 +1,208 @@
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import type { RuleSet } from "@rules";
+import { Empty, ErrorNote, Loading, PageHead, Segmented } from "../components/ui.tsx";
+import { useApi } from "../lib/api.ts";
+import { clock, day, kickoff, odds, units } from "../lib/format.ts";
+import { useLoad } from "../lib/hooks.ts";
+import { describeRules } from "../lib/rules-text.ts";
+import type { AuditRow, GameView, WeekInfo } from "../lib/types.ts";
+
+type Tab = "rules" | "schedule" | "entrants" | "log";
+
+export function League() {
+  const [params, setParams] = useSearchParams();
+  const tab = (params.get("tab") as Tab) || "rules";
+  return (
+    <>
+      <PageHead title="League" sub="Rules, schedule, entrants, and every admin action." />
+      <div className="stack">
+        <div className="scroll-x">
+          <Segmented<Tab>
+            label="Section"
+            value={tab}
+            onChange={(t) => setParams({ tab: t })}
+            options={[{ value: "rules", label: "Rules" }, { value: "schedule", label: "Schedule" }, { value: "entrants", label: "Entrants" }, { value: "log", label: "Admin log" }]}
+          />
+        </div>
+        {tab === "rules" ? <Rules /> : tab === "schedule" ? <Schedule /> : tab === "entrants" ? <Entrants /> : <Log />}
+      </div>
+    </>
+  );
+}
+
+export function TeaserTable({ rules }: { rules: RuleSet }) {
+  const t = rules.betTypes.teaser;
+  const legs = Array.from({ length: t.maxLegs - t.minLegs + 1 }, (_, i) => t.minLegs + i);
+  return (
+    <div className="scroll-x">
+      <table className="table teaser-table">
+        <thead><tr><th>Legs</th>{t.points.map((p) => <th key={p}>{p} pts</th>)}</tr></thead>
+        <tbody>
+          {legs.map((n) => (
+            <tr key={n}><td>{n}</td>{t.points.map((p) => <td key={p} className="num">{t.prices[String(p)]?.[String(n)] !== undefined ? odds(t.prices[String(p)]![String(n)]!) : "—"}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Rules() {
+  const api = useApi();
+  const league = useLoad(() => api.league(), []);
+  const versions = useLoad(() => api.ruleVersions(), []);
+  const [pick, setPick] = useState<number | null>(null);
+  if (versions.loading && !versions.data) return <Loading />;
+  const inForce = league.data?.openWeek?.ruleSetVersion ?? versions.data?.at(-1)?.version;
+  const shown = versions.data?.find((v) => v.version === (pick ?? inForce)) ?? versions.data?.[0];
+  if (!shown) return <Empty>No rules published yet.</Empty>;
+  const lg = league.data;
+  return (
+    <div className="stack">
+      <div className="card pad row wrap spread">
+        <div>
+          <b>Version {shown.version}</b>{shown.version === inForce ? <span className="chip pending" style={{ marginLeft: 8 }}>In force{lg?.openWeek ? ` for ${lg.openWeek.label}` : ""}</span> : null}
+          <div className="small muted">Effective from week {shown.effectiveWeek}. {shown.note}</div>
+        </div>
+        {versions.data && versions.data.length > 1 ? (
+          <select className="input" style={{ width: "auto" }} value={shown.version} onChange={(e) => setPick(Number(e.target.value))} aria-label="Rules version">
+            {versions.data.map((v) => <option key={v.version} value={v.version}>Version {v.version} (from week {v.effectiveWeek})</option>)}
+          </select>
+        ) : null}
+      </div>
+      <div className="card pad prose">
+        {describeRules(shown.document).map((s) => (
+          <section key={s.title}>
+            <h3>{s.title}</h3>
+            <ul>{s.items.map((i) => <li key={i}>{i}</li>)}</ul>
+          </section>
+        ))}
+        {lg ? (
+          <section>
+            <h3>Lines</h3>
+            <ul>
+              <li>Lines come from {lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", with ")} as the backup, through The Odds API. The commissioner can set or take down any line, and that shows on the board.</li>
+              <li>They refresh every {lg.pullEveryMinutes} minutes from {lg.pullWindowStart} to {lg.pullWindowEnd} Eastern, and again whenever someone bets on lines more than 2 minutes old. If a number moves while it's on your slip, you'll be asked to accept the new one.</li>
+              <li>Every bet keeps the exact line and price it was placed at, and is graded on those.</li>
+            </ul>
+          </section>
+        ) : null}
+      </div>
+      <div className="card">
+        <div className="card-head"><h2>Teaser prices</h2></div>
+        <TeaserTable rules={shown.document} />
+      </div>
+    </div>
+  );
+}
+
+function Schedule() {
+  const api = useApi();
+  const weeks = useLoad(() => api.weeks(), []);
+  const [open, setOpen] = useState<number | null>(null);
+  if (weeks.loading && !weeks.data) return <Loading />;
+  const current = weeks.data?.find((w) => w.status === "open")?.week;
+  const shown = open ?? current ?? null;
+  return (
+    <div className="stack">
+      {(weeks.data ?? []).map((w) => (
+        <details key={w.week} className="card" open={w.week === shown} onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && setOpen(w.week)}>
+          <summary className="row spread">
+            <span>{w.label}</span>
+            <span className={`chip ${w.status === "open" ? "pending" : ""}`}>{w.status === "open" ? "Open" : w.status === "closed" ? "Closed" : "Upcoming"}</span>
+          </summary>
+          {w.week === shown ? <WeekGames week={w} /> : null}
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function WeekGames({ week }: { week: WeekInfo }) {
+  const api = useApi();
+  const games = useLoad(() => api.games(week.week), [week.week]);
+  if (games.loading && !games.data) return <div className="body"><Loading /></div>;
+  const list: GameView[] = games.data ?? [];
+  return (
+    <div className="body stack-sm">
+      <div className="small muted">{day(week.startsAt)} to {day(new Date(Date.parse(week.endsAt) - 1).toISOString())}</div>
+      {list.length === 0 ? <div className="small muted">Games appear here once lines are posted.</div> : list.map((g) => (
+        <div key={g.id} className="row spread small">
+          <span>{g.away.shortName} at {g.home.shortName}</span>
+          <span className="num muted">{g.status === "final" ? `${g.awayScore}–${g.homeScore} F` : g.status === "live" ? `${g.awayScore}–${g.homeScore} live` : g.status === "scheduled" ? `${day(g.kickoffAt).split(",")[0]} ${clock(g.kickoffAt)}` : g.status}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Entrants() {
+  const api = useApi();
+  const list = useLoad(() => api.entrants(), []);
+  if (list.loading && !list.data) return <Loading />;
+  return (
+    <div className="card feed">
+      {(list.data ?? []).map((e) => (
+        <div className="feed-item" key={e.entryId}>
+          <b>{e.name}</b>
+          <span className="when">{e.managers.join(", ") || "No manager yet"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const ACTIONS: Record<string, string> = {
+  week_opened: "opened the week",
+  week_opened_note: "noted on opening the week",
+  entry_added: "added an entry",
+  manager_added: "added an entry manager",
+  manager_removed: "removed an entry manager",
+  admin_granted: "made someone an admin",
+  admin_removed: "removed an admin",
+  member_added: "added a member",
+  splash_import: "imported Splash standings",
+  bank_adjusted: "adjusted a bank",
+  line_set: "set a line",
+  line_cleared: "cleared a line override",
+  game_status_set: "changed a game's status",
+  score_set: "entered a final score",
+  game_moved: "moved a game to another week",
+  bet_voided: "voided a bet",
+  rules_published: "published new rules",
+  score_mismatch: "flagged a score mismatch",
+};
+
+function detail(r: AuditRow): string {
+  const a = r.after as Record<string, unknown> | null;
+  if (!a) return "";
+  if (r.action === "bank_adjusted" && typeof a.amountCents === "number") return `${a.amountCents > 0 ? "+" : ""}${units(a.amountCents)} units`;
+  if (r.action === "rules_published") return `version ${a.version}, from week ${a.effectiveWeek}`;
+  if (r.action === "week_opened") return `week ${a.opened}`;
+  if (r.action === "splash_import" && typeof a.bankCents === "number") return `bank ${units(a.bankCents)}`;
+  if (r.action === "score_set" || r.action === "score_mismatch") return `${a.away}–${a.home} (away–home)`;
+  return "";
+}
+
+function Log() {
+  const api = useApi();
+  const log = useLoad(() => api.auditLog(300), []);
+  if (log.loading && !log.data) return <Loading />;
+  return (
+    <>
+      <ErrorNote error={log.error} />
+      <div className="card feed">
+        {(log.data ?? []).length === 0 ? <Empty>No admin actions yet.</Empty> : log.data!.map((r) => (
+          <div className="feed-item" key={r.id}>
+            <div className="grow">
+              <div><b>{r.actorName ?? "The site"}</b> {ACTIONS[r.action] ?? r.action}{detail(r) ? `: ${detail(r)}` : ""}</div>
+              {r.reason ? <div className="tiny muted">“{r.reason}”</div> : null}
+            </div>
+            <span className="when">{kickoff(r.createdAt)}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}

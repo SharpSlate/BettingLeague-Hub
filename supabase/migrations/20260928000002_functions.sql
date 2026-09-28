@@ -382,9 +382,9 @@ begin
   select max(at) into v_last_pull from public.line_pulls where kind = 'lines' and ok;
 
   insert into public.slips (entry_id, placed_by, week, type, teaser_points, stake_cents, quoted_american,
-                            potential_payout_cents, rule_set_version)
+                            potential_payout_cents, leg_count, rule_set_version)
   values (p_entry, p_user, v_week.week, p_type, p_teaser_points, p_stake_cents, p_quoted_american,
-          p_potential_payout_cents, v_week.rule_set_version)
+          p_potential_payout_cents, v_n, v_week.rule_set_version)
   returning id into v_slip;
 
   for v_leg in select * from jsonb_array_elements(p_legs) loop
@@ -1097,10 +1097,10 @@ as $$
 begin
   if tg_op = 'DELETE' then raise exception 'slips cannot be deleted'; end if;
   if (new.entry_id, new.placed_by, new.week, new.type, new.teaser_points, new.stake_cents, new.quoted_american,
-      new.potential_payout_cents, new.rule_set_version, new.placed_at)
+      new.potential_payout_cents, new.leg_count, new.rule_set_version, new.placed_at)
      is distinct from
      (old.entry_id, old.placed_by, old.week, old.type, old.teaser_points, old.stake_cents, old.quoted_american,
-      old.potential_payout_cents, old.rule_set_version, old.placed_at) then
+      old.potential_payout_cents, old.leg_count, old.rule_set_version, old.placed_at) then
     raise exception 'a placed slip cannot be changed';
   end if;
   if old.status in ('void', 'undone') and new.status <> old.status then
