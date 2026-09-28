@@ -6,12 +6,13 @@ import { applyTheme } from "./pages/Profile.tsx";
 import "./styles.css";
 
 applyTheme();
-const api = makeApi();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ApiContext.Provider value={api}>
-      <App />
-    </ApiContext.Provider>
-  </StrictMode>,
-);
+makeApi().then((api) => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <ApiContext.Provider value={api}>
+        <App />
+      </ApiContext.Provider>
+    </StrictMode>,
+  );
+});

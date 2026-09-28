@@ -27,9 +27,7 @@ export function Picks() {
   const isOpenWeek = week === open?.week;
 
   const voidSlip = me.isAdmin
-    ? async (id: string) => {
-        const reason = window.prompt("Why is this bet being voided? This goes in the admin log that every member can read.");
-        if (!reason) return;
+    ? async (id: string, reason: string) => {
         try {
           await api.adminVoidSlip(id, reason);
           slips.reload();

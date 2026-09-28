@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { HashRouter, MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Shell } from "./components/Shell.tsx";
 import { Loading } from "./components/ui.tsx";
 import { useApi } from "./lib/api.ts";
@@ -36,10 +36,12 @@ function SignedIn() {
   const league = useLoad(() => api.league(), [], 120_000);
   if (me.error) return <div className="signin"><div className="card stack"><b>Couldn't load your account.</b><span className="small muted">{me.error}</span><button className="btn" onClick={() => api.signOut()}>Sign out</button></div></div>;
   if (!me.data) return <Loading what="Loading your account" />;
+  // Pages uses #/ routes; the demo page embedded elsewhere keeps its route in memory.
+  const Router = import.meta.env.VITE_ROUTER === "memory" ? MemoryRouter : HashRouter;
   return (
     <MeContext.Provider value={me.data}>
       <SlipProvider>
-        <HashRouter>
+        <Router>
           <Shell me={me.data} league={league.data}>
             <Routes>
               <Route path="/" element={<Standings />} />
@@ -53,7 +55,7 @@ function SignedIn() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Shell>
-        </HashRouter>
+        </Router>
       </SlipProvider>
     </MeContext.Provider>
   );

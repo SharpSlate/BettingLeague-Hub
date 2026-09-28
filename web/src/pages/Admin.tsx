@@ -81,6 +81,7 @@ function Status({ reload }: { reload: () => void }) {
   const api = useApi();
   const league = useLoad(() => api.league(), []);
   const [reason, setReason] = useState("");
+  const [armed, setArmed] = useState(false);
   const lg = league.data;
   return (
     <div className="grid-2">
@@ -103,10 +104,14 @@ function Status({ reload }: { reload: () => void }) {
         note="Runs every 10 minutes on its own. It only calls the Odds API while a game is in progress.">
         <span />
       </Action>
-      <Action title="Open the next week" submit="Open next week"
+      <Action title="Open the next week" submit={armed ? `Yes, close ${lg?.openWeek?.label ?? "this week"} and open the next` : "Open next week"}
         note="The next week opens by itself once every game of this week is final and graded. Use this only around a postponed game. Any shortfall on the 30% minimum is deducted when the week closes."
         onSubmit={async () => {
-          if (!window.confirm("Close this week and open the next one now?")) return "Cancelled.";
+          if (!armed) {
+            setArmed(true);
+            return "Click the button again to confirm.";
+          }
+          setArmed(false);
           const w = await api.adminOpenNextWeek(reason);
           league.reload();
           reload();

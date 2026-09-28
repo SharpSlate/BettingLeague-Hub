@@ -10,11 +10,13 @@ export function BetCard({ slip, showEntry = true, undoMinutes = 0, onUndo, onVoi
   slip: SlipView;
   showEntry?: boolean;
   undoMinutes?: number;
-  onUndo?: (id: string) => void;
-  onVoid?: (id: string) => void;
+  onUndo?: (id: string) => void | Promise<void>;
+  onVoid?: (id: string, reason: string) => Promise<void>;
 }) {
   const now = useNow(1000);
   const [busy, setBusy] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const [reason, setReason] = useState("");
   const hidden = slip.legCount - slip.legs.length;
   const firstKick = Math.min(...slip.legs.map((l) => Date.parse(l.game.kickoffAt)));
   const undoLeft = slip.placedAt ? Date.parse(slip.placedAt) + undoMinutes * 60_000 - now : 0;
@@ -63,8 +65,20 @@ export function BetCard({ slip, showEntry = true, undoMinutes = 0, onUndo, onVoi
               Undo ({Math.floor(undoLeft / 60000)}:{String(Math.floor((undoLeft % 60000) / 1000)).padStart(2, "0")})
             </button>
           ) : null}
-          {onVoid && slip.status !== "void" ? <button className="btn small danger" onClick={() => onVoid(slip.id)}>Void…</button> : null}
+          {onVoid && slip.status !== "void" && !voiding ? <button className="btn small danger" onClick={() => setVoiding(true)}>Void…</button> : null}
         </div>
+      ) : null}
+      {voiding && onVoid ? (
+        <form className="stack-sm" onSubmit={async (e) => { e.preventDefault(); setBusy(true); try { await onVoid(slip.id, reason); setVoiding(false); } finally { setBusy(false); } }}>
+          <label className="field">
+            <span>Why is this bet being voided? Every member can read this in the admin log.</span>
+            <input className="input" required minLength={3} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+          <div className="row">
+            <button className="btn small danger" disabled={busy || reason.trim().length < 3}>Void bet</button>
+            <button type="button" className="btn small" onClick={() => setVoiding(false)}>Cancel</button>
+          </div>
+        </form>
       ) : null}
     </article>
   );
