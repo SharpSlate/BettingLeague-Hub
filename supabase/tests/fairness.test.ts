@@ -39,6 +39,7 @@ const GAMES: [id: string, hours: number, home: string, away: string][] = [
   ["UNDO2", 5, "Detroit Lions", "Green Bay Packers"],
   ["UNDO3", 5, "Miami Dolphins", "New York Jets"],
   ["FLAG", 5, "Houston Texans", "Tennessee Titans"],
+  ["PROBE", 5, "Denver Broncos", "Las Vegas Raiders"],
 ];
 
 type Pick = { id: string; market: "spread" | "total" | "moneyline"; side: string };
@@ -144,6 +145,19 @@ describe("both sides of a game across separate bets", () => {
     } finally {
       await setRule("{acrossBets,oppositeSides}", false);
     }
+  });
+
+  it("a manager added after a bet can't find its side by trying the other one", async () => {
+    // Bets placed before a manager joined stay hidden from them until kickoff, so the
+    // other side isn't refused for them (the entry can end up on both sides this way).
+    const commish = await makeUser(db, "commish@example.com", "Commish");
+    await db.q(member(owner), "select public.admin_set_admin($1, true)", [commish]);
+    await bet(aliceEntry, alice, { id: "PROBE", market: "spread", side: "home" });
+    await db.q(member(commish), "select public.admin_set_manager($1, $2, true)", [aliceEntry, owner]);
+    await bet(aliceEntry, owner, { id: "PROBE", market: "moneyline", side: "away" });
+    // Alice sees both bets, so she's held to the rule.
+    await fails(bet(aliceEntry, alice, { id: "PROBE", market: "spread", side: "away" }), "opposite_side");
+    await db.q(member(commish), "select public.admin_set_manager($1, $2, false)", [aliceEntry, owner]);
   });
 
   it("rules missing the setting, or the undo one, can't be published", async () => {

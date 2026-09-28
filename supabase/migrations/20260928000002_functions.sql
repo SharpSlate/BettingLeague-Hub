@@ -594,14 +594,16 @@ begin
   -- An entry can't back both teams in one game (by spread or moneyline, in any mix), or
   -- both the over and the under, across its bets: betting both sides would meet the weekly
   -- minimum for the cost of the vig. The entry lock above makes two bets placed at once
-  -- take turns, so the second sees the first. (Legs within one slip follow its same-game
-  -- rules instead.)
+  -- take turns, so the second sees the first. Only bets the member can already see count:
+  -- a manager added mid-week mustn't learn a hidden pick by being refused the other side.
+  -- (Legs within one slip follow its same-game rules instead.)
   if not coalesce((v_doc -> 'acrossBets' ->> 'oppositeSides')::boolean, false) and exists (
     select 1
     from jsonb_array_elements(p_legs) x
     join public.slip_legs l on l.game_id::text = lower(x ->> 'gameId')
     join public.slips s on s.id = l.slip_id
     where s.entry_id = p_entry and s.status = 'pending'
+      and (s.placed_by = p_user or app.managed_at(s.entry_id, s.placed_at, p_user))
       and (l.market = 'total') = (x ->> 'market' = 'total')
       and l.side <> x ->> 'side'
   ) then
