@@ -89,6 +89,8 @@ export class SupabaseApi implements Api {
       pullWindowStart: String(s.pull_window_start).slice(0, 5),
       pullWindowEnd: String(s.pull_window_end).slice(0, 5),
       pullEveryMinutes: s.pull_every_minutes,
+      pullNearKickoffMinutes: s.pull_near_kickoff_minutes,
+      nearKickoffHours: s.near_kickoff_hours,
       books: s.books,
       lastPullAt: pull.data?.at ?? null,
       creditsRemaining: credits.data?.credits_remaining ?? null,
@@ -224,7 +226,9 @@ export class SupabaseApi implements Api {
   }
 
   async undoSlip(slipId: string) {
-    check(await this.db.rpc("undo_slip", { p_slip: slipId }));
+    // Through the bet service, which refreshes the lines first: undo is refused once a
+    // line on the bet has moved.
+    await this.invoke("place-slip", { action: "undo", slipId });
   }
   async setDisplayName(name: string) {
     check(await this.db.rpc("set_display_name", { p_name: name }));

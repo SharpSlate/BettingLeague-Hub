@@ -142,8 +142,9 @@ as $$
   )
 $$;
 
--- A leg is revealed at its own game's kickoff under the default rule; otherwise with its slip.
-create or replace function app.can_see_leg(p_slip uuid, p_game uuid) returns boolean
+-- Whether a leg is out for everyone to see: its bet wasn't undone, and the leg has been
+-- revealed, at its own game's kickoff under the default rule, otherwise with its slip.
+create or replace function app.leg_public(p_slip uuid, p_game uuid) returns boolean
 language sql stable security definer set search_path = public, pg_temp
 as $$
   select exists (
@@ -152,17 +153,25 @@ as $$
     join public.rule_sets r on r.version = s.rule_set_version
     join public.games g on g.id = p_game
     where s.id = p_slip
-      and (
-        s.placed_by = auth.uid()
-        or app.managed_at(s.entry_id, s.placed_at)
-        or (
-          s.status <> 'undone'
-          and case r.document ->> 'visibility'
-                when 'kickoff_per_leg' then g.kickoff_at <= now()
-                else app.slip_reveal_at(s.id) <= now()
-              end
-        )
-      )
+      and s.status <> 'undone'
+      and case r.document ->> 'visibility'
+            when 'kickoff_per_leg' then g.kickoff_at <= now()
+            else app.slip_reveal_at(s.id) <= now()
+          end
+  )
+$$;
+
+-- Whoever placed a bet, and the entry's managers as of when it was placed, see its legs
+-- from the start; everyone else once they're public.
+create or replace function app.can_see_leg(p_slip uuid, p_game uuid) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.slips s
+    join public.games g on g.id = p_game
+    where s.id = p_slip
+      and (s.placed_by = auth.uid() or app.managed_at(s.entry_id, s.placed_at) or app.leg_public(s.id, g.id))
   )
 $$;
 
@@ -385,6 +394,17 @@ as $$
     end
 $$;
 
+-- How many scheduled games lock for betting within the next p_hours: the line pulls
+-- run more often then.
+create or replace function public.games_starting_soon_internal(p_now timestamptz, p_hours int) returns int
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select count(*)::int from public.games g
+  where g.status = 'scheduled'
+    and least(g.kickoff_at, g.feed_commence) > p_now
+    and least(g.kickoff_at, g.feed_commence) <= p_now + make_interval(hours => p_hours)
+$$;
+
 -- Records a failed (or skipped) pull so the site can show it and the guard can see it.
 create or replace function public.record_pull_internal(
   p_kind text, p_trigger text, p_ok boolean, p_error text, p_credits_used int, p_credits_remaining int
@@ -571,6 +591,23 @@ begin
   if p_stake_cents > app.available_cents(p_entry) then raise exception 'insufficient_units'; end if;
   if p_potential_payout_cents is null or p_potential_payout_cents <= p_stake_cents then raise exception 'bad_quote'; end if;
 
+  -- An entry can't back both teams in one game (by spread or moneyline, in any mix), or
+  -- both the over and the under, across its bets: betting both sides would meet the weekly
+  -- minimum for the cost of the vig. The entry lock above makes two bets placed at once
+  -- take turns, so the second sees the first. (Legs within one slip follow its same-game
+  -- rules instead.)
+  if not coalesce((v_doc -> 'acrossBets' ->> 'oppositeSides')::boolean, false) and exists (
+    select 1
+    from jsonb_array_elements(p_legs) x
+    join public.slip_legs l on l.game_id::text = lower(x ->> 'gameId')
+    join public.slips s on s.id = l.slip_id
+    where s.entry_id = p_entry and s.status = 'pending'
+      and (l.market = 'total') = (x ->> 'market' = 'total')
+      and l.side <> x ->> 'side'
+  ) then
+    raise exception 'opposite_side';
+  end if;
+
   v_now := clock_timestamp();
   -- A game's betting closes at its kickoff or at the feed's own start time, whichever
   -- comes first (see games.feed_commence).
@@ -646,30 +683,49 @@ create or replace function public.user_id_by_email_internal(p_email text) return
 language sql stable security definer set search_path = public, pg_temp
 as $$ select id from auth.users where lower(email) = lower(trim(p_email)) $$;
 
--- A member undoes their own bet within the undo window, before any of its games
--- starts, while its week is still open (so an early close can't be dodged).
-create or replace function public.undo_slip(p_slip uuid) returns void
+-- A member undoes a bet on an entry they manage, within the undo window, before any of
+-- its games starts, while its week is still open (so an early close can't be dodged),
+-- and, unless the rules say otherwise, only while every one of its lines is unchanged:
+-- undo is for fixing mistakes, not for taking a bet back once news has moved its line.
+-- A line that's come off the board counts as moved. The place-slip Edge Function
+-- refreshes the lines first and then calls this; members can't call it themselves, so
+-- they can't undo against lines the site hasn't refreshed.
+create or replace function public.undo_slip_internal(p_slip uuid, p_user uuid) returns void
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
   v public.slips%rowtype;
-  v_minutes numeric;
+  v_doc jsonb;
   v_now timestamptz;
 begin
   -- Lock the entry first, as placing and closing a week do, so an undo can't slip
   -- in while the week's minimum is being worked out.
   perform 1 from public.entries e join public.slips s on s.entry_id = e.id where s.id = p_slip for no key update of e;
   select * into v from public.slips where id = p_slip for update;
-  if not found or not app.manages(v.entry_id) then raise exception 'not_found'; end if;
+  if not found or not app.manages(v.entry_id, p_user) then raise exception 'not_found'; end if;
   if v.status <> 'pending' then raise exception 'not_pending'; end if;
   if not exists (select 1 from public.weeks where week = v.week and status = 'open') then raise exception 'week_closed'; end if;
   v_now := clock_timestamp();
-  select (document ->> 'undoMinutes')::numeric into v_minutes from public.rule_sets where version = v.rule_set_version;
-  if v_now > v.placed_at + make_interval(secs => coalesce(v_minutes, 0) * 60) then raise exception 'undo_window_passed'; end if;
+  select document into v_doc from public.rule_sets where version = v.rule_set_version;
+  if v_now > v.placed_at + make_interval(secs => coalesce((v_doc ->> 'undoMinutes')::numeric, 0) * 60) then raise exception 'undo_window_passed'; end if;
   if app.slip_locks_at(v.id) <= v_now then raise exception 'game_started'; end if;
+  -- A leg's line has moved if its number has, or its price has where the price is what
+  -- the bet was paid at (a flat-priced spread or total keeps its flat price).
+  if not coalesce((v_doc ->> 'undoAfterLineMove')::boolean, false) and exists (
+    select 1
+    from public.slip_legs l
+    left join public.current_lines cl on cl.game_id = l.game_id and cl.market = l.market and cl.side = l.side
+    where l.slip_id = v.id
+      and (cl.game_id is null
+           or cl.point is distinct from l.point
+           or (cl.price <> l.price
+               and not (v.type <> 'teaser' and v_doc -> 'pricing' ->> 'straight' = 'flat' and l.market <> 'moneyline')))
+  ) then
+    raise exception 'undo_line_moved';
+  end if;
   update public.slips set status = 'undone', undone_at = v_now where id = p_slip;
   insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, created_by)
-  values (v.entry_id, v.stake_cents, 'undo', v.id, v.week, auth.uid());
+  values (v.entry_id, v.stake_cents, 'undo', v.id, v.week, p_user);
 end $$;
 
 -- Settles a slip with the grade the grading job computed from the slip's own rule set.
@@ -953,6 +1009,9 @@ begin
   if exists (select 1 from jsonb_array_elements(p_document #> '{betTypes,teaser,points}') x where jsonb_typeof(x) <> 'number') then
     raise exception 'bad_rules';
   end if;
+  foreach v_path in array array['{undoAfterLineMove}', '{acrossBets,oppositeSides}'] loop
+    if jsonb_typeof(p_document #> v_path::text[]) is distinct from 'boolean' then raise exception 'bad_rules'; end if;
+  end loop;
   select coalesce(max(version), 0) + 1 into v_version from public.rule_sets;
   insert into public.rule_sets (version, effective_week, document, note, created_by)
   values (v_version, p_effective_week, p_document, coalesce(p_note, ''), p_actor);
@@ -1484,8 +1543,9 @@ begin
     jsonb_build_object('status', 'void'), v_reason);
 end $$;
 
--- Recent failed pulls and grading problems, with their (already masked) error text,
--- for the admin screens only. Members can't read line_pulls.error.
+-- Recent failed pulls, grading problems, games that need a hand, and entries sharing a
+-- manager that bet against each other, for the admin screens only. Members can't read
+-- line_pulls.error.
 create or replace function public.admin_recent_problems(p_limit int default 10)
 returns table (at timestamptz, kind text, trigger text, error text)
 language plpgsql stable security definer set search_path = public, pg_temp
@@ -1510,6 +1570,34 @@ begin
              format('%s at %s should have started by now but has no score yet, so betting on it is closed. If it was postponed, mark it postponed; otherwise the score feed may be behind.', ta.short_name, th.short_name)
       from public.games g join public.teams th on th.abbr = g.home_team join public.teams ta on ta.abbr = g.away_team
       where g.status = 'scheduled' and least(g.kickoff_at, g.feed_commence) < now() - interval '1 hour'
+      union all
+      -- Two entries with a manager in common on opposite sides of one game (both teams, or
+      -- the over and the under), for the commissioner to look at. Only once both picks are
+      -- public: before that the flag would give hidden picks away, admins included.
+      select max(g.kickoff_at), 'fair_play', 'check',
+             format('%s and %s, which share a manager (%s), took opposite sides of %s at %s.',
+                    least(ea.name, eb.name), greatest(ea.name, eb.name),
+                    (select string_agg(p.display_name, ', ' order by p.display_name)
+                       from public.entry_managers ma
+                       join public.entry_managers mb on mb.user_id = ma.user_id and mb.entry_id = eb.id
+                       join public.profiles p on p.id = ma.user_id
+                      where ma.entry_id = ea.id),
+                    ta.short_name, th.short_name)
+      from public.slip_legs la
+      join public.slips sa on sa.id = la.slip_id
+      join public.slip_legs lb on lb.game_id = la.game_id
+      join public.slips sb on sb.id = lb.slip_id and sb.entry_id > sa.entry_id
+      join public.entries ea on ea.id = sa.entry_id
+      join public.entries eb on eb.id = sb.entry_id
+      join public.games g on g.id = la.game_id
+      join public.teams th on th.abbr = g.home_team join public.teams ta on ta.abbr = g.away_team
+      where sa.status not in ('undone', 'void') and sb.status not in ('undone', 'void')
+        and (la.market = 'total') = (lb.market = 'total') and la.side <> lb.side
+        and g.kickoff_at > now() - interval '7 days'
+        and exists (select 1 from public.entry_managers ma join public.entry_managers mb on mb.user_id = ma.user_id
+                    where ma.entry_id = sa.entry_id and mb.entry_id = sb.entry_id)
+        and app.leg_public(sa.id, la.game_id) and app.leg_public(sb.id, lb.game_id)
+      group by ea.id, ea.name, eb.id, eb.name, g.id, th.short_name, ta.short_name
       union all
       -- A postponed game the score pulls have stopped checking.
       select coalesce(g.rescheduled_at, g.kickoff_at) + interval '3 days', 'game', 'check',

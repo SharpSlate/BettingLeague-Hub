@@ -73,6 +73,8 @@ export function validateRuleSet(r: RuleSet): Problem[] {
     add("stake_pct", "The stake cap must be between 0 and 100 percent of the bank, or blank for none.");
   }
   if (!(num(r.undoMinutes) && r.undoMinutes >= 0 && r.undoMinutes <= 60)) add("undo", "The undo window must be 0 to 60 minutes.");
+  if (typeof r.undoAfterLineMove !== "boolean") add("undo_line_move", "Say whether a bet can be undone after its line moves.");
+  if (typeof r.acrossBets?.oppositeSides !== "boolean") add("across_bets", "Say whether an entry can bet both sides of a game in separate bets.");
   if (!(num(r.weeklyMinimum.pct) && r.weeklyMinimum.pct >= 0 && r.weeklyMinimum.pct <= 100)) add("weekly_pct", "The weekly minimum must be 0 to 100 percent.");
   if (!["deduct_shortfall", "warn", "none"].includes(r.weeklyMinimum.penalty)) add("weekly_penalty", "Unknown weekly-minimum penalty.");
   if (!["kickoff_per_leg", "on_placement", "week_first_kickoff"].includes(r.visibility)) add("visibility", "Unknown visibility rule.");

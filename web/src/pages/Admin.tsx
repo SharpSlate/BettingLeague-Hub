@@ -79,7 +79,7 @@ export function Admin() {
   );
 }
 
-const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game" };
+const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game", fair_play: "Fair play" };
 
 function Status({ reload }: { reload: () => void }) {
   const api = useApi();

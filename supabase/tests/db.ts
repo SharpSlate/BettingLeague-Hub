@@ -140,6 +140,11 @@ export async function place(db: Db, a: PlaceArgs, c?: pg.PoolClient): Promise<st
   return (await db.q(service, sql, params))[0].id;
 }
 
+/** Undoes a bet for a member, as the place-slip Edge Function does after refreshing the lines. */
+export async function undo(db: Db, slip: string, user: string): Promise<void> {
+  await db.q(service, "select public.undo_slip_internal($1, $2)", [slip, user]);
+}
+
 /** Expects the promise to fail with a message containing the given text. */
 export async function fails(p: Promise<unknown>, text: string): Promise<void> {
   try {

@@ -3,7 +3,7 @@
 // exactly the entries they manage: a shared entry's bets show to both its owners before
 // kickoff, and the co-owner's own entry stays hidden from the owner like anyone else's.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { centerOnWeek4, event, fails, freshDb, gameId, hoursFromNow, ingest, makeUser, member, place, standardLines, type Db } from "./db.ts";
+import { centerOnWeek4, event, fails, freshDb, gameId, hoursFromNow, ingest, makeUser, member, place, standardLines, undo, type Db } from "./db.ts";
 
 let db: Db;
 let you: string, pat: string, sam: string;
@@ -97,7 +97,7 @@ describe("two shared entries and a co-owner's own entry", () => {
   });
 
   it("either owner can undo a bet on the shared entry within the undo window, but not one on another entry", async () => {
-    await db.q(member(you), "select public.undo_slip($1)", [bets.patOnShared]);
-    await fails(db.q(member(you), "select public.undo_slip($1)", [bets.patsOwn]), "not_found");
+    await undo(db, bets.patOnShared!, you);
+    await fails(undo(db, bets.patsOwn!, you), "not_found");
   });
 });

@@ -146,12 +146,14 @@ describe("checkPlacement", () => {
   const now = new Date("2026-10-01T12:00:00Z");
   const games = new Map<string, GameInfo>([
     ["a", { id: "a", locksAt: new Date("2026-10-04T17:00:00Z"), status: "scheduled", week: 5 }],
+    ["b", { id: "b", locksAt: new Date("2026-10-04T17:00:00Z"), status: "scheduled", week: 5 }],
     ["old", { id: "old", locksAt: new Date("2026-10-01T11:00:00Z"), status: "scheduled", week: 5 }],
     ["next", { id: "next", locksAt: new Date("2026-10-11T17:00:00Z"), status: "scheduled", week: 6 }],
   ]);
   const lines: CurrentLine[] = [
     { gameId: "a", market: "spread", side: "home", point: -3, price: -112, source: "draftkings" },
     { gameId: "a", market: "total", side: "over", point: 47.5, price: -110, source: "draftkings" },
+    { gameId: "b", market: "total", side: "over", point: 41.5, price: -105, source: "draftkings" },
   ];
   const ctx = { availableCents: 1_000_000 };
   const straight = (point: number, price: number, gameId = "a") => ({
@@ -188,7 +190,7 @@ describe("checkPlacement", () => {
       stakeCents: 10_000,
       legs: [
         { gameId: "a", market: "spread" as const, side: "home" as const, point: -3, price: -110 },
-        { gameId: "a", market: "total" as const, side: "over" as const, point: 47.5, price: -110 },
+        { gameId: "b", market: "total" as const, side: "over" as const, point: 41.5, price: -110 },
       ],
     };
     expect(checkPlacement(t, DAY_ONE_RULES, ctx, 5, games, lines, now)).toMatchObject({ ok: true, quote: { american: -110, payoutCents: 19_091 } });
@@ -200,6 +202,9 @@ class FakeStore implements Store {
     timezone: "America/New_York",
     pullWindowStart: "08:00",
     pullWindowEnd: "01:00",
+    pullEveryMinutes: 30,
+    pullNearKickoffMinutes: 10,
+    nearKickoffHours: 3,
     refreshOnBetSeconds: 120,
     maxLineAgeMinutes: 35,
     creditFloor: 5_000,
@@ -222,7 +227,9 @@ class FakeStore implements Store {
 
   async settings() { return this.settingsValue; }
   async lastCredits() { return this.credits; }
-  async lastGoodLinesPull() { return null; }
+  lastPull: Date | null = null;
+  startingSoon = 0;
+  async lastGoodLinesPull() { return this.lastPull; }
   async ingestLines(trigger: string, events: NormalizedEvent[], _cost: number | null, remaining: number | null) {
     if (this.failIngest) throw new Error("connection reset");
     this.lines = events;
@@ -241,6 +248,7 @@ class FakeStore implements Store {
   }
   async claimBetRefresh() { return this.claimOk; }
   async gamesAwaitingScores() { return this.awaiting; }
+  async gamesStartingSoon() { return this.startingSoon; }
   async pendingSlips() { return this.pending; }
   async games(ids: string[]) { return new Map([...this.gameMap].filter(([k]) => ids.includes(k))); }
   async settle(s: { slipId: string }) {
@@ -276,6 +284,24 @@ describe("pullLines", () => {
     expect((await pullLines(store, "KEY", f, "schedule", threeAm)).status).toBe("skipped");
     expect((await pullLines(store, "KEY", f, "bet", threeAm)).status).toBe("pulled");
     expect(f.calls).toHaveLength(1);
+  });
+  it("pulls every 30 minutes, and every 10 in the 3 hours before a kickoff", async () => {
+    const store = new FakeStore();
+    const f = fakeFetch(fixture("odds.json"));
+    const ago = (min: number) => new Date(inWindow.getTime() - min * 60_000);
+    store.lastPull = ago(20);
+    expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toEqual({ status: "skipped", reason: "not due yet" });
+    store.lastPull = ago(28); // the last pull finished a little after its 10-minute tick
+    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
+    store.startingSoon = 1;
+    store.lastPull = ago(5);
+    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("skipped");
+    store.lastPull = ago(9);
+    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
+    // A bet's refresh isn't held to the schedule (its own limits decide).
+    store.lastPull = ago(1);
+    expect((await pullLines(store, "KEY", f, "bet", inWindow)).status).toBe("pulled");
+    expect(f.calls).toHaveLength(3);
   });
   it("stops at the credit floor, then probes again after six hours", async () => {
     const store = new FakeStore();

@@ -13,6 +13,7 @@ import {
   place,
   service,
   standardLines,
+  undo,
   type Db,
 } from "./db.ts";
 
@@ -88,7 +89,7 @@ describe("closing a week", () => {
     aliceSlips.push(await place(db, { entry: aliceEntry, user: alice, type: "straight", stakeCents: 100_000, potentialPayoutCents: 190_910, legs: [leg(gA)] }));
     aliceSlips.push(await place(db, { entry: aliceEntry, user: alice, type: "straight", stakeCents: 100_000, potentialPayoutCents: 190_910, legs: [leg(gB)] }));
     const undone = await place(db, { entry: aliceEntry, user: alice, type: "straight", stakeCents: 50_000, legs: [leg(gB)] });
-    await db.q(member(alice), "select public.undo_slip($1)", [undone]);
+    await undo(db, undone, alice);
     bobSlip = await place(db, { entry: bobEntry, user: bob, type: "straight", stakeCents: 500_000, potentialPayoutCents: 954_546, legs: [leg(gA)] });
   });
 

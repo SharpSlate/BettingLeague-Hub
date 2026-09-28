@@ -1,8 +1,9 @@
 import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
 import { clock, odds, point, toCents, units } from "../lib/format.ts";
-import { pushRuleText } from "../lib/rules-text.ts";
+import { pushRuleText, undoText } from "../lib/rules-text.ts";
 import { matchupText, pickText, useSlip, type Pick } from "../lib/slip.tsx";
 import type { MyEntry } from "../lib/types.ts";
 import { Segmented } from "./ui.tsx";
@@ -245,7 +246,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
       </button>
       <p className="rules-note">
         {mode === "teaser" ? pushRuleText(rules) : mode === "parlay" ? "A pushed leg drops out and the rest are multiplied." : "A push returns your stake."}{" "}
-        Each leg locks at its game's kickoff. You can undo within {rules.undoMinutes} minutes.
+        Each leg locks at its game's kickoff. {undoText(rules)} <Link to="/league">All the rules</Link>
       </p>
     </div>
   );

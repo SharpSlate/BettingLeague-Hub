@@ -75,6 +75,33 @@ export function validateSlip(slip: SlipInput, rules: RuleSet, ctx: ValidationCon
   return problems;
 }
 
+/** A leg as far as opposite sides go: its game, market and side. */
+export type LegPick = Pick<Leg, "gameId" | "market" | "side">;
+
+/**
+ * Whether two picks take opposite sides of one game: both teams, by spread or moneyline
+ * in any mix, or the over and the under.
+ */
+export function oppositeSides(a: LegPick, b: LegPick): boolean {
+  return a.gameId.toLowerCase() === b.gameId.toLowerCase() && (a.market === "total") === (b.market === "total") && a.side !== b.side;
+}
+
+/**
+ * Checks a new slip's legs against the entry's pending bets. Unless the rules allow it,
+ * an entry can't bet both sides of a game in separate bets (place_slip_internal enforces
+ * the same).
+ */
+export function checkAcrossBets(legs: LegPick[], pending: LegPick[], rules: RuleSet): Problem[] {
+  if (rules.acrossBets.oppositeSides) return [];
+  const problems: Problem[] = [];
+  legs.forEach((leg, i) => {
+    if (pending.some((p) => oppositeSides(leg, p))) {
+      problems.push({ code: "opposite_side", message: "You already have a bet on the other side of this game. An entry can't bet both teams in a game, or both the over and the under.", leg: i });
+    }
+  });
+  return problems;
+}
+
 function checkLegs(legs: Leg[], markets: Market[], type: keyof typeof TYPE_NAME, add: Add): void {
   legs.forEach((leg, i) => {
     if (!leg.gameId) add("leg_game", "Pick a game.", i);

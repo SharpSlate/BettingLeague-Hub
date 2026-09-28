@@ -26,9 +26,10 @@ Members' browsers talk to Supabase directly for reading. Every write that touche
    - checks that the week is open;
    - checks that each leg's game hasn't kicked off, using the database clock (never the browser's);
    - checks that the stake is within the rule limits and the entry's available units, and that the lines are still current;
+   - checks that the entry has no pending bet on the other side of any of the slip's games (the other team, by spread or moneyline, or the other side of the total), unless the rules allow it;
    - writes the slip, its legs and a ledger debit for the stake, stamped with the rule-set version and the person who placed it.
 
-A member can undo a bet within 5 minutes of placing it, as long as none of its games has kicked off; the stake comes back. After that, bets are final.
+A member can undo a bet within 5 minutes of placing it, as long as none of its games has kicked off and none of its lines has moved since; the stake comes back. After that, bets are final. Undo goes through the same Edge Function, which refreshes the lines first (as for a bet) and then calls `undo_slip_internal`; members can't call that themselves, so they can't undo against lines the site hasn't refreshed. A line that's come off the board counts as moved.
 
 ## 3. Rules engine
 
@@ -43,16 +44,17 @@ The league's rules are a single JSON document. Every change creates a new versio
 | Pricing | straight-bet prices | DraftKings' posted price |
 | Parlay | legs | 2–10, any mix of spread / total / moneyline |
 | Parlay | price | the legs' decimal odds multiplied together |
-| Parlay | same game | allowed: spread + total, moneyline + total. Blocked: spread + either moneyline, and both sides of one market |
+| Parlay | same game | no two legs from the same game (their results are related, so multiplying their odds overpays). The commissioner can allow each pairing |
 | Teaser | legs | 2–10, any mix of spreads and totals; moneylines can't be teased |
 | Teaser | points | 6, 6.5, 7 |
-| Teaser | same game | everything allowed |
+| Teaser | same game | no two legs from the same game, as for parlays |
 | Teaser | price table | by (legs, points): Splash's 2- and 3-leg rows, plus the day-one rows below |
 | Push rules | straight | stake back |
 | Push rules | parlay | the leg drops out and the odds are recomputed; all legs pushed refunds |
 | Push rules | teaser | **reduce**: the table price for the legs left (at least the 2-leg price); all pushed refunds |
 | Stakes | minimum / maximum | 1 unit / 250,000 units (Splash's max), and never more than the entry's available units |
-| Undo | window | 5 minutes after placing, and only before any of the bet's games kicks off |
+| Undo | window | 5 minutes after placing, only before any of the bet's games kicks off, and only while none of its lines has moved (a setting) |
+| Across bets | both sides of a game | blocked: an entry can't bet both teams (by spread or moneyline, in any mix) or both the over and the under, in separate bets |
 | Weekly minimum | percent, rounding | 30%, rounded up |
 | Weekly minimum | penalty | the shortfall is deducted when the week closes |
 | Visibility | others' picks | at each game's kickoff, leg by leg |
@@ -72,21 +74,21 @@ The rules code is one TypeScript module with no dependencies. It covers validati
 
 ### Teaser prices for 4–10 legs (day-one default; the commissioner can change them)
 
-Splash only prices 2 and 3 legs. The rows below keep the per-leg break-even that Splash's own 3-leg price implies, rounded down to tidy numbers:
+Splash only prices 2 and 3 legs. For longer cards, each leg past 3 needs 0.35 percentage points more to break even than a leg on Splash's 3-leg card, and each price is rounded down to a tidy number:
 
-| Legs | 6 pts | 6.5 pts | 7 pts |
-|---|---|---|---|
-| 2 (Splash) | −110 | −120 | −130 |
-| 3 (Splash) | +180 | +160 | +140 |
-| 4 | +290 | +255 | +220 |
-| 5 | +455 | +390 | +330 |
-| 6 | +680 | +570 | +475 |
-| 7 | +1000 | +820 | +670 |
-| 8 | +1450 | +1150 | +930 |
-| 9 | +2050 | +1650 | +1250 |
-| 10 | +2950 | +2300 | +1750 |
+| Legs | 6 pts | 6.5 pts | 7 pts | Each 6-point leg must win |
+|---|---|---|---|---|
+| 2 (Splash) | −110 | −120 | −130 | 72.4% |
+| 3 (Splash) | +180 | +160 | +140 | 70.9% |
+| 4 | +285 | +250 | +215 | 71.4% |
+| 5 | +425 | +365 | +310 | 71.8% |
+| 6 | +615 | +520 | +425 | 72.0% |
+| 7 | +860 | +710 | +575 | 72.4% |
+| 8 | +1150 | +955 | +755 | 72.9% |
+| 9 | +1550 | +1250 | +975 | 73.2% |
+| 10 | +2100 | +1600 | +1200 | 73.4% |
 
-The break-even rate per leg is 70.95% at 6 points, 72.72% at 6.5 and 74.69% at 7. Long cards multiply any per-leg edge: a player whose 6-point legs win 75% of the time expects about +18% on a 3-leg card at these prices, but about +72% on a 10-leg card. The commissioner can replace these rows for any future week.
+The first version of these rows held the 3-leg break-even flat for every length (4 legs +290 up to 10 legs +2950 at 6 points). A flat break-even multiplies any per-leg edge: a player whose 6-point legs win 75% of the time expected about +18% on a 3-leg card but about +72% on a 10-leg card. With the rising break-even, that player expects about +18% on 3 legs and +22% to +28% on 4 to 10 legs, so a long card is no longer the place to press an edge. A player whose legs win 72% of the time comes out about even at 6 legs and behind on longer cards, like any long parlay. The owner asked for the change on Sept 28, for the commissioner to review; the commissioner can replace these rows for any future week.
 
 ## 4. Data model
 
@@ -171,7 +173,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 
 | Job | When | What |
 |---|---|---|
-| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers. A slip is checked before it can trigger a refresh, and bet refreshes are limited (one at a time, one per member per 10 minutes and 20 a day, 200 a day in all), so bets can't run the credits down |
+| Pull lines | Checked every 10 minutes, 8:00am–1:00am ET: pulls every 30 minutes, or every 10 in the 3 hours before any game locks, plus when a bet or an undo needs it | One Odds API call for all games (3 credits); stores only changed numbers. A pull for a bet counts toward the schedule. A slip is checked before it can trigger a refresh, and bet refreshes are limited (one at a time, one per member per 5 minutes and 20 a day, 200 a day in all), so bets can't run the credits down |
 | Pull scores | Every 10 minutes, but it calls the API only while a game is live or waiting on a final | Updates scores and statuses (2 credits). A game goes final when two pulls in a row report the same final score, so one bad reading isn't paid out. A game the feed has scores for closes to betting at once |
 | Grade | After each score pull | Settles every slip whose legs are all final, and writes the payout to the ledger. A bet that can't be settled is reported and retried; it doesn't hold up the others or the week |
 | Close / open week | When every game of the open week is final and graded, or when an admin opens the next week | Applies weekly-minimum deductions, records banks and minimums for the new week, opens its games |
@@ -179,7 +181,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 
 Weeks run Tuesday to Monday, Eastern. A game belongs to the week its kickoff falls in unless an admin moves it; week 1 of 2026 started Tuesday, Sept 8. Playoff rounds are labeled by name, and the empty Pro Bowl week is skipped.
 
-The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. A new start time takes two pulls in a row to stick (a game due within the hour follows one reading of an earlier time), and a start already in the past is never taken for a game more than an hour away, since it would show the game's picks early. Betting doesn't wait for the kickoff to move: it closes at the kickoff or at the feed's own start time, whichever comes first. Once a start time the feed reported ahead of time (or read twice in a row) has passed, betting on that game stays closed; a start first reported after it had passed closes betting only until a later reading disagrees. Score pulls run from either time. Scores are ignored for a game that both the league and the feed have more than an hour from its start; a game's first believable score starts it here too, which shows its picks. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in, from the feed (which keeps checking for 3 days from the feed's new start time) or entered by an admin. An admin can close a week early only into a next week whose games are on the board; the season's last week is closed with its own "Close the season" step. The Admin page lists failed pulls, bets the grader couldn't settle, games that should have started an hour ago with no score, and games stuck live or postponed with no final.
+The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. A new start time takes two pulls in a row to stick (a game due within the hour follows one reading of an earlier time), and a start already in the past is never taken for a game more than an hour away, since it would show the game's picks early. Betting doesn't wait for the kickoff to move: it closes at the kickoff or at the feed's own start time, whichever comes first. Once a start time the feed reported ahead of time (or read twice in a row) has passed, betting on that game stays closed; a start first reported after it had passed closes betting only until a later reading disagrees. Score pulls run from either time. Scores are ignored for a game that both the league and the feed have more than an hour from its start; a game's first believable score starts it here too, which shows its picks. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in, from the feed (which keeps checking for 3 days from the feed's new start time) or entered by an admin. An admin can close a week early only into a next week whose games are on the board; the season's last week is closed with its own "Close the season" step. The Admin page lists failed pulls, bets the grader couldn't settle, games that should have started an hour ago with no score, games stuck live or postponed with no final, and two entries that share a manager and took opposite sides of a game in the last week (once both picks are public).
 
 ## 8. Pages (draft; to be checked against the Splash inventory)
 
@@ -232,7 +234,8 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 - **An early close shows totals.** If an admin closes a week while some of its bets are still hidden (a postponed game), the weekly-minimum ledger note shows each entry's total wagered that week, including those bets' stakes (not their picks). The week's totals table itself is readable only through the standings.
 - **Co-managers see totals.** A manager added mid-week sees the entry's available units and at-risk total, which include bets placed before they joined, though not those bets' picks.
 - **Sign-in says who's a member.** Asking for a code for an email that isn't on the list says so. Supabase can add a CAPTCHA to the sign-in form if abuse ever becomes a problem.
-- **Credits under abuse.** Bets can trigger line refreshes, but at most one every 2 minutes overall, one every 10 minutes and 20 a day per member, and 200 a day in all (about 600 credits, whatever anyone sends); past that, bets use the scheduled pulls' lines, which are at most about 30 minutes old. The credit floor stops pulls before the plan runs out.
+- **Credits under abuse, and old lines.** Bets can trigger line refreshes, but at most one every 2 minutes overall, one every 5 minutes and 20 a day per member, and 200 a day in all (about 600 credits, whatever anyone sends); past that, bets use the scheduled pulls' lines, which are at most about 10 minutes old in the 3 hours before a kickoff and about 30 minutes old otherwise. A member who has used up their 20 refreshes for the day could bet a line that old right after news breaks, if no one else's bet has refreshed it. The credit floor stops pulls before the plan runs out.
+- **Entries that share a manager can bet against each other.** The site can't block it without telling one entry about another's hidden pick, so it flags it for the admins once both picks are public; the Rules page says such entries shouldn't. What happens then is a league matter.
 - **Admins are trusted with managers.** An admin can't add themselves to an entry that has other managers or bets riding, and an entry's last manager can't be removed while it has bets riding. But an admin could still join an entry in steps on a quiet day (remove its manager, add themselves, put the manager back), or add a second account of their own as a manager, and see that entry's bets placed afterwards. Every manager change is in the admin log, with the member's and the entry's names, for everyone to see.
 - **A wrong start time from the feed.** Betting on a game closes when the feed's start time passes, even if that time is wrong. A time first reported after it had already passed closes betting only until a later reading disagrees; one reported ahead of time (or read twice in a row) keeps betting closed, since a game that has started must never reopen. Its picks stay hidden until its kickoff here, and the admin page flags a game that should have started an hour ago with no score. To reopen such a game, an admin marks it postponed, pulls lines, and sets it back to scheduled: betting reopens only if the feed then shows a start still ahead, and every step is in the admin log. If the feed says a game is more than an hour away when it's really under way, betting stays open until its kickoff here or until an admin marks it postponed.
 - **The project owner can read everything.** Whoever owns the Supabase project can read the database directly (see section 5).

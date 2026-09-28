@@ -12,6 +12,10 @@ create table public.league_settings (
   pull_window_start time not null default '08:00',
   pull_window_end time not null default '01:00',
   pull_every_minutes int not null default 30,
+  -- ...and this often while a game kicks off within near_kickoff_hours, when inactives,
+  -- weather and late news move lines most. (The scheduler checks every 10 minutes.)
+  pull_near_kickoff_minutes int not null default 10,
+  near_kickoff_hours int not null default 3,
   -- A bet triggers a fresh pull when the last good pull is older than this.
   refresh_on_bet_seconds int not null default 120,
   -- Bets are refused if the last good pull is older than this (unless the line is an admin override).
@@ -25,7 +29,7 @@ create table public.league_settings (
   bet_refresh_claimed_at timestamptz,
   -- A member's bets can trigger at most one refresh this often, and bets as a whole
   -- at most this many a day; past either, bets use the scheduled pulls' lines.
-  bet_refresh_member_minutes int not null default 10,
+  bet_refresh_member_minutes int not null default 5,
   bet_refresh_member_daily_cap int not null default 20,
   bet_refresh_daily_cap int not null default 200
 );

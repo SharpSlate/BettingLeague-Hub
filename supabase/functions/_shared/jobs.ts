@@ -22,6 +22,11 @@ export interface Settings {
   timezone: string;
   pullWindowStart: string;
   pullWindowEnd: string;
+  /** Scheduled pulls come this often... */
+  pullEveryMinutes: number;
+  /** ...or this often while a game locks within nearKickoffHours. */
+  pullNearKickoffMinutes: number;
+  nearKickoffHours: number;
   refreshOnBetSeconds: number;
   /** Bets are refused when the last good pull is older than this. */
   maxLineAgeMinutes: number;
@@ -45,6 +50,8 @@ export interface Store {
   claimBetRefresh(minSeconds: number, userId: string | null): Promise<"claimed" | "recent" | "limit">;
   /** How many games have kicked off in the last 3 days and aren't final or void yet. */
   gamesAwaitingScores(now: Date): Promise<number>;
+  /** How many scheduled games lock for betting within the next `hours`. */
+  gamesStartingSoon(now: Date, hours: number): Promise<number>;
   pendingSlips(): Promise<PendingSlip[]>;
   games(ids: string[]): Promise<Map<string, GameResult>>;
   settle(s: Settlement): Promise<boolean>;
@@ -73,6 +80,13 @@ export function redact(text: string): string {
     .replace(/(api[_-]?key=)[^&\s"']+/gi, "$1[hidden]")
     .replace(/https?:\/\/\S+/g, (url) => url.split("?")[0] + (url.includes("?") ? "?[hidden]" : ""));
 }
+
+/**
+ * The scheduler calls every 10 minutes, and a pull finishes a little after the call that
+ * started it, so a pull counts as due this much early; otherwise every other call would
+ * find the last pull a few seconds short and skip.
+ */
+const DUE_SLACK_MS = 3 * 60_000;
 
 /** After this long without an API response, probe once even if the last count was under the floor (plans reset monthly). */
 const PROBE_AFTER_MS = 6 * 3_600_000;
@@ -131,8 +145,14 @@ export async function pullLines(
   store: Store, apiKey: string, fetchImpl: Fetch, trigger: Trigger, now = new Date(), userId: string | null = null,
 ): Promise<PullOutcome> {
   const s = await store.settings();
-  if (trigger === "schedule" && !inPullWindow(now, s.pullWindowStart, s.pullWindowEnd, s.timezone)) {
-    return { status: "skipped", reason: "outside the pull window" };
+  if (trigger === "schedule") {
+    if (!inPullWindow(now, s.pullWindowStart, s.pullWindowEnd, s.timezone)) return { status: "skipped", reason: "outside the pull window" };
+    // Every pullEveryMinutes, or every pullNearKickoffMinutes while a game is about to
+    // lock. A pull for a bet counts, so a busy afternoon doesn't pull twice as often.
+    const last = await store.lastGoodLinesPull();
+    const soon = (await store.gamesStartingSoon(now, s.nearKickoffHours)) > 0;
+    const every = (soon ? s.pullNearKickoffMinutes : s.pullEveryMinutes) * 60_000;
+    if (last && now.getTime() - last.getTime() < every - DUE_SLACK_MS) return { status: "skipped", reason: "not due yet" };
   }
   const low = await belowCreditFloor(store, s.creditFloor, now);
   if (low !== null) {

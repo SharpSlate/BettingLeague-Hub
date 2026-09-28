@@ -13,6 +13,7 @@ import {
   place,
   service,
   standardLines,
+  undo,
   type Db,
 } from "./db.ts";
 
@@ -278,11 +279,11 @@ describe("undo", () => {
   it("returns the stake within 5 minutes, before kickoff, and never reveals the bet", async () => {
     const id = await place(db, { entry: bobEntry, user: bob, type: "straight", stakeCents: 2_000, legs: [{ gameId: gB, market: "moneyline", side: "away", point: null, price: 240 }] });
     const before = Number((await db.q(member(bob), "select available_cents from public.my_entries() where entry_id = $1", [bobEntry]))[0].available_cents);
-    await fails(db.q(member(alice), "select public.undo_slip($1)", [id]), "not_found");
-    await db.q(member(bob), "select public.undo_slip($1)", [id]);
+    await fails(undo(db, id, alice), "not_found");
+    await undo(db, id, bob);
     const after = Number((await db.q(member(bob), "select available_cents from public.my_entries() where entry_id = $1", [bobEntry]))[0].available_cents);
     expect(after - before).toBe(2_000);
-    await fails(db.q(member(bob), "select public.undo_slip($1)", [id]), "not_pending");
+    await fails(undo(db, id, bob), "not_pending");
     await db.su("update public.games set kickoff_at = now() - interval '1 minute' where id = $1", [gB]);
     expect(await db.q(member(alice), "select id from public.slips where id = $1", [id])).toEqual([]);
     await db.su("update public.games set kickoff_at = now() + interval '3 hours' where id = $1", [gB]);
@@ -299,7 +300,7 @@ describe("undo", () => {
     } finally {
       c.release();
     }
-    await fails(db.q(member(bob), "select public.undo_slip($1)", [id]), "undo_window_passed");
+    await fails(undo(db, id, bob), "undo_window_passed");
   });
 });
 

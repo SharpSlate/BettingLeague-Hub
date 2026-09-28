@@ -80,6 +80,21 @@ export interface RuleSet {
   };
   /** Minutes after placing during which a member may undo a bet (before kickoff). */
   undoMinutes: number;
+  /**
+   * Whether a bet can still be undone once one of its lines has changed since it was
+   * placed. Off, undo is only for fixing mistakes: it can't be used to take back a bet
+   * after news has moved the line against it.
+   */
+  undoAfterLineMove: boolean;
+  /** What an entry's separate bets may do together. (One slip follows its own same-game rules.) */
+  acrossBets: {
+    /**
+     * Whether an entry may back both teams in one game (by spread or moneyline, in any
+     * mix), or both the over and the under, in separate bets. Off, the weekly minimum
+     * can't be met by betting both sides for the cost of the vig.
+     */
+    oppositeSides: boolean;
+  };
   weeklyMinimum: {
     /** Percent of the bank at the start of the week, e.g. 30. */
     pct: number;

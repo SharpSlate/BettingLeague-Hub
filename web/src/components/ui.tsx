@@ -63,6 +63,7 @@ export function errorText(e: unknown): string {
     next_week_not_loaded: "Next week's games aren't on the board yet, so the week can't close into it. Try again once they are, or, if this is the season's last week, close the season.",
     not_pending: "That bet isn't pending any more.",
     undo_window_passed: "The undo window has passed.",
+    undo_line_moved: "A line on that bet has moved since you placed it, so it can't be undone.",
     spread_points_must_mirror: "The two spread numbers must mirror each other (e.g. −3 and +3).",
     total_points_must_match: "Over and under need the same total.",
     last_admin: "The league needs at least one admin.",

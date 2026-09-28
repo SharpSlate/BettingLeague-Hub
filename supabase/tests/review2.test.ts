@@ -15,6 +15,7 @@ import {
   place,
   service,
   standardLines,
+  undo,
   type Db,
   type Event,
 } from "./db.ts";
@@ -140,7 +141,7 @@ describe("regrading on demand", () => {
 describe("bet-triggered line refreshes", () => {
   const claim = async (user: string | null) => (await db.q(service, "select public.claim_bet_refresh_internal(120, $1) as r", [user]))[0].r as string;
   const later = () => db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
-  it("allow one per member every 10 minutes", async () => {
+  it("allow one per member every 5 minutes", async () => {
     expect(await claim(alice)).toBe("claimed");
     await later();
     expect(await claim(alice)).toBe("limit");
@@ -160,7 +161,7 @@ describe("resending a bet", () => {
   const ref = "0a4f5c2e-0000-4000-8000-000000000009";
   const args = () => ({
     entry: aliceEntry, user: alice, type: "straight" as const, stakeCents: 10_000, potentialPayoutCents: 19_091,
-    legs: [{ gameId: ids.EARLY!, market: "spread", side: "away", point: 3, price: -110 }], clientRef: ref,
+    legs: [{ gameId: ids.EARLY!, market: "spread", side: "home", point: -3, price: -110 }], clientRef: ref,
   });
   it("with the same id but a different stake is refused", async () => {
     await place(db, args());
@@ -168,7 +169,7 @@ describe("resending a bet", () => {
   });
   it("whose bet was undone is refused, so the site sends it as a new bet", async () => {
     const [{ id }] = await db.su("select id from public.slips where client_ref = $1", [ref]);
-    await db.q(member(alice), "select public.undo_slip($1)", [id]);
+    await undo(db, id, alice);
     await fails(place(db, args()), "client_ref_used");
   });
 });

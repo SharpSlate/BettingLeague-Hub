@@ -195,7 +195,7 @@ describe("bet-triggered line refreshes", () => {
     await later();
     expect(await claim(alice)).toBe("limit");
     expect(await claim(bob)).toBe("claimed");
-    await db.su("update public.league_settings set bet_refresh_member_minutes = 10, bet_refresh_member_daily_cap = 20");
+    await db.su("update public.league_settings set bet_refresh_member_minutes = 5, bet_refresh_member_daily_cap = 20");
   });
 });
 

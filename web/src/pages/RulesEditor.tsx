@@ -167,10 +167,13 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
       </details>
 
       <details className="card">
-        <summary>Same-game combinations</summary>
-        <div className="body grid-2">
-          <div><h3 style={{ marginBottom: 8 }}>Parlays may combine</h3><SameGame value={doc.betTypes.parlay.sameGame} onChange={(v) => edit((d) => { d.betTypes.parlay.sameGame = v; })} /></div>
-          <div><h3 style={{ marginBottom: 8 }}>Teasers may combine</h3><SameGame value={t.sameGame} onChange={(v) => edit((d) => { d.betTypes.teaser.sameGame = v; })} /></div>
+        <summary>Combining picks</summary>
+        <div className="body stack">
+          <div className="grid-2">
+            <div><h3 style={{ marginBottom: 8 }}>From one game, parlays may combine</h3><SameGame value={doc.betTypes.parlay.sameGame} onChange={(v) => edit((d) => { d.betTypes.parlay.sameGame = v; })} /></div>
+            <div><h3 style={{ marginBottom: 8 }}>From one game, teasers may combine</h3><SameGame value={t.sameGame} onChange={(v) => edit((d) => { d.betTypes.teaser.sameGame = v; })} /></div>
+          </div>
+          <Check label="An entry may bet both sides of a game in separate bets (both teams, or the over and the under)" value={doc.acrossBets.oppositeSides} onChange={(b) => edit((d) => { d.acrossBets.oppositeSides = b; })} />
         </div>
       </details>
 
@@ -192,6 +195,7 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
             </label>
           </div>
           <Num label="Undo window (minutes)" value={doc.undoMinutes} onChange={(n) => edit((d) => { d.undoMinutes = n; })} />
+          <Check label="A bet can still be undone after one of its lines has moved" value={doc.undoAfterLineMove} onChange={(b) => edit((d) => { d.undoAfterLineMove = b; })} />
         </div>
       </details>
 

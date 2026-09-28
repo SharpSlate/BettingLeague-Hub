@@ -26,6 +26,8 @@ export interface League {
   pullWindowStart: string;
   pullWindowEnd: string;
   pullEveryMinutes: number;
+  pullNearKickoffMinutes: number;
+  nearKickoffHours: number;
   books: string[];
   lastPullAt: string | null;
   creditsRemaining: number | null;

@@ -1,5 +1,6 @@
 -- Scheduled jobs on Supabase: pg_cron calls the Edge Functions through pg_net.
--- Lines: every 30 minutes (the function itself skips outside 8am-1am Eastern).
+-- Lines: checked every 10 minutes; the function pulls every 30 minutes, or every 10 in
+-- the 3 hours before a kickoff, and skips outside 8am-1am Eastern.
 -- Scores and grading: every 10 minutes (the function only calls the Odds API while
 -- a game is in progress or waiting on a final score).
 --
@@ -36,7 +37,7 @@ begin
      and exists (select 1 from pg_available_extensions where name = 'pg_net') then
     create extension if not exists pg_cron;
     create extension if not exists pg_net with schema extensions;
-    perform cron.schedule('pull-lines', '*/30 * * * *', 'select app.call_function(''pull-lines'')');
+    perform cron.schedule('pull-lines', '*/10 * * * *', 'select app.call_function(''pull-lines'')');
     perform cron.schedule('pull-scores', '*/10 * * * *', 'select app.call_function(''pull-scores'')');
   end if;
 end $$;

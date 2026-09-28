@@ -1,7 +1,7 @@
 // The demo backend: the whole site on made-up sample data, in memory, with no
 // server. It uses the same shared rules code as the real site, so the slip
 // checks, payouts and grading are the real ones. Everything resets on reload.
-import { DAY_ONE_RULES, requiredMinimumCents, type BetType, type Leg, type RuleSet } from "@rules";
+import { checkAcrossBets, DAY_ONE_RULES, requiredMinimumCents, type BetType, type Leg, type RuleSet } from "@rules";
 import { gradePending, type GameResult, type PendingSlip } from "../../../supabase/functions/_shared/grading.ts";
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
 import { TEAMS, team } from "./teams.ts";
@@ -206,7 +206,7 @@ export class DemoApi implements Api {
     return {
       name: "BALTIMORE DEGENERATES",
       openWeek: { week: OPEN_WEEK, label: `Week ${OPEN_WEEK}`, startsAt: new Date(now - 2 * D).toISOString(), endsAt: new Date(now + 5 * D).toISOString(), status: "open", ruleSetVersion: this.s.rules[0]!.version },
-      timezone: "America/New_York", pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30,
+      timezone: "America/New_York", pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
       books: ["draftkings", "fanduel"], lastPullAt: new Date(this.s.lastPullAt).toISOString(), creditsRemaining: this.s.credits,
     };
   }
@@ -354,6 +354,10 @@ export class DemoApi implements Api {
         ? { ok: false, kind: "moved", message: "A line moved. Check the new number.", lines: check.lines }
         : { ok: false, kind: "invalid", problems: check.problems };
     }
+    // As place_slip_internal does: no betting both sides of a game in separate bets.
+    const pendingLegs = this.s.slips.filter((x) => x.entryId === e.id && x.status === "pending").flatMap((x) => x.legs);
+    const across = checkAcrossBets(req.legs, pendingLegs, rules);
+    if (across.length) return { ok: false, kind: "invalid", problems: across };
     const id = `s-${this.nextId++}`;
     const legs: DLeg[] = req.legs.map((l, i) => {
       const line = lines.find((x) => x.gameId === l.gameId && x.market === l.market && x.side === l.side)!;
@@ -378,6 +382,12 @@ export class DemoApi implements Api {
     if (s.status !== "pending") throw new Error("not_pending");
     if (Date.now() > s.placedAt + DAY_ONE_RULES.undoMinutes * 60_000) throw new Error("undo_window_passed");
     if (this.revealed(s)) throw new Error("game_started");
+    // As undo_slip_internal does: no undo once a line on the bet has moved.
+    const moved = s.legs.some((l) => {
+      const now = this.s.games.find((g) => g.id === l.gameId)?.lines.find((x) => x.market === l.market && x.side === l.side);
+      return !now || now.point !== l.point || now.price !== l.price;
+    });
+    if (moved && !DAY_ONE_RULES.undoAfterLineMove) throw new Error("undo_line_moved");
     s.status = "undone";
     this.entry(s.entryId).ledger.push({ amount: s.stakeCents, kind: "undo", at: Date.now(), note: "" });
   }

@@ -61,6 +61,12 @@ const FRIENDLY: Record<string, string> = {
   line_unavailable: "A line is off the board right now.",
   lines_stale: "The lines couldn't be refreshed. Try again in a minute.",
   line_moved: "A line moved. Check the new number.",
+  opposite_side: "You already have a bet on the other side of this game. An entry can't bet both teams in a game, or both the over and the under.",
+  not_found: "That bet couldn't be found.",
+  not_pending: "That bet isn't pending any more.",
+  week_closed: "That bet's week has closed, so it can't be undone.",
+  undo_window_passed: "The undo window has passed.",
+  undo_line_moved: "A line on that bet has moved since you placed it, so it can't be undone.",
   client_ref_conflict: "That bet couldn't be matched to your slip. Reload and try again.",
   client_ref_used: "That bet was undone or voided. Place it again as a new bet.",
 };

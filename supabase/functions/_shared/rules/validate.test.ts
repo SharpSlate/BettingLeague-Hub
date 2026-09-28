@@ -3,7 +3,7 @@ import { DAY_ONE_RULES } from "./defaults.ts";
 import { quoteSlip, teasedPoint, effectivePrice } from "./price.ts";
 import { validateRuleSet } from "./ruleset.ts";
 import type { Leg, RuleSet, SlipInput } from "./types.ts";
-import { validateSlip, type ValidationContext } from "./validate.ts";
+import { checkAcrossBets, oppositeSides, validateSlip, type ValidationContext } from "./validate.ts";
 
 const spread = (side: "home" | "away", point: number, gameId = "g1", price = -110): Leg => ({ gameId, market: "spread", side, point, price });
 const total = (side: "over" | "under", point: number, gameId = "g1", price = -110): Leg => ({ gameId, market: "total", side, point, price });
@@ -52,25 +52,70 @@ describe("validateSlip: leg counts and types", () => {
 });
 
 describe("validateSlip: same-game combinations", () => {
-  it("parlay allows spread + total and moneyline + total", () => {
-    expect(codes(parlay([spread("home", -3), total("over", 44.5)]))).toEqual([]);
-    expect(codes(parlay([ml("away", 130), total("under", 44.5)]))).toEqual([]);
-  });
-  it("parlay blocks a spread with either moneyline", () => {
+  // Legs from one game are related (a big favorite covering and the over tend to win
+  // together), and multiplying their odds pays them as if they weren't.
+  it("a parlay can't combine two legs from the same game by default", () => {
+    expect(codes(parlay([spread("home", -3), total("over", 44.5)]))).toContain("same_game_spread_total");
+    expect(codes(parlay([ml("away", 130), total("under", 44.5)]))).toContain("same_game_moneyline_total");
     expect(codes(parlay([spread("home", -3), ml("home", -160)]))).toContain("same_game_spread_moneyline");
     expect(codes(parlay([spread("home", -3), ml("away", 140)]))).toContain("same_game_spread_moneyline");
-  });
-  it("parlay blocks both sides of one market", () => {
     expect(codes(parlay([total("over", 44.5), total("under", 44.5)]))).toContain("same_game_both_sides");
     expect(codes(parlay([spread("home", -3), spread("away", 3)]))).toContain("same_game_both_sides");
     expect(codes(parlay([ml("home", -160), ml("away", 140)]))).toContain("same_game_both_sides");
   });
+  it("nor can a teaser", () => {
+    expect(codes(teaser([spread("home", -3), total("over", 44.5)]))).toContain("same_game_spread_total");
+    expect(codes(teaser([spread("home", -3), spread("away", 3)]))).toContain("same_game_both_sides");
+    expect(codes(teaser([total("over", 44.5), total("under", 44.5)]))).toContain("same_game_both_sides");
+  });
+  it("the commissioner can allow each combination", () => {
+    const open = { spreadTotal: true, moneylineTotal: true, spreadMoneyline: true, bothSides: true };
+    const loose: RuleSet = {
+      ...DAY_ONE_RULES,
+      betTypes: {
+        ...DAY_ONE_RULES.betTypes,
+        parlay: { ...DAY_ONE_RULES.betTypes.parlay, sameGame: open },
+        teaser: { ...DAY_ONE_RULES.betTypes.teaser, sameGame: open },
+      },
+    };
+    expect(codes(parlay([spread("home", -3), total("over", 44.5)]), loose)).toEqual([]);
+    expect(codes(parlay([ml("away", 130), total("under", 44.5)]), loose)).toEqual([]);
+    expect(codes(parlay([spread("home", -3), ml("home", -160)]), loose)).toEqual([]);
+    expect(codes(parlay([ml("home", -160), ml("away", 140)]), loose)).toEqual([]);
+    expect(codes(teaser([spread("home", -3), spread("away", 3), total("over", 44.5), total("under", 44.5)]), loose)).toEqual([]);
+  });
   it("the same pick twice is always refused", () => {
+    const open = { spreadTotal: true, moneylineTotal: true, spreadMoneyline: true, bothSides: true };
+    const loose: RuleSet = { ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, parlay: { ...DAY_ONE_RULES.betTypes.parlay, sameGame: open } } };
     expect(codes(parlay([spread("home", -3), spread("home", -3)]))).toContain("same_game_duplicate");
+    expect(codes(parlay([spread("home", -3), spread("home", -3)]), loose)).toContain("same_game_duplicate");
     expect(codes(teaser([spread("home", -3), spread("home", -3)]))).toContain("same_game_duplicate");
   });
-  it("teasers allow any same-game mix by default", () => {
-    expect(codes(teaser([spread("home", -3), spread("away", 3), total("over", 44.5), total("under", 44.5)]))).toEqual([]);
+});
+
+describe("both sides of a game across separate bets", () => {
+  it("both teams, by spread or moneyline in any mix, are opposite sides; so are the over and the under", () => {
+    expect(oppositeSides(spread("home", -3), spread("away", 3))).toBe(true);
+    expect(oppositeSides(spread("home", -3), ml("away", 140))).toBe(true);
+    expect(oppositeSides(ml("home", -160), spread("away", 3))).toBe(true);
+    expect(oppositeSides(total("over", 44.5), total("under", 44.5))).toBe(true);
+    expect(oppositeSides(total("over", 44.5), total("under", 47))).toBe(true);
+  });
+  it("the same team twice, a team and a total, or another game aren't", () => {
+    expect(oppositeSides(spread("home", -3), ml("home", -160))).toBe(false);
+    expect(oppositeSides(spread("home", -3), total("under", 44.5))).toBe(false);
+    expect(oppositeSides(spread("home", -3, "a"), spread("away", 3, "b"))).toBe(false);
+    expect(oppositeSides(spread("home", -3, "ABC"), spread("away", 3, "abc"))).toBe(true);
+  });
+  it("a new bet against a pending one is refused unless the rules allow it", () => {
+    const pending = [spread("home", -3, "a"), total("over", 41, "b")];
+    expect(checkAcrossBets([ml("away", 140, "a")], pending, DAY_ONE_RULES).map((p) => p.code)).toEqual(["opposite_side"]);
+    expect(checkAcrossBets([spread("home", -7, "c"), total("under", 41, "b")], pending, DAY_ONE_RULES)).toEqual([
+      expect.objectContaining({ code: "opposite_side", leg: 1 }),
+    ]);
+    expect(checkAcrossBets([spread("home", -3.5, "a"), total("over", 40.5, "b")], pending, DAY_ONE_RULES)).toEqual([]);
+    const allowed: RuleSet = { ...DAY_ONE_RULES, acrossBets: { oppositeSides: true } };
+    expect(checkAcrossBets([ml("away", 140, "a")], pending, allowed)).toEqual([]);
   });
 });
 
@@ -152,6 +197,13 @@ describe("validateRuleSet", () => {
   const withTeaser = (t: Partial<RuleSet["betTypes"]["teaser"]>): RuleSet =>
     ({ ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, teaser: { ...DAY_ONE_RULES.betTypes.teaser, ...t } } });
   const withStake = (st: Partial<RuleSet["stake"]>): RuleSet => ({ ...DAY_ONE_RULES, stake: { ...DAY_ONE_RULES.stake, ...st } });
+
+  it("needs yes-or-no answers for undo after a line move and for both sides across bets", () => {
+    const bad = { ...DAY_ONE_RULES, undoAfterLineMove: "no", acrossBets: {} } as unknown as RuleSet;
+    const c = validateRuleSet(bad).map((p) => p.code);
+    expect(c).toContain("undo_line_move");
+    expect(c).toContain("across_bets");
+  });
 
   it("refuses leg limits that aren't whole numbers", () => {
     const r: RuleSet = { ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, parlay: { ...DAY_ONE_RULES.betTypes.parlay, maxLegs: 10.5 } } };

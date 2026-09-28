@@ -1,5 +1,6 @@
-// Pulls lines from The Odds API. Called by pg_cron every 30 minutes (with the cron
-// secret; skipped outside 8am-1am Eastern) or by an admin from the site.
+// Pulls lines from The Odds API. Called by pg_cron every 10 minutes (with the cron
+// secret; it pulls when due, every 30 minutes or every 10 before a kickoff, and skips
+// outside 8am-1am Eastern) or by an admin from the site.
 import { currentUser, env, isAdmin, serviceClient, siteOrigins } from "../_shared/env.ts";
 import { json, preflight, safeEqual } from "../_shared/http.ts";
 import { pullLines } from "../_shared/jobs.ts";

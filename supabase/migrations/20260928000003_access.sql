@@ -89,7 +89,6 @@ grant execute on function app.can_see_slip(uuid) to authenticated;
 grant execute on function app.can_see_leg(uuid, uuid) to authenticated;
 
 -- Member functions.
-grant execute on function public.undo_slip(uuid) to authenticated;
 grant execute on function public.set_display_name(text) to authenticated;
 grant execute on function public.my_entries() to authenticated;
 grant execute on function public.standings(timestamptz, timestamptz, int) to authenticated;

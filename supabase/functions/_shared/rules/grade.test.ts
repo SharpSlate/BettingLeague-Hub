@@ -147,13 +147,13 @@ describe("gradeSlip: teaser", () => {
     expect(gradeSlip(t4, results("won", "won", "push", "won"), DAY_ONE_RULES)).toEqual({ result: "won", payoutCents: 28_000 });
   });
   const ten = Array.from({ length: 10 }, (_, i) => (i % 2 ? total("over", 44.5, `g${i}`) : spread("home", -7, `g${i}`)));
-  it("10 legs at 6 points, all win: +2950 -> 10000 x 61/2 = 305000", () => {
-    expect(gradeSlip(slip("teaser", ten, 10_000, 6), Array(10).fill("won"), DAY_ONE_RULES)).toEqual({ result: "won", payoutCents: 305_000 });
+  it("10 legs at 6 points, all win: +2100 -> 10000 x 22 = 220000", () => {
+    expect(gradeSlip(slip("teaser", ten, 10_000, 6), Array(10).fill("won"), DAY_ONE_RULES)).toEqual({ result: "won", payoutCents: 220_000 });
   });
-  it("10 legs with one push: 9-leg price +2050 -> 215000", () => {
+  it("10 legs with one push: 9-leg price +1550 -> 165000", () => {
     const r = Array<LegResult>(10).fill("won");
     r[3] = "push";
-    expect(gradeSlip(slip("teaser", ten, 10_000, 6), r, DAY_ONE_RULES)).toEqual({ result: "won", payoutCents: 215_000 });
+    expect(gradeSlip(slip("teaser", ten, 10_000, 6), r, DAY_ONE_RULES)).toEqual({ result: "won", payoutCents: 165_000 });
   });
 });
 

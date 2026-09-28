@@ -1,8 +1,8 @@
 import type { RuleSet } from "./types.ts";
 
 // The day-one rule set agreed on 2026-09-28 (see DECISIONS.md). The 2- and
-// 3-leg teaser rows are Splash's; 4-10 legs keep the per-leg break-even that
-// Splash's 3-leg price implies, rounded down (docs/DESIGN.md section 3).
+// 3-leg teaser rows are Splash's; for 4-10 legs, each leg past 3 needs 0.35 points
+// more to break even than a 3-leg card's legs, rounded down (docs/DESIGN.md section 3).
 export const DAY_ONE_RULES: RuleSet = {
   betTypes: {
     straight: { enabled: true, markets: ["spread", "total", "moneyline"] },
@@ -11,7 +11,7 @@ export const DAY_ONE_RULES: RuleSet = {
       minLegs: 2,
       maxLegs: 10,
       markets: ["spread", "total", "moneyline"],
-      sameGame: { spreadTotal: true, moneylineTotal: true, spreadMoneyline: false, bothSides: false },
+      sameGame: { spreadTotal: false, moneylineTotal: false, spreadMoneyline: false, bothSides: false },
     },
     teaser: {
       enabled: true,
@@ -20,18 +20,20 @@ export const DAY_ONE_RULES: RuleSet = {
       markets: ["spread", "total"],
       points: [6, 6.5, 7],
       prices: {
-        "6": { "2": -110, "3": 180, "4": 290, "5": 455, "6": 680, "7": 1000, "8": 1450, "9": 2050, "10": 2950 },
-        "6.5": { "2": -120, "3": 160, "4": 255, "5": 390, "6": 570, "7": 820, "8": 1150, "9": 1650, "10": 2300 },
-        "7": { "2": -130, "3": 140, "4": 220, "5": 330, "6": 475, "7": 670, "8": 930, "9": 1250, "10": 1750 },
+        "6": { "2": -110, "3": 180, "4": 285, "5": 425, "6": 615, "7": 860, "8": 1150, "9": 1550, "10": 2100 },
+        "6.5": { "2": -120, "3": 160, "4": 250, "5": 365, "6": 520, "7": 710, "8": 955, "9": 1250, "10": 1600 },
+        "7": { "2": -130, "3": 140, "4": 215, "5": 310, "6": 425, "7": 575, "8": 755, "9": 975, "10": 1200 },
       },
       pushRule: "reduce",
       totalsNeedSpread: false,
-      sameGame: { spreadTotal: true, moneylineTotal: true, spreadMoneyline: true, bothSides: true },
+      sameGame: { spreadTotal: false, moneylineTotal: false, spreadMoneyline: false, bothSides: false },
     },
   },
   pricing: { straight: "book", flatPrice: -110 },
   stake: { minUnits: 1, maxUnits: 250_000, incrementUnits: 1, maxPctOfBank: null },
   undoMinutes: 5,
+  undoAfterLineMove: false,
+  acrossBets: { oppositeSides: false },
   weeklyMinimum: { pct: 30, penalty: "deduct_shortfall" },
   visibility: "kickoff_per_leg",
   lock: "game_kickoff",

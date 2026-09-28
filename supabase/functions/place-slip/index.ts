@@ -8,6 +8,10 @@
 // 4. Checks each leg against the current lines. If a number moved, answers 409 with
 //    the new numbers for the member to accept.
 // 5. Hands it to place_slip_internal, which re-checks the invariants and records it.
+//
+// It also undoes bets ({action: "undo", slipId}). Undo is refused once one of the bet's
+// lines has moved, so the lines are refreshed first, the same way; members can't undo
+// through the database directly, so they can't undo against lines the site hasn't seen.
 import { currentUser, env, serviceClient, siteOrigins } from "../_shared/env.ts";
 import { dbErrorCode, friendlyMessage, json, preflight } from "../_shared/http.ts";
 import { pullLines } from "../_shared/jobs.ts";
@@ -39,6 +43,37 @@ function parse(body: unknown): (PlacementInput & { clientRef: string | null }) |
   return { entryId: b.entryId, type: b.type as BetType, teaserPoints, stakeCents: b.stakeCents as number, legs, clientRef };
 }
 
+/** Undoes a bet after bringing the lines up to date, since undo checks they haven't moved. */
+async function undo(req: Request, origins: string, userId: string, slipId: unknown): Promise<Response> {
+  if (typeof slipId !== "string" || !UUID.test(slipId)) return json(req, origins, 400, { error: "bad_request", message: "That bet couldn't be read." });
+  const db = serviceClient();
+  const store = new SupabaseStore(db);
+  try {
+    const settings = await store.settings();
+    const before = await store.lastGoodLinesPull();
+    if (isStale(before, new Date(), settings.refreshOnBetSeconds)) {
+      const pulled = await pullLines(store, env("ODDS_API_KEY"), fetch, "bet", new Date(), userId);
+      // Another bet's refresh is on its way: wait a moment for it.
+      if (pulled.status === "skipped" && pulled.reason === "recent") {
+        for (let i = 0; i < 10; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const latest = await store.lastGoodLinesPull();
+          if (latest && (!before || latest > before)) break;
+        }
+      }
+    }
+    const { error } = await db.rpc("undo_slip_internal", { p_slip: slipId.toLowerCase(), p_user: userId });
+    if (error) {
+      const code = dbErrorCode(error.message);
+      return json(req, origins, 409, { error: code, message: friendlyMessage(code) });
+    }
+    return json(req, origins, 200, { undone: true });
+  } catch (e) {
+    console.error("undo failed", e);
+    return json(req, origins, 500, { error: "error", message: friendlyMessage("error") });
+  }
+}
+
 Deno.serve(async (req) => {
   const origins = siteOrigins();
   const pre = preflight(req, origins);
@@ -47,7 +82,11 @@ Deno.serve(async (req) => {
 
   const user = await currentUser(req);
   if (!user) return json(req, origins, 401, { error: "sign_in_required", message: "Please sign in again." });
-  const input = parse(await req.json().catch(() => null));
+  const body = await req.json().catch(() => null);
+  if (body && typeof body === "object" && (body as Record<string, unknown>).action === "undo") {
+    return undo(req, origins, user.id, (body as Record<string, unknown>).slipId);
+  }
+  const input = parse(body);
   if (!input) return json(req, origins, 400, { error: "bad_request", message: "That slip couldn't be read." });
 
   const db = serviceClient();

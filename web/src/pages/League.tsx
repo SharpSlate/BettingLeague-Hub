@@ -5,7 +5,7 @@ import { Empty, ErrorNote, Loading, PageHead, Segmented } from "../components/ui
 import { useApi } from "../lib/api.ts";
 import { clock, day, kickoff, odds, units } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
-import { describeRules } from "../lib/rules-text.ts";
+import { rulesPage, teaserBreakEvenText, type RuleItem } from "../lib/rules-text.ts";
 import type { AuditRow, GameView, WeekInfo } from "../lib/types.ts";
 
 type Tab = "rules" | "schedule" | "entrants" | "log";
@@ -48,6 +48,10 @@ export function TeaserTable({ rules }: { rules: RuleSet }) {
   );
 }
 
+function Item({ item }: { item: RuleItem }) {
+  return typeof item === "string" ? <li>{item}</li> : <li><b>{item.lead}</b> {item.text}</li>;
+}
+
 function Rules() {
   const api = useApi();
   const league = useLoad(() => api.league(), []);
@@ -58,8 +62,12 @@ function Rules() {
   const shown = versions.data?.find((v) => v.version === (pick ?? inForce)) ?? versions.data?.[0];
   if (!shown) return <Empty>No rules published yet.</Empty>;
   const lg = league.data;
+  const page = rulesPage(shown.document, lg ?? null);
+  const breakEven = teaserBreakEvenText(shown.document);
+  // Scrolls rather than using #anchors, which the site's router would read as a page.
+  const go = (id: string) => document.getElementById(`rules-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   return (
-    <div className="stack">
+    <div className="stack rules">
       <div className="card pad row wrap spread">
         <div>
           <b>Version {shown.version}</b>{shown.version === inForce ? <span className="chip pending" style={{ marginLeft: 8 }}>In force{lg?.openWeek ? ` for ${lg.openWeek.label}` : ""}</span> : null}
@@ -71,28 +79,38 @@ function Rules() {
           </select>
         ) : null}
       </div>
-      <div className="card pad prose">
-        {describeRules(shown.document).map((s) => (
-          <section key={s.title}>
-            <h3>{s.title}</h3>
-            <ul>{s.items.map((i) => <li key={i}>{i}</li>)}</ul>
-          </section>
-        ))}
-        {lg ? (
-          <section>
-            <h3>Lines</h3>
-            <ul>
-              <li>Lines come from {lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", with ")} as the backup, through The Odds API. The commissioner can set or take down any line, and that shows on the board.</li>
-              <li>They refresh every {lg.pullEveryMinutes} minutes from {lg.pullWindowStart} to {lg.pullWindowEnd} Eastern, and again whenever someone bets on lines more than 2 minutes old. If a number moves while it's on your slip, you'll be asked to accept the new one.</li>
-              <li>Every bet keeps the exact line and price it was placed at, and is graded on those.</li>
-            </ul>
-          </section>
-        ) : null}
-      </div>
-      <div className="card">
-        <div className="card-head"><h2>Teaser prices</h2></div>
-        <TeaserTable rules={shown.document} />
-      </div>
+
+      <section className="card pad rule-section" aria-labelledby="rules-glance">
+        <h2 id="rules-glance">At a glance</h2>
+        <dl className="glance">
+          {page.glance.map((g) => (
+            <div key={g.label} className="glance-item">
+              <dt>{g.label}</dt>
+              <dd><b>{g.value}</b>{g.detail ? <span>{g.detail}</span> : null}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <nav className="toc" aria-label="Jump to a section">
+        {page.sections.map((s) => <button key={s.id} type="button" onClick={() => go(s.id)}>{s.title}</button>)}
+      </nav>
+
+      {page.sections.map((s) => (
+        <section key={s.id} id={`rules-${s.id}`} className="card pad rule-section" aria-labelledby={`rules-${s.id}-title`}>
+          <h2 id={`rules-${s.id}-title`}>{s.title}</h2>
+          {s.intro ? <p className="muted">{s.intro}</p> : null}
+          <ul>{s.items.map((i) => <Item key={typeof i === "string" ? i : i.lead} item={i} />)}</ul>
+          {s.example ? <p className="example"><b>Example.</b> {s.example}</p> : null}
+          {s.id === "bets" && shown.document.betTypes.teaser.enabled ? (
+            <div className="stack-sm">
+              <h3>Teaser prices</h3>
+              <div className="card flat"><TeaserTable rules={shown.document} /></div>
+              {breakEven ? <p className="small muted">{breakEven}</p> : null}
+            </div>
+          ) : null}
+        </section>
+      ))}
     </div>
   );
 }

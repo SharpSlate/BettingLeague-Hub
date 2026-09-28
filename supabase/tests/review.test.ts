@@ -17,6 +17,7 @@ import {
   place,
   service,
   standardLines,
+  undo,
   type Db,
   type Event,
 } from "./db.ts";
@@ -99,7 +100,7 @@ describe("managers and hidden bets", () => {
     // A bet the entry places after they joined is theirs to see.
     const later = await place(db, {
       entry: aliceEntry, user: alice, type: "straight", stakeCents: 10_000, potentialPayoutCents: 19_091,
-      legs: [{ gameId: ids.VIS!, market: "spread", side: "away", point: 3, price: -110 }],
+      legs: [{ gameId: ids.VIS!, market: "total", side: "over", point: 47.5, price: -110 }],
     });
     expect((await db.q(member(owner), "select id from public.slips where id = $1", [later])).length).toBe(1);
     await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [aliceEntry, owner]);
@@ -380,7 +381,7 @@ describe("opening the next week by hand", () => {
   it("a bet can't be undone once its week has closed", async () => {
     const id = await straight(aliceEntry, alice, "UNDO");
     expect((await db.q(member(owner), "select public.admin_open_next_week(4, 'Around the postponed game') as w"))[0].w).toBe(5);
-    await fails(db.q(member(alice), "select public.undo_slip($1)", [id]), "week_closed");
+    await fails(undo(db, id, alice), "week_closed");
   });
 
   it("won't close a week in which no game has kicked off", async () => {

@@ -19,6 +19,7 @@ import {
   place,
   service,
   standardLines,
+  undo,
   type Db,
   type Event,
 } from "./db.ts";
@@ -99,7 +100,7 @@ describe("betting closes when the feed's start time passes", () => {
     await sleep(Math.max(0, start.getTime() - Date.now()) + 300);
     await fails(bet(bobEntry, bob, "FEED1"), "game_started");
     // Undoing a bet counts the same start.
-    await fails(db.q(member(alice), "select public.undo_slip($1)", [aliceBet]), "game_started");
+    await fails(undo(db, aliceBet, alice), "game_started");
     // Score pulls start for it, though no game has kicked off here.
     expect(await awaitingScores()).toBe(1);
   });

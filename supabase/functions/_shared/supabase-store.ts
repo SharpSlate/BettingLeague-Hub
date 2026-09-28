@@ -27,6 +27,9 @@ export class SupabaseStore implements Store {
       timezone: s.timezone,
       pullWindowStart: String(s.pull_window_start).slice(0, 5),
       pullWindowEnd: String(s.pull_window_end).slice(0, 5),
+      pullEveryMinutes: s.pull_every_minutes,
+      pullNearKickoffMinutes: s.pull_near_kickoff_minutes,
+      nearKickoffHours: s.near_kickoff_hours,
       refreshOnBetSeconds: s.refresh_on_bet_seconds,
       maxLineAgeMinutes: s.max_line_age_minutes,
       creditFloor: s.credit_floor,
@@ -83,6 +86,10 @@ export class SupabaseStore implements Store {
     // A postponed game can still be played (and its bets still ride), so it keeps
     // pulling scores for 3 days from the feed's new start time.
     return Number(await must<number>(this.db.rpc("games_awaiting_scores_internal", { p_now: now.toISOString() }), "games awaiting scores"));
+  }
+
+  async gamesStartingSoon(now: Date, hours: number) {
+    return Number(await must<number>(this.db.rpc("games_starting_soon_internal", { p_now: now.toISOString(), p_hours: hours }), "games starting soon"));
   }
 
   async pendingSlips(): Promise<PendingSlip[]> {
