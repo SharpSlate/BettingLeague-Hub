@@ -1,0 +1,1122 @@
+-- Server functions and guards.
+--
+-- Naming: public.*_internal functions are for the Edge Functions (service role only).
+-- public.admin_* functions check the caller is an admin and write an audit row.
+-- app.* functions are internal helpers; the app schema is not exposed by the API.
+--
+-- Every function that can run for a signed-in member is SECURITY DEFINER with a fixed
+-- search_path, and checks its caller itself. Execute grants are in the next migration;
+-- any new function must be added to them.
+
+-- ---------------------------------------------------------------- helpers
+
+create or replace function app.is_admin(p_user uuid default auth.uid()) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$ select coalesce((select is_admin from public.profiles where id = p_user), false) $$;
+
+create or replace function app.manages(p_entry uuid, p_user uuid default auth.uid()) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select p_user is not null
+     and exists (select 1 from public.entry_managers where entry_id = p_entry and user_id = p_user)
+$$;
+
+create or replace function app.require_admin() returns uuid
+language plpgsql stable security definer set search_path = public, pg_temp
+as $$
+declare v uuid := auth.uid();
+begin
+  if v is null or not app.is_admin(v) then
+    raise exception 'admin_only' using errcode = '42501';
+  end if;
+  return v;
+end $$;
+
+create or replace function app.audit(
+  p_actor uuid, p_action text, p_target_type text, p_target_id text, p_before jsonb, p_after jsonb, p_reason text
+) returns void
+language sql security definer set search_path = public, pg_temp
+as $$
+  insert into public.audit_log (actor, action, target_type, target_id, before, after, reason)
+  values (p_actor, p_action, p_target_type, p_target_id, p_before, p_after, coalesce(p_reason, ''))
+$$;
+
+create or replace function app.require_reason(p_reason text) returns text
+language plpgsql immutable
+as $$
+begin
+  if p_reason is null or length(trim(p_reason)) < 3 then
+    raise exception 'reason_required';
+  end if;
+  return trim(p_reason);
+end $$;
+
+create or replace function app.available_cents(p_entry uuid) returns bigint
+language sql stable security definer set search_path = public, pg_temp
+as $$ select coalesce(sum(amount_cents), 0)::bigint from public.ledger where entry_id = p_entry $$;
+
+create or replace function app.pending_cents(p_entry uuid) returns bigint
+language sql stable security definer set search_path = public, pg_temp
+as $$ select coalesce(sum(stake_cents), 0)::bigint from public.slips where entry_id = p_entry and status = 'pending' $$;
+
+-- Bank = available + stakes still riding. Placing a bet doesn't change it.
+create or replace function app.bank_cents(p_entry uuid) returns bigint
+language sql stable security definer set search_path = public, pg_temp
+as $$ select app.available_cents(p_entry) + app.pending_cents(p_entry) $$;
+
+create or replace function app.week_for(p_at timestamptz) returns int
+language sql stable security definer set search_path = public, pg_temp
+as $$ select week from public.weeks where p_at >= starts_at and p_at < ends_at $$;
+
+-- The newest published rule set that has taken effect by the given week.
+create or replace function app.rule_set_for_week(p_week int) returns int
+language sql stable security definer set search_path = public, pg_temp
+as $$ select max(version) from public.rule_sets where effective_week <= p_week $$;
+
+-- ceil(pct% of the bank) in whole units, in cents. Mirrors requiredMinimumCents in the rules module.
+create or replace function app.required_cents(p_bank bigint, p_doc jsonb) returns bigint
+language sql immutable
+as $$
+  select case
+    when p_bank <= 0 then 0::bigint
+    else (ceil((p_bank::numeric * round((p_doc -> 'weeklyMinimum' ->> 'pct')::numeric * 100)) / 1000000) * 100)::bigint
+  end
+$$;
+
+create or replace function app.first_kickoff(p_slip uuid) returns timestamptz
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select min(g.kickoff_at) from public.slip_legs l join public.games g on g.id = l.game_id where l.slip_id = p_slip
+$$;
+
+-- When other members may see a slip, per the visibility rule of the slip's rule set.
+create or replace function app.slip_reveal_at(p_slip uuid) returns timestamptz
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select case r.document ->> 'visibility'
+      when 'on_placement' then s.placed_at
+      when 'week_first_kickoff' then (select min(g.kickoff_at) from public.games g where g.week = s.week and g.status <> 'void')
+      else app.first_kickoff(s.id)
+    end
+  from public.slips s join public.rule_sets r on r.version = s.rule_set_version
+  where s.id = p_slip
+$$;
+
+create or replace function app.can_see_slip(p_slip uuid) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.slips s
+    where s.id = p_slip
+      and (app.manages(s.entry_id) or (s.status <> 'undone' and app.slip_reveal_at(s.id) <= now()))
+  )
+$$;
+
+-- A leg is revealed at its own game's kickoff under the default rule; otherwise with its slip.
+create or replace function app.can_see_leg(p_slip uuid, p_game uuid) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.slips s
+    join public.rule_sets r on r.version = s.rule_set_version
+    join public.games g on g.id = p_game
+    where s.id = p_slip
+      and (
+        app.manages(s.entry_id)
+        or (
+          s.status <> 'undone'
+          and case r.document ->> 'visibility'
+                when 'kickoff_per_leg' then g.kickoff_at <= now()
+                else app.slip_reveal_at(s.id) <= now()
+              end
+        )
+      )
+  )
+$$;
+
+-- ---------------------------------------------------------------- lines
+
+-- The line the league is offering right now for each game, market and side:
+-- an admin override if the market has one, else the highest-priority book that
+-- offered both sides in the latest good pull.
+create view public.current_lines with (security_invoker = true) as
+with last_pull as (
+  select max(at) as at from public.line_pulls where kind = 'lines' and ok
+),
+books as (
+  select b.book, b.ord from public.league_settings s, unnest(s.books) with ordinality as b(book, ord)
+),
+offered as (
+  select bl.game_id, bl.market, bl.book, min(bk.ord) as ord
+  from public.book_lines bl
+  join books bk on bk.book = bl.book
+  join last_pull lp on bl.seen_at >= lp.at
+  group by bl.game_id, bl.market, bl.book
+  having count(*) = 2
+),
+chosen as (
+  select distinct on (game_id, market) game_id, market, book from offered order by game_id, market, ord
+)
+select bl.game_id, bl.market, bl.side, bl.point, bl.price, bl.book as source, bl.seen_at as as_of, false as is_override
+from public.book_lines bl
+join chosen c on c.game_id = bl.game_id and c.market = bl.market and c.book = bl.book
+where not exists (select 1 from public.line_overrides o where o.game_id = bl.game_id and o.market = bl.market)
+union all
+select o.game_id, o.market, o.side, o.point, o.price, 'override', o.set_at, true
+from public.line_overrides o
+where o.offered;
+
+create or replace function app.book_lines_history() returns trigger
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' or new.point is distinct from old.point or new.price <> old.price then
+    insert into public.line_history (game_id, market, side, book, point, price, at)
+    values (new.game_id, new.market, new.side, new.book, new.point, new.price, new.seen_at);
+  end if;
+  return null;
+end $$;
+
+create trigger book_lines_history after insert or update on public.book_lines
+for each row execute function app.book_lines_history();
+
+-- Stores one Odds API lines pull, already normalized by the Edge Function:
+-- [{id, commenceTime, homeTeam, awayTeam, books: [{book, outcomes: [{market, side, point, price}]}]}]
+create or replace function public.ingest_lines_internal(
+  p_trigger text, p_events jsonb, p_credits_used int, p_credits_remaining int
+) returns int
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v_at timestamptz := now();
+  ev jsonb;
+  bk jsonb;
+  oc jsonb;
+  v_home text;
+  v_away text;
+  v_kick timestamptz;
+  v_week int;
+  v_game public.games%rowtype;
+  v_n int := 0;
+begin
+  for ev in select * from jsonb_array_elements(coalesce(p_events, '[]'::jsonb)) loop
+    select abbr into v_home from public.teams where name = ev ->> 'homeTeam';
+    select abbr into v_away from public.teams where name = ev ->> 'awayTeam';
+    v_kick := (ev ->> 'commenceTime')::timestamptz;
+    v_week := app.week_for(v_kick);
+    -- Skip anything that isn't a league game (e.g. the Pro Bowl) or is outside the season.
+    continue when v_home is null or v_away is null or v_week is null;
+
+    select * into v_game from public.games where odds_api_id = ev ->> 'id' for update;
+    if not found then
+      insert into public.games (odds_api_id, week, kickoff_at, home_team, away_team)
+      values (ev ->> 'id', v_week, v_kick, v_home, v_away)
+      returning * into v_game;
+    elsif v_game.status in ('scheduled', 'postponed') and v_game.kickoff_at <> v_kick then
+      update public.games
+         set kickoff_at = v_kick,
+             week = case when week_moved then week else v_week end,
+             updated_at = v_at
+       where id = v_game.id;
+    end if;
+
+    for bk in select * from jsonb_array_elements(coalesce(ev -> 'books', '[]'::jsonb)) loop
+      for oc in select * from jsonb_array_elements(coalesce(bk -> 'outcomes', '[]'::jsonb)) loop
+        insert into public.book_lines as bl (game_id, market, side, book, point, price, seen_at, changed_at)
+        values (v_game.id, oc ->> 'market', oc ->> 'side', bk ->> 'book', (oc ->> 'point')::numeric, (oc ->> 'price')::int, v_at, v_at)
+        on conflict (game_id, market, side, book) do update
+          set seen_at = excluded.seen_at,
+              changed_at = case when bl.point is distinct from excluded.point or bl.price <> excluded.price
+                                then excluded.changed_at else bl.changed_at end,
+              point = excluded.point,
+              price = excluded.price;
+      end loop;
+    end loop;
+    v_n := v_n + 1;
+  end loop;
+
+  insert into public.line_pulls (at, kind, trigger, ok, events, credits_used, credits_remaining)
+  values (v_at, 'lines', p_trigger, true, v_n, p_credits_used, p_credits_remaining);
+  return v_n;
+end $$;
+
+-- Records a failed (or skipped) pull so the site can show it and the guard can see it.
+create or replace function public.record_pull_internal(
+  p_kind text, p_trigger text, p_ok boolean, p_error text, p_credits_used int, p_credits_remaining int
+) returns void
+language sql security definer set search_path = public, pg_temp
+as $$
+  insert into public.line_pulls (kind, trigger, ok, error, credits_used, credits_remaining)
+  values (p_kind, p_trigger, p_ok, p_error, p_credits_used, p_credits_remaining)
+$$;
+
+-- Stores an Odds API scores pull: [{id, completed, homeScore, awayScore}].
+-- A game an admin voided stays void. A final score is never changed here; a
+-- different score for a final game is logged for the admins instead.
+create or replace function public.ingest_scores_internal(
+  p_trigger text, p_scores jsonb, p_credits_used int, p_credits_remaining int
+) returns int
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  sc jsonb;
+  g public.games%rowtype;
+  v_home int;
+  v_away int;
+  v_n int := 0;
+begin
+  for sc in select * from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) loop
+    select * into g from public.games where odds_api_id = sc ->> 'id' for update;
+    continue when not found or g.status = 'void';
+    v_home := (sc ->> 'homeScore')::int;
+    v_away := (sc ->> 'awayScore')::int;
+    continue when v_home is null or v_away is null;
+    if g.status = 'final' then
+      if (g.home_score, g.away_score) is distinct from (v_home, v_away)
+         and not exists (
+           select 1 from public.audit_log
+           where action = 'score_mismatch' and target_id = g.id::text
+             and after = jsonb_build_object('home', v_home, 'away', v_away)
+         ) then
+        perform app.audit(null, 'score_mismatch', 'game', g.id::text,
+          jsonb_build_object('home', g.home_score, 'away', g.away_score),
+          jsonb_build_object('home', v_home, 'away', v_away),
+          'The score feed disagrees with a final score. An admin should check it.');
+      end if;
+      continue;
+    end if;
+    if coalesce((sc ->> 'completed')::boolean, false) then
+      update public.games set status = 'final', home_score = v_home, away_score = v_away,
+        final_at = now(), updated_at = now() where id = g.id;
+    else
+      update public.games set status = 'live', home_score = v_home, away_score = v_away,
+        updated_at = now() where id = g.id and g.kickoff_at <= now();
+    end if;
+    v_n := v_n + 1;
+  end loop;
+  insert into public.line_pulls (kind, trigger, ok, events, credits_used, credits_remaining)
+  values ('scores', p_trigger, true, v_n, p_credits_used, p_credits_remaining);
+  return v_n;
+end $$;
+
+-- ---------------------------------------------------------------- bets
+
+-- Places a slip. Called only by the place-slip Edge Function after it has checked
+-- the slip against the rule set with the shared rules code. This function enforces
+-- what must hold even if that code were wrong: the caller manages the entry, the
+-- week is open, no leg's game has started (database clock), each leg matches the
+-- league's current line, the lines are fresh, and the stake fits the rules and the
+-- entry's available units. The entry row is locked so simultaneous slips can't
+-- spend the same units.
+--
+-- p_legs: [{gameId, market, side, point, price}]
+create or replace function public.place_slip_internal(
+  p_entry uuid,
+  p_user uuid,
+  p_type text,
+  p_teaser_points numeric,
+  p_stake_cents bigint,
+  p_quoted_american int,
+  p_potential_payout_cents bigint,
+  p_rule_set_version int,
+  p_legs jsonb
+) returns uuid
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v_week public.weeks%rowtype;
+  v_doc jsonb;
+  v_settings public.league_settings%rowtype;
+  v_last_pull timestamptz;
+  v_leg jsonb;
+  v_game public.games%rowtype;
+  v_line record;
+  v_price int;
+  v_slip uuid;
+  v_n int;
+  v_i int := 0;
+  v_teased numeric;
+  v_week_first timestamptz;
+begin
+  perform 1 from public.entries where id = p_entry and status = 'active' for update;
+  if not found then raise exception 'entry_not_active'; end if;
+  if not app.manages(p_entry, p_user) then raise exception 'not_manager'; end if;
+
+  select * into v_week from public.weeks where status = 'open';
+  if not found then raise exception 'no_open_week'; end if;
+  if p_rule_set_version is distinct from v_week.rule_set_version then raise exception 'rules_changed'; end if;
+  select document into v_doc from public.rule_sets where version = v_week.rule_set_version;
+  select * into v_settings from public.league_settings;
+
+  if p_type not in ('straight', 'parlay', 'teaser') then raise exception 'bad_type'; end if;
+  if (p_type = 'teaser') <> (p_teaser_points is not null) then raise exception 'bad_teaser_points'; end if;
+  if p_type = 'teaser' and not (v_doc -> 'betTypes' -> 'teaser' -> 'points') @> to_jsonb(p_teaser_points) then
+    raise exception 'bad_teaser_points';
+  end if;
+  if not coalesce((v_doc -> 'betTypes' -> p_type ->> 'enabled')::boolean, false) then raise exception 'type_disabled'; end if;
+
+  if jsonb_typeof(p_legs) is distinct from 'array' then raise exception 'no_legs'; end if;
+  v_n := jsonb_array_length(p_legs);
+  if p_type = 'straight' and v_n <> 1 then raise exception 'bad_leg_count'; end if;
+  if p_type <> 'straight' and (
+       v_n < (v_doc -> 'betTypes' -> p_type ->> 'minLegs')::int
+    or v_n > (v_doc -> 'betTypes' -> p_type ->> 'maxLegs')::int) then
+    raise exception 'bad_leg_count';
+  end if;
+
+  if p_stake_cents is null or p_stake_cents <= 0
+     or p_stake_cents < round((v_doc -> 'stake' ->> 'minUnits')::numeric * 100)
+     or p_stake_cents > round((v_doc -> 'stake' ->> 'maxUnits')::numeric * 100)
+     or p_stake_cents % round((v_doc -> 'stake' ->> 'incrementUnits')::numeric * 100)::bigint <> 0 then
+    raise exception 'stake_out_of_range';
+  end if;
+  if p_stake_cents > app.available_cents(p_entry) then raise exception 'insufficient_units'; end if;
+  if p_potential_payout_cents is null or p_potential_payout_cents < p_stake_cents then raise exception 'bad_quote'; end if;
+
+  if v_doc ->> 'lock' = 'week_first_kickoff' then
+    select min(kickoff_at) into v_week_first from public.games where week = v_week.week and status <> 'void';
+    if v_week_first <= now() then raise exception 'week_locked'; end if;
+  end if;
+
+  select max(at) into v_last_pull from public.line_pulls where kind = 'lines' and ok;
+
+  insert into public.slips (entry_id, placed_by, week, type, teaser_points, stake_cents, quoted_american,
+                            potential_payout_cents, rule_set_version)
+  values (p_entry, p_user, v_week.week, p_type, p_teaser_points, p_stake_cents, p_quoted_american,
+          p_potential_payout_cents, v_week.rule_set_version)
+  returning id into v_slip;
+
+  for v_leg in select * from jsonb_array_elements(p_legs) loop
+    v_i := v_i + 1;
+    if p_type = 'teaser' and v_leg ->> 'market' not in ('spread', 'total') then raise exception 'bad_market'; end if;
+    if not (v_doc -> 'betTypes' -> p_type -> 'markets') @> to_jsonb(v_leg ->> 'market') then raise exception 'bad_market'; end if;
+
+    select * into v_game from public.games where id = (v_leg ->> 'gameId')::uuid for share;
+    if not found then raise exception 'unknown_game'; end if;
+    if v_game.week <> v_week.week then raise exception 'game_not_this_week'; end if;
+    if v_game.status <> 'scheduled' or v_game.kickoff_at <= now() then raise exception 'game_started'; end if;
+
+    select * into v_line from public.current_lines cl
+     where cl.game_id = v_game.id and cl.market = v_leg ->> 'market' and cl.side = v_leg ->> 'side';
+    if not found then raise exception 'line_unavailable'; end if;
+    if not v_line.is_override and (v_last_pull is null or v_last_pull < now() - make_interval(mins => v_settings.max_line_age_minutes)) then
+      raise exception 'lines_stale';
+    end if;
+
+    v_price := case
+      when p_type <> 'teaser' and v_doc -> 'pricing' ->> 'straight' = 'flat' and v_line.market <> 'moneyline'
+        then (v_doc -> 'pricing' ->> 'flatPrice')::int
+      else v_line.price
+    end;
+    if v_line.point is distinct from (v_leg ->> 'point')::numeric then raise exception 'line_moved'; end if;
+    if p_type <> 'teaser' and v_price <> (v_leg ->> 'price')::int then raise exception 'line_moved'; end if;
+
+    v_teased := case
+      when p_type <> 'teaser' then null
+      when v_line.market = 'spread' then v_line.point + p_teaser_points
+      when v_line.side = 'over' then v_line.point - p_teaser_points
+      else v_line.point + p_teaser_points
+    end;
+
+    insert into public.slip_legs (slip_id, leg_no, game_id, market, side, point, price, teased_point, book)
+    values (v_slip, v_i, v_game.id, v_line.market, v_line.side, v_line.point, v_price, v_teased, v_line.source);
+  end loop;
+
+  insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, created_by)
+  values (p_entry, -p_stake_cents, 'stake', v_slip, v_week.week, p_user);
+  return v_slip;
+end $$;
+
+-- A member undoes their own bet within the undo window, before any of its games starts.
+create or replace function public.undo_slip(p_slip uuid) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v public.slips%rowtype;
+  v_minutes numeric;
+begin
+  select * into v from public.slips where id = p_slip for update;
+  if not found or not app.manages(v.entry_id) then raise exception 'not_found'; end if;
+  if v.status <> 'pending' then raise exception 'not_pending'; end if;
+  select (document ->> 'undoMinutes')::numeric into v_minutes from public.rule_sets where version = v.rule_set_version;
+  if now() > v.placed_at + make_interval(secs => coalesce(v_minutes, 0) * 60) then raise exception 'undo_window_passed'; end if;
+  if app.first_kickoff(v.id) <= now() then raise exception 'game_started'; end if;
+  update public.slips set status = 'undone', undone_at = now() where id = p_slip;
+  insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, created_by)
+  values (v.entry_id, v.stake_cents, 'undo', v.id, v.week, auth.uid());
+end $$;
+
+-- Settles a slip with the grade the grading job computed from the slip's own rule set.
+-- Returns false if the slip was already settled. Guards keep a bad grade from paying
+-- out more than the slip could ever win.
+-- p_leg_results: [{legNo, result}]
+create or replace function public.settle_slip_internal(
+  p_slip uuid, p_result text, p_payout_cents bigint, p_leg_results jsonb
+) returns boolean
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v public.slips%rowtype;
+begin
+  select * into v from public.slips where id = p_slip for update;
+  if not found then raise exception 'not_found'; end if;
+  if v.status <> 'pending' then return false; end if;
+  if p_result not in ('won', 'lost', 'push', 'void') then raise exception 'bad_result'; end if;
+  if (p_result = 'lost' and p_payout_cents <> 0)
+     or (p_result in ('push', 'void') and p_payout_cents <> v.stake_cents)
+     or (p_result = 'won' and (p_payout_cents <= v.stake_cents or p_payout_cents > v.potential_payout_cents)) then
+    raise exception 'bad_payout';
+  end if;
+
+  update public.slip_legs l set result = r.result
+    from jsonb_to_recordset(coalesce(p_leg_results, '[]'::jsonb)) as r("legNo" int, result text)
+   where l.slip_id = p_slip and l.leg_no = r."legNo";
+  update public.slips set status = p_result, payout_cents = p_payout_cents, settled_at = now() where id = p_slip;
+  if p_payout_cents > 0 then
+    insert into public.ledger (entry_id, amount_cents, kind, slip_id, week)
+    values (v.entry_id, p_payout_cents, case when p_result = 'won' then 'payout' else 'refund' end, v.id, v.week);
+  end if;
+  return true;
+end $$;
+
+-- ---------------------------------------------------------------- weeks
+
+create or replace function app.snapshot_entry(p_week int, p_entry uuid) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_doc jsonb; v_bank bigint;
+begin
+  select r.document into v_doc from public.weeks w join public.rule_sets r on r.version = w.rule_set_version where w.week = p_week;
+  v_bank := app.bank_cents(p_entry);
+  insert into public.week_entry_status (week, entry_id, bank_at_start_cents, required_cents)
+  values (p_week, p_entry, v_bank, app.required_cents(v_bank, v_doc))
+  on conflict (week, entry_id) do update
+    set bank_at_start_cents = excluded.bank_at_start_cents, required_cents = excluded.required_cents;
+end $$;
+
+create or replace function app.close_week(p_week int) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v_doc jsonb;
+  r record;
+  v_wagered bigint;
+  v_short bigint;
+  v_ded bigint;
+begin
+  select rs.document into v_doc from public.weeks w join public.rule_sets rs on rs.version = w.rule_set_version where w.week = p_week;
+  for r in
+    select wes.entry_id, wes.required_cents from public.week_entry_status wes
+    where wes.week = p_week order by wes.entry_id
+  loop
+    perform 1 from public.entries where id = r.entry_id for update;
+    -- Pushes count as wagered; undone bets and voided bets don't.
+    select coalesce(sum(stake_cents), 0) into v_wagered from public.slips
+     where entry_id = r.entry_id and week = p_week and status not in ('undone', 'void');
+    v_short := greatest(0, r.required_cents - v_wagered);
+    v_ded := 0;
+    if v_short > 0 and v_doc -> 'weeklyMinimum' ->> 'penalty' = 'deduct_shortfall' then
+      v_ded := least(v_short, greatest(0, app.available_cents(r.entry_id)));
+      if v_ded > 0 then
+        insert into public.ledger (entry_id, amount_cents, kind, week, note)
+        values (r.entry_id, -v_ded, 'weekly_minimum', p_week,
+                format('Week %s minimum: wagered %s of %s units', p_week,
+                       to_char(v_wagered / 100.0, 'FM999999990.00'), to_char(r.required_cents / 100.0, 'FM999999990.00')));
+      end if;
+    end if;
+    update public.week_entry_status
+       set wagered_cents = v_wagered, shortfall_cents = v_short, deducted_cents = v_ded
+     where week = p_week and entry_id = r.entry_id;
+  end loop;
+  update public.weeks set status = 'closed', closed_at = now() where week = p_week;
+end $$;
+
+create or replace function app.open_week(p_week int, p_actor uuid) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_version int; e record;
+begin
+  v_version := app.rule_set_for_week(p_week);
+  if v_version is null then raise exception 'no_rule_set'; end if;
+  update public.weeks set status = 'open', opened_at = now(), opened_by = p_actor, rule_set_version = v_version
+   where week = p_week and status = 'upcoming';
+  if not found then raise exception 'week_not_upcoming'; end if;
+  for e in select id from public.entries where status = 'active' order by id loop
+    perform app.snapshot_entry(p_week, e.id);
+  end loop;
+end $$;
+
+-- Closes the open week and opens the next one.
+-- Automatic (p_force = false): only when every game of the open week is final or void,
+-- nothing is pending, and the next week's games are loaded.
+-- Admin (p_force = true): closes the open week regardless, e.g. around a postponed game.
+-- With no week open, only an admin can open the first one.
+create or replace function app.advance_week(p_actor uuid, p_force boolean) returns int
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v_open int;
+  v_next int;
+begin
+  perform pg_advisory_xact_lock(hashtext('advance_week'));
+  select week into v_open from public.weeks where status = 'open';
+  if v_open is null then
+    if not p_force then return null; end if;
+    select min(w.week) into v_next from public.weeks w
+     where w.status = 'upcoming' and w.ends_at > now()
+       and exists (select 1 from public.games g where g.week = w.week);
+    if v_next is null then raise exception 'no_week_to_open'; end if;
+    update public.weeks set status = 'closed', closed_at = now() where status = 'upcoming' and week < v_next;
+  else
+    select min(w.week) into v_next from public.weeks w
+     where w.week > v_open and w.status = 'upcoming'
+       and exists (select 1 from public.games g where g.week = w.week);
+    if v_next is null then
+      if p_force then raise exception 'next_week_not_loaded'; end if;
+      return null;
+    end if;
+    if not p_force and (
+         exists (select 1 from public.games where week = v_open and status not in ('final', 'void'))
+      or exists (select 1 from public.slips where week = v_open and status = 'pending')) then
+      return null;
+    end if;
+    perform app.close_week(v_open);
+  end if;
+  perform app.open_week(v_next, p_actor);
+  perform app.audit(p_actor, 'week_opened', 'week', v_next::text,
+    case when v_open is null then null else jsonb_build_object('closed', v_open) end,
+    jsonb_build_object('opened', v_next),
+    case when p_force then 'Opened by an admin' else 'The previous week finished' end);
+  return v_next;
+end $$;
+
+create or replace function public.advance_week_internal() returns int
+language sql security definer set search_path = public, pg_temp
+as $$ select app.advance_week(null, false) $$;
+
+-- ---------------------------------------------------------------- rules
+
+-- Publishes a new rule-set version. Called by the publish-rules Edge Function after
+-- it has checked the document with the shared rules code.
+create or replace function public.publish_rule_set_internal(
+  p_actor uuid, p_document jsonb, p_effective_week int, p_note text
+) returns int
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_version int; v_open int;
+begin
+  if not app.is_admin(p_actor) then raise exception 'admin_only' using errcode = '42501'; end if;
+  select week into v_open from public.weeks where status = 'open';
+  if p_effective_week is null or p_effective_week <= coalesce(v_open, 0) then raise exception 'effective_week_must_be_future'; end if;
+  if not exists (select 1 from public.weeks where week = p_effective_week) then raise exception 'unknown_week'; end if;
+  select coalesce(max(version), 0) + 1 into v_version from public.rule_sets;
+  insert into public.rule_sets (version, effective_week, document, note, created_by)
+  values (v_version, p_effective_week, p_document, coalesce(p_note, ''), p_actor);
+  perform app.audit(p_actor, 'rules_published', 'rule_set', v_version::text, null,
+    jsonb_build_object('version', v_version, 'effectiveWeek', p_effective_week, 'document', p_document), p_note);
+  return v_version;
+end $$;
+
+-- ---------------------------------------------------------------- member functions
+
+create or replace function public.set_display_name(p_name text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+begin
+  if auth.uid() is null then raise exception 'sign_in_required'; end if;
+  if p_name is null or length(trim(p_name)) not between 1 and 40 then raise exception 'bad_name'; end if;
+  update public.profiles set display_name = trim(p_name) where id = auth.uid();
+end $$;
+
+-- The signed-in member's entries with their balances and this week's minimum.
+create or replace function public.my_entries()
+returns table (
+  entry_id uuid, name text, available_cents bigint, pending_cents bigint, bank_cents bigint,
+  week int, required_cents bigint, wagered_cents bigint
+)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select e.id, e.name, app.available_cents(e.id), app.pending_cents(e.id), app.bank_cents(e.id),
+         w.week, wes.required_cents,
+         (select coalesce(sum(s.stake_cents), 0)::bigint from public.slips s
+           where s.entry_id = e.id and s.week = w.week and s.status not in ('undone', 'void'))
+  from public.entries e
+  join public.entry_managers m on m.entry_id = e.id and m.user_id = auth.uid()
+  left join public.weeks w on w.status = 'open'
+  left join public.week_entry_status wes on wes.week = w.week and wes.entry_id = e.id
+  where e.status = 'active'
+  order by e.name
+$$;
+
+-- League standings. Bank never reveals a hidden bet (placing one doesn't change it).
+-- For entries the viewer doesn't manage, at-risk and this week's wagering count only
+-- bets already revealed, so hidden picks stay hidden.
+-- With p_from/p_to, the period columns cover slips settled in [p_from, p_to);
+-- without them they cover the season, including totals carried over from Splash.
+create or replace function public.standings(p_from timestamptz default null, p_to timestamptz default null)
+returns table (
+  entry_id uuid, name text, is_mine boolean,
+  bank_cents bigint, season_net_cents bigint, season_winnings_cents bigint,
+  wins int, losses int, pushes int, risk_cents bigint, return_cents bigint, net_cents bigint, winnings_cents bigint,
+  at_risk_cents bigint, week int, required_cents bigint, wagered_cents bigint
+)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with ow as (select week from public.weeks where status = 'open'),
+  is_season as (select p_from is null and p_to is null as yes),
+  settled as (
+    select s.entry_id,
+      count(*) filter (where s.status = 'won') as w,
+      count(*) filter (where s.status = 'lost') as l,
+      count(*) filter (where s.status = 'push') as p,
+      coalesce(sum(s.stake_cents), 0) as risk,
+      coalesce(sum(s.payout_cents), 0) as ret,
+      coalesce(sum(s.payout_cents - s.stake_cents) filter (where s.status = 'won'), 0) as winnings,
+      coalesce(sum(s.payout_cents - s.stake_cents) filter (where p_from is null or s.settled_at >= p_from), 0) as dummy
+    from public.slips s
+    where s.status in ('won', 'lost', 'push')
+      and (p_from is null or s.settled_at >= p_from)
+      and (p_to is null or s.settled_at < p_to)
+    group by s.entry_id
+  ),
+  season_settled as (
+    select s.entry_id, coalesce(sum(s.payout_cents - s.stake_cents) filter (where s.status = 'won'), 0) as winnings
+    from public.slips s where s.status = 'won' group by s.entry_id
+  ),
+  other as (
+    select l.entry_id, coalesce(sum(l.amount_cents), 0) as amt
+    from public.ledger l
+    where l.kind in ('weekly_minimum', 'adjustment')
+      and (p_from is null or l.created_at >= p_from)
+      and (p_to is null or l.created_at < p_to)
+    group by l.entry_id
+  ),
+  pend as (
+    select s.entry_id,
+      sum(s.stake_cents) as all_pending,
+      coalesce(sum(s.stake_cents) filter (where app.slip_reveal_at(s.id) <= now()), 0) as revealed_pending
+    from public.slips s where s.status = 'pending' group by s.entry_id
+  ),
+  wk as (
+    select s.entry_id,
+      sum(s.stake_cents) as all_wagered,
+      coalesce(sum(s.stake_cents) filter (where app.slip_reveal_at(s.id) <= now()), 0) as revealed_wagered
+    from public.slips s join ow on s.week = ow.week
+    where s.status not in ('undone', 'void')
+    group by s.entry_id
+  )
+  select
+    e.id, e.name, app.manages(e.id) as is_mine,
+    app.bank_cents(e.id),
+    app.bank_cents(e.id) - e.starting_bank_cents,
+    coalesce(b.winnings_cents, 0) + coalesce(ss.winnings, 0),
+    (coalesce(st.w, 0) + case when (select yes from is_season) then coalesce(b.wins, 0) else 0 end)::int,
+    (coalesce(st.l, 0) + case when (select yes from is_season) then coalesce(b.losses, 0) else 0 end)::int,
+    (coalesce(st.p, 0) + case when (select yes from is_season) then coalesce(b.pushes, 0) else 0 end)::int,
+    (coalesce(st.risk, 0) + case when (select yes from is_season) then coalesce(b.risk_cents, 0) else 0 end)::bigint,
+    (coalesce(st.ret, 0) + case when (select yes from is_season) then coalesce(b.return_cents, 0) else 0 end)::bigint,
+    case when (select yes from is_season)
+      then app.bank_cents(e.id) - e.starting_bank_cents
+      else (coalesce(st.ret, 0) - coalesce(st.risk, 0) + coalesce(o.amt, 0))
+    end::bigint,
+    (coalesce(st.winnings, 0) + case when (select yes from is_season) then coalesce(b.winnings_cents, 0) else 0 end)::bigint,
+    (case when app.manages(e.id) then coalesce(pd.all_pending, 0) else coalesce(pd.revealed_pending, 0) end)::bigint,
+    (select week from ow),
+    wes.required_cents,
+    (case when app.manages(e.id) then coalesce(wk.all_wagered, 0) else coalesce(wk.revealed_wagered, 0) end)::bigint
+  from public.entries e
+  left join settled st on st.entry_id = e.id
+  left join season_settled ss on ss.entry_id = e.id
+  left join public.entry_baselines b on b.entry_id = e.id
+  left join other o on o.entry_id = e.id
+  left join pend pd on pd.entry_id = e.id
+  left join wk on wk.entry_id = e.id
+  left join public.week_entry_status wes on wes.entry_id = e.id and wes.week = (select week from ow)
+  where e.status = 'active'
+$$;
+
+-- Picks other members have placed that aren't revealed yet: who and when, nothing else.
+create or replace function public.hidden_activity(p_limit int default 50)
+returns table (entry_id uuid, name text, placed_at timestamptz)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select s.entry_id, e.name, s.placed_at
+  from public.slips s join public.entries e on e.id = s.entry_id
+  where auth.uid() is not null
+    and s.status = 'pending'
+    and not app.manages(s.entry_id)
+    and app.slip_reveal_at(s.id) > now()
+  order by s.placed_at desc
+  limit least(greatest(coalesce(p_limit, 50), 1), 200)
+$$;
+
+-- ---------------------------------------------------------------- admin functions
+
+create or replace function public.admin_open_next_week(p_reason text default null) returns int
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v int;
+begin
+  v := app.advance_week(v_actor, true);
+  if p_reason is not null then
+    perform app.audit(v_actor, 'week_opened_note', 'week', v::text, null, null, p_reason);
+  end if;
+  return v;
+end $$;
+
+create or replace function public.admin_add_entry(p_name text, p_starting_bank_cents bigint default 0) returns uuid
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_id uuid; v_week int;
+begin
+  if coalesce(p_starting_bank_cents, 0) < 0 then raise exception 'bad_amount'; end if;
+  insert into public.entries (name, starting_bank_cents) values (trim(p_name), coalesce(p_starting_bank_cents, 0)) returning id into v_id;
+  if p_starting_bank_cents > 0 then
+    insert into public.ledger (entry_id, amount_cents, kind, note, created_by)
+    values (v_id, p_starting_bank_cents, 'opening', 'Starting bank', v_actor);
+  end if;
+  select week into v_week from public.weeks where status = 'open';
+  if v_week is not null then perform app.snapshot_entry(v_week, v_id); end if;
+  perform app.audit(v_actor, 'entry_added', 'entry', v_id::text, null,
+    jsonb_build_object('name', trim(p_name), 'startingBankCents', coalesce(p_starting_bank_cents, 0)), null);
+  return v_id;
+end $$;
+
+-- Brings an entry over from Splash: its bank, plus record and totals for the season standings.
+-- Only for an entry with no bets on this site yet.
+create or replace function public.admin_import_splash(
+  p_entry uuid, p_bank_cents bigint, p_net_cents bigint,
+  p_wins int, p_losses int, p_pushes int,
+  p_risk_cents bigint, p_return_cents bigint, p_winnings_cents bigint, p_note text
+) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v_actor uuid := app.require_admin();
+  v_before jsonb;
+  v_delta bigint;
+  v_week int;
+begin
+  perform 1 from public.entries where id = p_entry for update;
+  if not found then raise exception 'not_found'; end if;
+  if exists (select 1 from public.slips where entry_id = p_entry) then raise exception 'entry_has_bets'; end if;
+  if p_bank_cents is null or p_bank_cents < 0 then raise exception 'bad_amount'; end if;
+  select jsonb_build_object('availableCents', app.available_cents(p_entry), 'baseline', to_jsonb(b))
+    into v_before from (select 1) x left join public.entry_baselines b on b.entry_id = p_entry;
+  v_delta := p_bank_cents - app.available_cents(p_entry);
+  if v_delta <> 0 then
+    insert into public.ledger (entry_id, amount_cents, kind, note, created_by)
+    values (p_entry, v_delta, 'import', coalesce(nullif(trim(p_note), ''), 'Splash import'), v_actor);
+  end if;
+  update public.entries set starting_bank_cents = p_bank_cents - coalesce(p_net_cents, 0) where id = p_entry;
+  insert into public.entry_baselines (entry_id, wins, losses, pushes, risk_cents, return_cents, winnings_cents, note)
+  values (p_entry, coalesce(p_wins, 0), coalesce(p_losses, 0), coalesce(p_pushes, 0), coalesce(p_risk_cents, 0),
+          coalesce(p_return_cents, 0), coalesce(p_winnings_cents, 0), coalesce(p_note, ''))
+  on conflict (entry_id) do update set wins = excluded.wins, losses = excluded.losses, pushes = excluded.pushes,
+    risk_cents = excluded.risk_cents, return_cents = excluded.return_cents, winnings_cents = excluded.winnings_cents,
+    note = excluded.note, imported_at = now();
+  select week into v_week from public.weeks where status = 'open';
+  if v_week is not null then perform app.snapshot_entry(v_week, p_entry); end if;
+  perform app.audit(v_actor, 'splash_import', 'entry', p_entry::text, v_before,
+    jsonb_build_object('bankCents', p_bank_cents, 'netCents', p_net_cents, 'wins', p_wins, 'losses', p_losses,
+      'pushes', p_pushes, 'riskCents', p_risk_cents, 'returnCents', p_return_cents, 'winningsCents', p_winnings_cents),
+    p_note);
+end $$;
+
+create or replace function public.admin_adjust_bank(p_entry uuid, p_amount_cents bigint, p_reason text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); v_before bigint;
+begin
+  perform 1 from public.entries where id = p_entry for update;
+  if not found then raise exception 'not_found'; end if;
+  if p_amount_cents is null or p_amount_cents = 0 then raise exception 'bad_amount'; end if;
+  v_before := app.available_cents(p_entry);
+  if v_before + p_amount_cents < 0 then raise exception 'insufficient_units'; end if;
+  insert into public.ledger (entry_id, amount_cents, kind, note, created_by)
+  values (p_entry, p_amount_cents, 'adjustment', v_reason, v_actor);
+  perform app.audit(v_actor, 'bank_adjusted', 'entry', p_entry::text,
+    jsonb_build_object('availableCents', v_before), jsonb_build_object('availableCents', v_before + p_amount_cents, 'amountCents', p_amount_cents),
+    v_reason);
+end $$;
+
+create or replace function public.admin_set_manager(p_entry uuid, p_user uuid, p_add boolean) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin();
+begin
+  if p_add then
+    insert into public.entry_managers (entry_id, user_id) values (p_entry, p_user) on conflict do nothing;
+  else
+    delete from public.entry_managers where entry_id = p_entry and user_id = p_user;
+  end if;
+  perform app.audit(v_actor, case when p_add then 'manager_added' else 'manager_removed' end, 'entry', p_entry::text,
+    null, jsonb_build_object('userId', p_user), null);
+end $$;
+
+create or replace function public.admin_set_admin(p_user uuid, p_is_admin boolean) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin();
+begin
+  if not p_is_admin and (select count(*) from public.profiles where is_admin and id <> p_user) = 0 then
+    raise exception 'last_admin';
+  end if;
+  update public.profiles set is_admin = p_is_admin where id = p_user;
+  if not found then raise exception 'not_found'; end if;
+  perform app.audit(v_actor, case when p_is_admin then 'admin_granted' else 'admin_removed' end, 'profile', p_user::text, null, null, null);
+end $$;
+
+-- Sets the league's line for one market of a game, both sides at once.
+-- Side a is home (spread, moneyline) or over (total); side b is away or under.
+create or replace function public.admin_set_line(
+  p_game uuid, p_market text, p_point_a numeric, p_price_a int, p_point_b numeric, p_price_b int,
+  p_offered boolean, p_reason text
+) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare
+  v_actor uuid := app.require_admin();
+  v_reason text := app.require_reason(p_reason);
+  v_game public.games%rowtype;
+  v_before jsonb;
+begin
+  select * into v_game from public.games where id = p_game for update;
+  if not found then raise exception 'not_found'; end if;
+  if v_game.status <> 'scheduled' or v_game.kickoff_at <= now() then raise exception 'game_started'; end if;
+  if p_market = 'spread' and (p_point_a is null or p_point_b is null or p_point_a + p_point_b <> 0) then raise exception 'spread_points_must_mirror'; end if;
+  if p_market = 'total' and (p_point_a is null or p_point_a <> p_point_b or p_point_a <= 0) then raise exception 'total_points_must_match'; end if;
+  if p_market = 'moneyline' and (p_point_a is not null or p_point_b is not null) then raise exception 'moneyline_has_no_point'; end if;
+  if p_market not in ('spread', 'total', 'moneyline') then raise exception 'bad_market'; end if;
+  select jsonb_agg(to_jsonb(o)) into v_before from public.line_overrides o where o.game_id = p_game and o.market = p_market;
+  delete from public.line_overrides where game_id = p_game and market = p_market;
+  insert into public.line_overrides (game_id, market, side, point, price, offered, reason, set_by) values
+    (p_game, p_market, case when p_market = 'total' then 'over' else 'home' end, p_point_a, p_price_a, coalesce(p_offered, true), v_reason, v_actor),
+    (p_game, p_market, case when p_market = 'total' then 'under' else 'away' end, p_point_b, p_price_b, coalesce(p_offered, true), v_reason, v_actor);
+  perform app.audit(v_actor, 'line_set', 'game', p_game::text, v_before,
+    jsonb_build_object('market', p_market, 'a', jsonb_build_object('point', p_point_a, 'price', p_price_a),
+      'b', jsonb_build_object('point', p_point_b, 'price', p_price_b), 'offered', coalesce(p_offered, true)), v_reason);
+end $$;
+
+create or replace function public.admin_clear_line(p_game uuid, p_market text, p_reason text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); v_before jsonb;
+begin
+  select jsonb_agg(to_jsonb(o)) into v_before from public.line_overrides o where o.game_id = p_game and o.market = p_market;
+  delete from public.line_overrides where game_id = p_game and market = p_market;
+  perform app.audit(v_actor, 'line_cleared', 'game', p_game::text, v_before, jsonb_build_object('market', p_market), v_reason);
+end $$;
+
+-- Postpone, reschedule, restore or void a game. Voided games grade every leg on them as void.
+create or replace function public.admin_set_game_status(
+  p_game uuid, p_status text, p_kickoff_at timestamptz, p_reason text
+) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); g public.games%rowtype;
+begin
+  select * into g from public.games where id = p_game for update;
+  if not found then raise exception 'not_found'; end if;
+  if p_status not in ('scheduled', 'postponed', 'void') then raise exception 'bad_status'; end if;
+  if g.status = 'final' and p_status <> 'void' then raise exception 'game_final'; end if;
+  update public.games
+     set status = p_status,
+         kickoff_at = coalesce(p_kickoff_at, kickoff_at),
+         updated_at = now()
+   where id = p_game;
+  perform app.audit(v_actor, 'game_status_set', 'game', p_game::text,
+    jsonb_build_object('status', g.status, 'kickoffAt', g.kickoff_at),
+    jsonb_build_object('status', p_status, 'kickoffAt', coalesce(p_kickoff_at, g.kickoff_at)), v_reason);
+end $$;
+
+-- Enters a final score by hand, for when the score feed fails. Not allowed once
+-- any bet on the game has been graded.
+create or replace function public.admin_set_final_score(p_game uuid, p_home int, p_away int, p_reason text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); g public.games%rowtype;
+begin
+  select * into g from public.games where id = p_game for update;
+  if not found then raise exception 'not_found'; end if;
+  if g.status = 'void' then raise exception 'game_void'; end if;
+  if g.kickoff_at > now() then raise exception 'game_not_started'; end if;
+  if p_home is null or p_away is null or p_home < 0 or p_away < 0 then raise exception 'bad_score'; end if;
+  if exists (select 1 from public.slip_legs where game_id = p_game and result <> 'pending') then raise exception 'already_graded'; end if;
+  update public.games set status = 'final', home_score = p_home, away_score = p_away, final_at = now(), updated_at = now()
+   where id = p_game;
+  perform app.audit(v_actor, 'score_set', 'game', p_game::text,
+    jsonb_build_object('status', g.status, 'home', g.home_score, 'away', g.away_score),
+    jsonb_build_object('status', 'final', 'home', p_home, 'away', p_away), v_reason);
+end $$;
+
+create or replace function public.admin_move_game(p_game uuid, p_week int, p_reason text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); v_old int;
+begin
+  select week into v_old from public.games where id = p_game for update;
+  if not found then raise exception 'not_found'; end if;
+  if exists (select 1 from public.slip_legs where game_id = p_game) then raise exception 'game_has_bets'; end if;
+  if not exists (select 1 from public.weeks where week = p_week) then raise exception 'unknown_week'; end if;
+  update public.games set week = p_week, week_moved = true, updated_at = now() where id = p_game;
+  perform app.audit(v_actor, 'game_moved', 'game', p_game::text, jsonb_build_object('week', v_old), jsonb_build_object('week', p_week), v_reason);
+end $$;
+
+-- Voids a bet: the stake comes back and any winnings paid on it are taken back.
+-- The audit row records the entry and stake, never the picks.
+create or replace function public.admin_void_slip(p_slip uuid, p_reason text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); v public.slips%rowtype;
+begin
+  select * into v from public.slips where id = p_slip for update;
+  if not found then raise exception 'not_found'; end if;
+  if v.status in ('void', 'undone') then raise exception 'already_void'; end if;
+  if v.status <> 'pending' and coalesce(v.payout_cents, 0) > 0 then
+    insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, note, created_by)
+    values (v.entry_id, -v.payout_cents, 'void_reversal', v.id, v.week, v_reason, v_actor);
+  end if;
+  insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, note, created_by)
+  values (v.entry_id, v.stake_cents, 'void_refund', v.id, v.week, v_reason, v_actor);
+  update public.slips set status = 'void', void_reason = v_reason, payout_cents = v.stake_cents, settled_at = now()
+   where id = p_slip;
+  perform app.audit(v_actor, 'bet_voided', 'slip', p_slip::text,
+    jsonb_build_object('entryId', v.entry_id, 'status', v.status, 'stakeCents', v.stake_cents, 'payoutCents', v.payout_cents),
+    jsonb_build_object('status', 'void'), v_reason);
+end $$;
+
+-- Members and their emails, for the admin screens only.
+create or replace function public.admin_list_users()
+returns table (user_id uuid, email text, display_name text, is_admin boolean, entry_names text[])
+language plpgsql stable security definer set search_path = public, pg_temp
+as $$
+begin
+  perform app.require_admin();
+  return query
+    select p.id, u.email::text, p.display_name, p.is_admin,
+           coalesce(array_agg(e.name order by e.name) filter (where e.id is not null), '{}')
+    from public.profiles p
+    join auth.users u on u.id = p.id
+    left join public.entry_managers m on m.user_id = p.id
+    left join public.entries e on e.id = m.entry_id
+    group by p.id, u.email, p.display_name, p.is_admin
+    order by p.display_name;
+end $$;
+
+-- ---------------------------------------------------------------- accounts
+
+create or replace function app.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+begin
+  insert into public.profiles (id, display_name)
+  values (new.id, left(coalesce(nullif(trim(new.raw_user_meta_data ->> 'display_name'), ''), split_part(new.email, '@', 1), 'Member'), 40))
+  on conflict (id) do nothing;
+  return new;
+end $$;
+
+create trigger on_auth_user_created after insert on auth.users
+for each row execute function app.handle_new_user();
+
+-- Makes the first admin. Run once from the SQL editor: select app.bootstrap_admin('you@example.com');
+create or replace function app.bootstrap_admin(p_email text) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v uuid;
+begin
+  select id into v from auth.users where lower(email) = lower(p_email);
+  if v is null then raise exception 'no user with that email'; end if;
+  update public.profiles set is_admin = true where id = v;
+  perform app.audit(null, 'admin_granted', 'profile', v::text, null, null, 'Bootstrap admin');
+end $$;
+
+-- ---------------------------------------------------------------- guards
+
+create or replace function app.forbid_change() returns trigger
+language plpgsql
+as $$
+begin
+  raise exception '% is append-only', tg_table_name;
+end $$;
+
+create trigger ledger_append_only before update or delete on public.ledger
+for each row execute function app.forbid_change();
+create trigger audit_append_only before update or delete on public.audit_log
+for each row execute function app.forbid_change();
+create trigger rule_sets_append_only before update or delete on public.rule_sets
+for each row execute function app.forbid_change();
+
+create or replace function app.rule_sets_guard() returns trigger
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v int;
+begin
+  select week into v from public.weeks where status = 'open';
+  if v is not null and new.effective_week <= v then
+    raise exception 'rules can only change from a future week';
+  end if;
+  return new;
+end $$;
+create trigger rule_sets_future_only before insert on public.rule_sets
+for each row execute function app.rule_sets_guard();
+
+create or replace function app.weeks_guard() returns trigger
+language plpgsql
+as $$
+begin
+  if old.status <> 'upcoming' and new.rule_set_version is distinct from old.rule_set_version then
+    raise exception 'a week''s rules are fixed once it opens';
+  end if;
+  if old.status = 'closed' and new.status <> 'closed' then
+    raise exception 'a closed week stays closed';
+  end if;
+  return new;
+end $$;
+create trigger weeks_guard before update on public.weeks
+for each row execute function app.weeks_guard();
+
+create or replace function app.slips_guard() returns trigger
+language plpgsql
+as $$
+begin
+  if tg_op = 'DELETE' then raise exception 'slips cannot be deleted'; end if;
+  if (new.entry_id, new.placed_by, new.week, new.type, new.teaser_points, new.stake_cents, new.quoted_american,
+      new.potential_payout_cents, new.rule_set_version, new.placed_at)
+     is distinct from
+     (old.entry_id, old.placed_by, old.week, old.type, old.teaser_points, old.stake_cents, old.quoted_american,
+      old.potential_payout_cents, old.rule_set_version, old.placed_at) then
+    raise exception 'a placed slip cannot be changed';
+  end if;
+  if old.status in ('void', 'undone') and new.status <> old.status then
+    raise exception 'a voided or undone slip cannot change';
+  end if;
+  if old.status in ('won', 'lost', 'push') and new.status <> old.status and new.status <> 'void' then
+    raise exception 'a settled slip can only be voided';
+  end if;
+  return new;
+end $$;
+create trigger slips_guard before update or delete on public.slips
+for each row execute function app.slips_guard();
+
+create or replace function app.legs_guard() returns trigger
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'DELETE' then raise exception 'legs cannot be deleted'; end if;
+  if tg_op = 'INSERT' then
+    if exists (select 1 from public.games g where g.id = new.game_id and (g.kickoff_at <= now() or g.status <> 'scheduled')) then
+      raise exception 'game_started';
+    end if;
+    return new;
+  end if;
+  if (new.slip_id, new.leg_no, new.game_id, new.market, new.side, new.point, new.price, new.teased_point, new.book)
+     is distinct from
+     (old.slip_id, old.leg_no, old.game_id, old.market, old.side, old.point, old.price, old.teased_point, old.book) then
+    raise exception 'a placed leg cannot be changed';
+  end if;
+  return new;
+end $$;
+create trigger legs_guard before insert or update or delete on public.slip_legs
+for each row execute function app.legs_guard();

@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -15,7 +19,14 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "types": []
+    "types": [
+      "node"
+    ]
   },
-  "include": ["supabase/functions/_shared/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "supabase/functions/**/*.ts",
+    "supabase/tests/**/*.ts",
+    "scripts/**/*.ts",
+    "*.ts"
+  ]
 }
