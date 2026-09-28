@@ -20,6 +20,9 @@ Defaults chosen while fixing the review findings (Sept 28–29). Each is built a
 | Standings' "This week" and "Last week" count bets by their week, not by when they were graded. | A Monday-night bet graded after midnight belongs to its week. |
 | A game postponed after kickoff keeps its bets riding and takes no new bets; it's graded when its final comes in. | Reopening a game after kickoff would allow betting with hindsight. |
 | New members must be given a display name; it's never taken from their email. | Display names are public. |
+| Bets can trigger line refreshes at most once every 2 minutes overall, once every 10 minutes per member, and 200 times a day in all; past that, bets use the scheduled pulls' lines. | Caps the credits any member (or script) can spend at about 600 a day. Both limits are league settings. |
+| An admin can't make themselves a manager of an entry that already has managers; the other admin has to. | Being a manager shows an entry's hidden bets from then on. |
+| A corrected score takes back winnings already paid, even if that leaves a bank below zero until it's won back. | The alternative is letting a wrong payout stand. |
 
 ## Settled
 
