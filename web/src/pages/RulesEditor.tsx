@@ -26,7 +26,7 @@ function NumInput({ value, onChange, label, className = "input num", style }: {
   className?: string;
   style?: React.CSSProperties;
 }) {
-  // (Copies of the rules go through JSON, which turns NaN into null, so null counts as unreadable too.)
+  // (A number that went through JSON as NaN comes back null, so null counts as unreadable too.)
   const unreadable = value === undefined || value === null || Number.isNaN(value);
   const shown = unreadable || !Number.isFinite(value) ? "" : String(value);
   const [text, setText] = useState(shown);
