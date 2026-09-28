@@ -256,6 +256,9 @@ export class SupabaseApi implements Api {
   async adminOpenNextWeek(expectedOpenWeek: number | null, reason: string) {
     return check(await this.db.rpc("admin_open_next_week", { p_expected_open: expectedOpenWeek, p_reason: reason || null })) as number | null;
   }
+  async adminCloseSeason(expectedOpenWeek: number, reason: string) {
+    check(await this.db.rpc("admin_close_season", { p_expected_open: expectedOpenWeek, p_reason: reason || null }));
+  }
   async adminSetLine(gameId: string, market: string, a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string) {
     check(await this.db.rpc("admin_set_line", {
       p_game: gameId, p_market: market, p_point_a: a.point, p_price_a: a.price, p_point_b: b.point, p_price_b: b.price, p_offered: offered, p_reason: reason,

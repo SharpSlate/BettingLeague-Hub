@@ -170,6 +170,7 @@ const ACTIONS: Record<string, string> = {
   game_status_set: "changed a game's status",
   score_set: "entered a final score",
   score_corrected: "corrected a final score",
+  bets_regraded: "regraded a game's bets",
   game_moved: "moved a game to another week",
   bet_voided: "voided a bet",
   rules_published: "published new rules",
@@ -191,6 +192,8 @@ function detail(r: AuditRow): string {
     return parts.join(", ") + regraded;
   }
   if (r.action === "score_corrected" && b) return `${b.away}–${b.home} → ${a.away}–${a.home} (away–home)${regraded}`;
+  if (r.action === "bets_regraded") return `${a.away}–${a.home} (away–home)${regraded}`;
+  if ((r.action === "manager_added" || r.action === "manager_removed") && typeof a.member === "string") return `${a.member}, ${a.entry}`;
   if (r.action === "week_closed") return `week ${a.closed}`;
   if (r.action === "bank_adjusted" && typeof a.amountCents === "number") return `${a.amountCents > 0 ? "+" : ""}${units(a.amountCents)} units`;
   if (r.action === "rules_published") return `version ${a.version}, from week ${a.effectiveWeek}`;

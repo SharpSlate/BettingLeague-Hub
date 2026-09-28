@@ -122,7 +122,8 @@ as $$
   select exists (
     select 1 from public.slips s
     where s.id = p_slip
-      and (app.managed_at(s.entry_id, s.placed_at) or (s.status <> 'undone' and app.slip_reveal_at(s.id) <= now()))
+      and (s.placed_by = auth.uid() or app.managed_at(s.entry_id, s.placed_at)
+           or (s.status <> 'undone' and app.slip_reveal_at(s.id) <= now()))
   )
 $$;
 
@@ -137,7 +138,8 @@ as $$
     join public.games g on g.id = p_game
     where s.id = p_slip
       and (
-        app.managed_at(s.entry_id, s.placed_at)
+        s.placed_by = auth.uid()
+        or app.managed_at(s.entry_id, s.placed_at)
         or (
           s.status <> 'undone'
           and case r.document ->> 'visibility'
@@ -158,7 +160,8 @@ as $$
     select 1 from public.slips s
     where s.id = p_slip
       and (
-        app.managed_at(s.entry_id, s.placed_at)
+        s.placed_by = auth.uid()
+        or app.managed_at(s.entry_id, s.placed_at)
         or (
           app.can_see_slip(s.id)
           and not exists (select 1 from public.slip_legs l where l.slip_id = s.id and not app.can_see_leg(s.id, l.game_id))
@@ -242,6 +245,9 @@ declare
 begin
   perform pg_advisory_xact_lock(hashtext('ingest_lines'));
   v_at := clock_timestamp();
+  -- Lock the pull's games in id order, the order placing a bet uses, so the two can't deadlock.
+  perform 1 from public.games where odds_api_id in (select e ->> 'id' from jsonb_array_elements(coalesce(p_events, '[]'::jsonb)) e)
+   order by id for update;
   for ev in select * from jsonb_array_elements(coalesce(p_events, '[]'::jsonb)) loop
     select abbr into v_home from public.teams where name = ev ->> 'homeTeam';
     select abbr into v_away from public.teams where name = ev ->> 'awayTeam';
@@ -256,14 +262,21 @@ begin
       values (ev ->> 'id', v_week, v_kick, v_home, v_away)
       returning * into v_game;
     elsif v_game.status = 'scheduled' and v_game.kickoff_at > v_at and v_game.kickoff_at <> v_kick then
-      update public.games
-         set kickoff_at = v_kick,
-             week = case
-               when week_moved or exists (select 1 from public.slip_legs l where l.game_id = v_game.id) then week
-               else v_week
-             end,
-             updated_at = v_at
-       where id = v_game.id;
+      -- A start time already in the past is believed only for a game that was due within
+      -- the hour; for a game hours away it's a bad reading, and would show its picks.
+      if v_kick > v_at or v_game.kickoff_at <= v_at + interval '1 hour' then
+        update public.games
+           set kickoff_at = v_kick,
+               week = case
+                 when week_moved or exists (select 1 from public.slip_legs l where l.game_id = v_game.id) then week
+                 else v_week
+               end,
+               updated_at = v_at
+         where id = v_game.id;
+      end if;
+    elsif v_game.status = 'postponed' and v_kick is distinct from coalesce(v_game.rescheduled_at, v_game.kickoff_at) then
+      -- The kickoff stays put (it decides when picks show); the new time keeps score pulls going.
+      update public.games set rescheduled_at = v_kick, updated_at = v_at where id = v_game.id;
     end if;
 
     for bk in select * from jsonb_array_elements(coalesce(ev -> 'books', '[]'::jsonb)) loop
@@ -301,6 +314,17 @@ begin
   return found;
 end $$;
 
+-- How many games need scores: kicked off in the last 3 days and not final or void. A
+-- postponed game counts from the feed's new start time, if it has one.
+create or replace function public.games_awaiting_scores_internal(p_now timestamptz) returns int
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select count(*)::int from public.games g
+  where g.status in ('scheduled', 'live', 'postponed')
+    and (case when g.status = 'postponed' then coalesce(g.rescheduled_at, g.kickoff_at) else g.kickoff_at end)
+        between p_now - interval '3 days' and p_now
+$$;
+
 -- Records a failed (or skipped) pull so the site can show it and the guard can see it.
 create or replace function public.record_pull_internal(
   p_kind text, p_trigger text, p_ok boolean, p_error text, p_credits_used int, p_credits_remaining int
@@ -332,9 +356,14 @@ declare
   v_now timestamptz := clock_timestamp();
   v_n int := 0;
 begin
+  perform 1 from public.games where odds_api_id in (select e ->> 'id' from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) e)
+   order by id for update;
   for sc in select * from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) loop
     select * into g from public.games where odds_api_id = sc ->> 'id' for update;
     continue when not found or g.status = 'void';
+    -- Scores for a game the league has more than an hour from kickoff are a bad reading
+    -- (a postponed game counts from its new time).
+    continue when coalesce(g.rescheduled_at, g.kickoff_at) > v_now + interval '1 hour' and g.kickoff_at > v_now + interval '1 hour';
     continue when jsonb_typeof(sc -> 'homeScore') is distinct from 'number' or jsonb_typeof(sc -> 'awayScore') is distinct from 'number';
     v_home := (sc ->> 'homeScore')::int;
     v_away := (sc ->> 'awayScore')::int;
@@ -468,6 +497,9 @@ begin
   end if;
 
   select max(at) into v_last_pull from public.line_pulls where kind = 'lines' and ok;
+
+  -- Lock the slip's games in id order, as the line pulls do, so the two can't deadlock.
+  perform 1 from public.games where id in (select (x ->> 'gameId')::uuid from jsonb_array_elements(p_legs) x) order by id for share;
 
   insert into public.slips (entry_id, placed_by, week, type, teaser_points, stake_cents, quoted_american,
                             potential_payout_cents, leg_count, rule_set_version, placed_at, client_ref)
@@ -714,10 +746,11 @@ end $$;
 -- Admin (p_force = true): closes the open week regardless, e.g. around a postponed game.
 -- The admin names the week they expect to close (p_expected_open, null when none is
 -- open), so a click on a page loaded before the week changed can't close the new one.
--- A week in which no game has kicked off can't be closed early. When no later week
--- has games (the end of the season), the admin's call closes the week and opens nothing.
--- With no week open, only an admin can open the first one.
-create or replace function app.advance_week(p_actor uuid, p_force boolean, p_expected_open int default null) returns int
+-- A week in which no game has kicked off can't be closed early. An admin can close a
+-- week only into a next week whose games are loaded (so betting never stalls with no
+-- week open), except at the end of the season (p_end_season), when the week closes
+-- and nothing opens. With no week open, only an admin can open the first one.
+create or replace function app.advance_week(p_actor uuid, p_force boolean, p_expected_open int default null, p_end_season boolean default false) returns int
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
@@ -741,6 +774,8 @@ begin
     select min(w.week) into v_next from public.weeks w
      where w.week > v_open and w.status = 'upcoming'
        and exists (select 1 from public.games g where g.week = w.week);
+    if p_force and v_next is null and not p_end_season then raise exception 'next_week_not_loaded'; end if;
+    if p_force and v_next is not null and p_end_season then raise exception 'next_week_loaded'; end if;
     if not p_force and (
          v_next is null
       or exists (select 1 from public.games where week = v_open and status not in ('final', 'void'))
@@ -750,7 +785,7 @@ begin
     perform app.close_week(v_open);
     if v_next is null then
       perform app.audit(p_actor, 'week_closed', 'week', v_open::text, null, jsonb_build_object('closed', v_open),
-        'Closed by an admin. No later week has games yet.');
+        'Closed by an admin: the end of the season');
       return null;
     end if;
   end if;
@@ -951,8 +986,8 @@ $$;
 
 -- Closes the open week early and opens the next one. p_expected_open is the week the
 -- admin's page shows as open (null if none), checked so a stale page can't close the
--- wrong week. Returns the week opened, or null if the week was closed with no later
--- week to open (the end of the season).
+-- wrong week. Returns the week opened. Refuses (next_week_not_loaded) if no later week
+-- has games yet; at the end of the season use admin_close_season.
 create or replace function public.admin_open_next_week(p_expected_open int, p_reason text default null) returns int
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -981,6 +1016,18 @@ begin
   perform app.audit(v_actor, 'entry_added', 'entry', v_id::text, null,
     jsonb_build_object('name', trim(p_name), 'startingBankCents', coalesce(p_starting_bank_cents, 0)), null);
   return v_id;
+end $$;
+
+-- Closes the season's last week (applying its minimum) when no later week has games.
+create or replace function public.admin_close_season(p_expected_open int, p_reason text default null) returns void
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare v_actor uuid := app.require_admin();
+begin
+  perform app.advance_week(v_actor, true, p_expected_open, true);
+  if nullif(trim(p_reason), '') is not null then
+    perform app.audit(v_actor, 'week_opened_note', 'week', p_expected_open::text, null, null, trim(p_reason));
+  end if;
 end $$;
 
 -- Brings an entry over from Splash: its bank, plus record and totals for the season standings.
@@ -1043,18 +1090,24 @@ begin
     v_reason);
 end $$;
 
+-- Adds or removes an entry manager. The log names the member and the entry, so an
+-- admin making themselves a manager is plain to everyone.
 create or replace function public.admin_set_manager(p_entry uuid, p_user uuid, p_add boolean) returns void
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare v_actor uuid := app.require_admin();
 begin
+  if not exists (select 1 from public.entries where id = p_entry) then raise exception 'not_found'; end if;
+  if not exists (select 1 from public.profiles where id = p_user) then raise exception 'not_found'; end if;
   if p_add then
     insert into public.entry_managers (entry_id, user_id) values (p_entry, p_user) on conflict do nothing;
   else
     delete from public.entry_managers where entry_id = p_entry and user_id = p_user;
   end if;
   perform app.audit(v_actor, case when p_add then 'manager_added' else 'manager_removed' end, 'entry', p_entry::text,
-    null, jsonb_build_object('userId', p_user), null);
+    null, jsonb_build_object('userId', p_user,
+      'member', (select display_name from public.profiles where id = p_user),
+      'entry', (select name from public.entries where id = p_entry)), null);
 end $$;
 
 create or replace function public.admin_set_admin(p_user uuid, p_is_admin boolean) returns void
@@ -1148,8 +1201,8 @@ end $$;
 
 -- Postpone, reschedule, restore or void a game. Voided games grade every leg on them as void.
 -- Betting reopens only on a game that hasn't started, and a kickoff is never set in
--- the past or moved once it has passed: either would show or hide picks at the
--- wrong time.
+-- the past, moved once it has passed, or (once its week is open) moved earlier: any of
+-- those would show or hide picks at the wrong time.
 create or replace function public.admin_set_game_status(
   p_game uuid, p_status text, p_kickoff_at timestamptz, p_reason text
 ) returns void
@@ -1170,6 +1223,12 @@ begin
   if p_kickoff_at is not null and p_kickoff_at <> g.kickoff_at then
     if g.kickoff_at <= v_now then raise exception 'kickoff_passed'; end if;
     if p_kickoff_at <= v_now then raise exception 'kickoff_in_past'; end if;
+    -- Moving a kickoff earlier shows its picks earlier, so once a game's week has
+    -- opened its kickoff only moves later. Real schedule changes come in from the feed;
+    -- to stop betting on a game right away, mark it postponed.
+    if p_kickoff_at < g.kickoff_at and (select status from public.weeks where week = g.week) <> 'upcoming' then
+      raise exception 'kickoff_earlier';
+    end if;
   end if;
   if p_status = 'scheduled' and (g.status not in ('scheduled', 'postponed') or g.kickoff_at <= v_now) then
     raise exception 'game_started';
@@ -1191,7 +1250,8 @@ end $$;
 
 -- Enters a final score by hand: when the score feed fails, or to correct a final score
 -- (including one on a game voided by mistake). A correction reopens the game's graded
--- bets, and the grading job grades them again within minutes.
+-- bets, and the grading job grades them again within minutes. Entering the same final
+-- score again regrades the game's bets without changing it.
 create or replace function public.admin_set_final_score(p_game uuid, p_home int, p_away int, p_reason text) returns void
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -1206,14 +1266,18 @@ begin
   if not found then raise exception 'not_found'; end if;
   if g.kickoff_at > v_now then raise exception 'game_not_started'; end if;
   if p_home is null or p_away is null or p_home < 0 or p_away < 0 then raise exception 'bad_score'; end if;
-  if g.status = 'final' and g.home_score = p_home and g.away_score = p_away then raise exception 'no_change'; end if;
   if g.status in ('final', 'void') then
     v_reopened := app.reopen_graded(p_game, v_actor, v_reason);
   end if;
   update public.games set status = 'final', home_score = p_home, away_score = p_away,
     feed_final_home = null, feed_final_away = null, final_at = v_now, updated_at = v_now
    where id = p_game;
-  perform app.audit(v_actor, case when g.status in ('final', 'void') then 'score_corrected' else 'score_set' end, 'game', p_game::text,
+  perform app.audit(v_actor,
+    case
+      when g.status = 'final' and g.home_score = p_home and g.away_score = p_away then 'bets_regraded'
+      when g.status in ('final', 'void') then 'score_corrected'
+      else 'score_set'
+    end, 'game', p_game::text,
     jsonb_build_object('status', g.status, 'home', g.home_score, 'away', g.away_score),
     jsonb_build_object('status', 'final', 'home', p_home, 'away', p_away, 'betsRegraded', v_reopened), v_reason);
 end $$;
@@ -1270,10 +1334,24 @@ as $$
 begin
   perform app.require_admin();
   return query
-    select lp.at, lp.kind, lp.trigger, coalesce(lp.error, '')
-    from public.line_pulls lp
-    where not lp.ok and lp.at > now() - interval '3 days'
-    order by lp.at desc
+    select * from (
+      select lp.at, lp.kind, lp.trigger, coalesce(lp.error, '') as error
+      from public.line_pulls lp
+      where not lp.ok and lp.at > now() - interval '3 days'
+      union all
+      -- A game still live long after kickoff: the feed may have missed its final.
+      select g.kickoff_at + interval '5 hours', 'game', 'check',
+             format('%s at %s has been live for over 5 hours with no final. Enter its final score.', ta.short_name, th.short_name)
+      from public.games g join public.teams th on th.abbr = g.home_team join public.teams ta on ta.abbr = g.away_team
+      where g.status = 'live' and g.kickoff_at < now() - interval '5 hours'
+      union all
+      -- A postponed game the score pulls have stopped checking.
+      select coalesce(g.rescheduled_at, g.kickoff_at) + interval '3 days', 'game', 'check',
+             format('%s at %s was postponed and the feed has stopped checking it. Enter its final score, or void it.', ta.short_name, th.short_name)
+      from public.games g join public.teams th on th.abbr = g.home_team join public.teams ta on ta.abbr = g.away_team
+      where g.status = 'postponed' and coalesce(g.rescheduled_at, g.kickoff_at) < now() - interval '3 days'
+    ) x
+    order by x.at desc
     limit least(greatest(coalesce(p_limit, 10), 1), 50);
 end $$;
 

@@ -79,13 +79,8 @@ export class SupabaseStore implements Store {
 
   async gamesAwaitingScores(now: Date) {
     // A postponed game can still be played (and its bets still ride), so it keeps
-    // pulling scores for 3 days after its kickoff, like any other game.
-    const { count, error } = await this.db.from("games").select("id", { count: "exact", head: true })
-      .lte("kickoff_at", now.toISOString())
-      .gt("kickoff_at", new Date(now.getTime() - 3 * 86_400_000).toISOString())
-      .in("status", ["scheduled", "live", "postponed"]);
-    if (error) throw new Error(`games awaiting scores: ${error.message}`);
-    return count ?? 0;
+    // pulling scores for 3 days from the feed's new start time.
+    return Number(await must<number>(this.db.rpc("games_awaiting_scores_internal", { p_now: now.toISOString() }), "games awaiting scores"));
   }
 
   async pendingSlips(): Promise<PendingSlip[]> {

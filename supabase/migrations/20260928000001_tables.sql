@@ -96,6 +96,10 @@ create table public.games (
   -- pull reports the same score, so one bad reading from the feed isn't graded.
   feed_final_home int,
   feed_final_away int,
+  -- The feed's newer start time for a game whose kickoff stays put (one postponed, or
+  -- already started). Keeps score pulls going around the new time without moving
+  -- kickoff_at, which decides when picks show.
+  rescheduled_at timestamptz,
   final_at timestamptz,
   updated_at timestamptz not null default now(),
   check (home_team <> away_team),

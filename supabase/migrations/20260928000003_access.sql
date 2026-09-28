@@ -91,6 +91,7 @@ grant execute on function public.slip_quotes(uuid[]) to authenticated;
 
 -- Admin functions (each checks the caller is an admin).
 grant execute on function public.admin_open_next_week(int, text) to authenticated;
+grant execute on function public.admin_close_season(int, text) to authenticated;
 grant execute on function public.admin_add_entry(text, bigint) to authenticated;
 grant execute on function public.admin_import_splash(uuid, bigint, bigint, int, int, int, bigint, bigint, bigint, text) to authenticated;
 grant execute on function public.admin_adjust_bank(uuid, bigint, text) to authenticated;

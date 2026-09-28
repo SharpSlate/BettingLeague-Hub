@@ -149,6 +149,9 @@ describe("the feed can't reopen betting", () => {
   });
 
   it("scores for a game the league thought hadn't started close betting on it", async () => {
+    // Due within the hour, so an early start is believable (readings for games further
+    // out are ignored as bad; see review2.test.ts).
+    await setKickoff("EARLY", "now() + interval '30 minutes'");
     await scores([{ id: "EARLY", completed: false, homeScore: 7, awayScore: 0 }]);
     const [g] = await db.su("select status, kickoff_at <= now() as started from public.games where id = $1", [ids.EARLY]);
     expect(g).toEqual({ status: "live", started: true });
@@ -298,7 +301,6 @@ describe("correcting a final score", () => {
     await scores([{ id: "FIN", completed: true, homeScore: 27, awayScore: 20 }]);
     await settle(won, "won", 19_091, JSON.stringify([{ legNo: 1, result: "won" }]));
     const before = await available(aliceEntry);
-    await fails(db.q(member(owner), "select public.admin_set_final_score($1, 27, 20, 'same score')", [ids.FIN]), "no_change");
 
     await db.q(member(owner), "select public.admin_set_final_score($1, 20, 27, 'The feed had the teams reversed')", [ids.FIN]);
     expect((await db.su("select status, payout_cents, settled_at from public.slips where id = $1", [won]))[0]).toEqual({ status: "pending", payout_cents: null, settled_at: null });
@@ -377,9 +379,10 @@ describe("opening the next week by hand", () => {
     await fails(db.q(member(owner), "select public.admin_open_next_week(5, 'double click')"), "week_not_started");
   });
 
-  it("at the end of the season, closes the last week and opens nothing", async () => {
+  it("won't close into a week whose games aren't on the board; closing the season is its own step", async () => {
     await setKickoff("W5", "now() - interval '3 hours'");
-    expect((await db.q(member(owner), "select public.admin_open_next_week(5, 'Season over') as w"))[0].w).toBeNull();
+    await fails(db.q(member(owner), "select public.admin_open_next_week(5, 'Season over')"), "next_week_not_loaded");
+    await db.q(member(owner), "select public.admin_close_season(5, 'Season over')");
     expect(await db.su("select week, status from public.weeks where week in (5, 6) order by week")).toEqual([
       { week: 5, status: "closed" },
       { week: 6, status: "upcoming" },

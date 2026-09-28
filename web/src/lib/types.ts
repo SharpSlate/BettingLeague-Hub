@@ -250,6 +250,8 @@ export interface Api {
   adminAdjustBank(entryId: string, amountCents: number, reason: string): Promise<void>;
   /** Closes the open week (the one the page shows) and opens the next. Null when no later week has games. */
   adminOpenNextWeek(expectedOpenWeek: number | null, reason: string): Promise<number | null>;
+  /** Closes the season's last week (when no later week has games). */
+  adminCloseSeason(expectedOpenWeek: number, reason: string): Promise<void>;
   adminSetLine(gameId: string, market: Market, a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string): Promise<void>;
   adminClearLine(gameId: string, market: Market, reason: string): Promise<void>;
   adminSetGameStatus(gameId: string, status: "scheduled" | "postponed" | "void", kickoffAt: string | null, reason: string): Promise<void>;

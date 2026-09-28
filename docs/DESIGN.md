@@ -131,8 +131,8 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
   - import the Splash standings.
 
   Admin powers do **not** include seeing anyone's picks before kickoff. The database rules apply to admins the same way, and the admin tools are built so they can't be used to peek:
-  - making yourself an entry's manager doesn't show you the bets it already placed;
-  - a kickoff can't be set in the past or moved once it has passed, and a game that has started can't reopen for betting;
+  - making yourself an entry's manager doesn't show you the bets it already placed, and the log names who was added to which entry;
+  - a kickoff can't be set in the past, moved once it has passed, or moved earlier once its week is open (real schedule changes come from the feed; to stop betting on a game at once, an admin marks it postponed), and a game that has started can't reopen for betting;
   - the admin log never shows a hidden bet's stake, or an entry's available units (which would show how much is riding on hidden bets);
   - only games in a week that hasn't opened can be moved to another week, so a refusal never tells an admin where bets are.
 - **Hosting caveat:** whoever owns the Supabase project can read the database directly, as with any self-hosted site. The site itself never reveals picks early, and every change to a bank is in the ledger and the audit log.
@@ -179,7 +179,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 
 Weeks run Tuesday to Monday, Eastern. A game belongs to the week its kickoff falls in unless an admin moves it; week 1 of 2026 started Tuesday, Sept 8. Playoff rounds are labeled by name, and the empty Pro Bowl week is skipped.
 
-The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in (from the feed, which keeps checking for 3 days, or entered by an admin). The season's last week is closed by an admin from the Admin page, since no later week will open it.
+The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. One reading can't pull a game that's more than an hour away into the past, and scores for a game more than an hour from kickoff are ignored, since either would show its picks early. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in, from the feed (which keeps checking for 3 days from the feed's new start time) or entered by an admin. An admin can close a week early only into a next week whose games are on the board; the season's last week is closed with its own "Close the season" step. The Admin page lists failed pulls, bets the grader couldn't settle, and games stuck live or postponed with no final.
 
 ## 8. Pages (draft; to be checked against the Splash inventory)
 

@@ -13,7 +13,9 @@ Defaults chosen while fixing the review findings (Sept 28–29). Each is built a
 | A co-manager added mid-week sees the entry's hidden bets placed before they joined only at kickoff, like everyone else. | Otherwise an admin could add themselves to any entry and see its picks. |
 | Other members see a parlay's odds and payout only after every leg kicks off. | The combined odds give away the hidden legs. |
 | A bet can't be undone once its week has been closed, even inside the 5 minutes. | An early close could otherwise be used to dodge the 30% minimum. |
-| The season's last week is closed by an admin ("Open next week" closes it when no later week has games). | The site can't tell "the season is over" from "next week's games aren't posted yet". |
+| The season's last week is closed by an admin with its own "Close the season" step; "Open next week" won't close a week until the next week's games are on the board. | The site can't tell "the season is over" from "next week's games aren't posted yet", and betting should never stall with no week open. |
+| Once a week is open, an admin can move a kickoff later but not earlier; real schedule changes come from the feed, and "postponed" stops betting on a game at once. | Moving a kickoff earlier would show its picks early. |
+| Entering a game's same final score again regrades its bets. | A way to fix a bet graded wrong without changing the score. |
 | A new rules version can't start before one that's already scheduled. | Keeps "the newest version applies from its week on" unambiguous. |
 | Standings' "This week" and "Last week" count bets by their week, not by when they were graded. | A Monday-night bet graded after midnight belongs to its week. |
 | A game postponed after kickoff keeps its bets riding and takes no new bets; it's graded when its final comes in. | Reopening a game after kickoff would allow betting with hindsight. |

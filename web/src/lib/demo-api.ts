@@ -396,7 +396,7 @@ export class DemoApi implements Api {
   async adminSetManager(entryId: string, userId: string, add: boolean) {
     const e = this.entry(entryId);
     e.managers = add ? [...new Set([...e.managers, userId])] : e.managers.filter((m) => m !== userId);
-    this.audit(add ? "manager_added" : "manager_removed", "entry", entryId, { userId }, "");
+    this.audit(add ? "manager_added" : "manager_removed", "entry", entryId, { userId, member: this.s.users.find((u) => u.id === userId)?.displayName, entry: e.name }, "");
   }
   async adminSetAdmin(userId: string, isAdmin: boolean) {
     const u = this.s.users.find((x) => x.id === userId);
@@ -425,6 +425,10 @@ export class DemoApi implements Api {
     if (expectedOpenWeek !== OPEN_WEEK) throw new Error("week_changed");
     throw new Error("The demo stays on week 5.");
   }
+  async adminCloseSeason(expectedOpenWeek: number): Promise<void> {
+    if (expectedOpenWeek !== OPEN_WEEK) throw new Error("week_changed");
+    throw new Error("next_week_loaded");
+  }
   async adminSetLine(gameId: string, market: Leg["market"], a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string) {
     if (reason.trim().length < 3) throw new Error("reason_required");
     const g = this.game(gameId);
@@ -450,6 +454,7 @@ export class DemoApi implements Api {
     if (g.status === "final" && status !== "void") throw new Error("game_final");
     if (to !== g.kickoffAt && g.kickoffAt <= now) throw new Error("kickoff_passed");
     if (to !== g.kickoffAt && to <= now) throw new Error("kickoff_in_past");
+    if (to < g.kickoffAt) throw new Error("kickoff_earlier");
     if (status === "scheduled" && (!["scheduled", "postponed"].includes(g.status) || g.kickoffAt <= now)) throw new Error("game_started");
     const before = { status: g.status, kickoffAt: new Date(g.kickoffAt).toISOString() };
     const regraded = status === "void" && g.status === "final" ? this.reopen(gameId, reason) : 0;
@@ -463,12 +468,12 @@ export class DemoApi implements Api {
     if (reason.trim().length < 3) throw new Error("reason_required");
     const g = this.game(gameId);
     if (g.kickoffAt > Date.now()) throw new Error("game_not_started");
-    if (g.status === "final" && g.homeScore === home && g.awayScore === away) throw new Error("no_change");
+    const same = g.status === "final" && g.homeScore === home && g.awayScore === away;
     const before = { status: g.status, home: g.homeScore, away: g.awayScore };
     const corrected = g.status === "final" || g.status === "void";
     const regraded = corrected ? this.reopen(gameId, reason) : 0;
     Object.assign(g, { status: "final", homeScore: home, awayScore: away });
-    this.s.audit.unshift({ id: this.nextId++, actorName: "You", action: corrected ? "score_corrected" : "score_set", targetType: "game", targetId: gameId,
+    this.s.audit.unshift({ id: this.nextId++, actorName: "You", action: same ? "bets_regraded" : corrected ? "score_corrected" : "score_set", targetType: "game", targetId: gameId,
       before, after: { home, away, betsRegraded: regraded }, reason, createdAt: new Date().toISOString() });
     this.grade();
   }

@@ -79,7 +79,7 @@ export function Admin() {
   );
 }
 
-const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading" };
+const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game" };
 
 function Status({ reload }: { reload: () => void }) {
   const api = useApi();
@@ -87,6 +87,7 @@ function Status({ reload }: { reload: () => void }) {
   const problems = useLoad(() => api.adminRecentProblems(), [], 60_000);
   const [reason, setReason] = useState("");
   const [armed, setArmed] = useState(false);
+  const [endArmed, setEndArmed] = useState(false);
   const lg = league.data;
   return (
     <div className="grid-2">
@@ -130,7 +131,7 @@ function Status({ reload }: { reload: () => void }) {
       <Action title={lg?.openWeek ? "Open the next week" : "Open a week"}
         submit={armed ? (lg?.openWeek ? `Yes, close ${lg.openWeek.label} and open the next` : "Yes, open the next week") : lg?.openWeek ? "Open next week" : "Open the next week"}
         note={lg?.openWeek
-          ? "The next week opens by itself once every game of this week is final and graded. Use this around a postponed game, or to close the season's last week. Any shortfall on the 30% minimum is deducted when the week closes. A week can't be closed before any of its games has kicked off."
+          ? "The next week opens by itself once every game of this week is final and graded. Use this around a postponed game; next week's games must be on the board. Any shortfall on the 30% minimum is deducted when the week closes. A week can't be closed before any of its games has kicked off."
           : "No week is open. This opens the next week that has games on the board."}
         onSubmit={async () => {
           if (!armed) {
@@ -142,12 +143,27 @@ function Status({ reload }: { reload: () => void }) {
           const w = await api.adminOpenNextWeek(closing?.week ?? null, reason);
           league.reload();
           reload();
-          return w === null
-            ? `${closing?.label ?? "The week"} is closed. No later week has games on the board yet; once it does, open it here.`
-            : `Week ${w} is open.`;
+          return w === null ? `${closing?.label ?? "The week"} is closed.` : `Week ${w} is open.`;
         }}>
         <Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. BUF–MIA postponed to Tuesday" /></Field>
       </Action>
+      {lg?.openWeek ? (
+        <Action title="Close the season" submit={endArmed ? `Yes, close ${lg.openWeek.label} and end the season` : "Close the season"}
+          note="For the season's last week only, after its last game: closes the week and applies its 30% minimum, and opens nothing. Refused while a later week has games on the board."
+          onSubmit={async () => {
+            if (!endArmed) {
+              setEndArmed(true);
+              return "Click the button again to confirm.";
+            }
+            setEndArmed(false);
+            await api.adminCloseSeason(lg.openWeek!.week, reason);
+            league.reload();
+            reload();
+            return `${lg.openWeek!.label} is closed. That's the season.`;
+          }}>
+          <span />
+        </Action>
+      ) : null}
     </div>
   );
 }
