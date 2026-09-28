@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GameCard } from "../components/GameCard.tsx";
 import { SlipBody, type PlacedResult } from "../components/Slip.tsx";
-import { Empty, ErrorNote, Loading, PageHead } from "../components/ui.tsx";
+import { Empty, ErrorNote, errorText, Loading, PageHead } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
 import { ago, day } from "../lib/format.ts";
 import { useLoad, useNow } from "../lib/hooks.ts";
@@ -43,15 +43,27 @@ export function Board() {
     setUndoError(null);
     setToast({ ...r, until: Date.now() + (weekRules?.undoMinutes ?? 5) * 60_000 });
   };
+  // Each bet is undone on its own: one that can't be (its line moved, say) doesn't stop
+  // the rest, and only the ones still standing stay on the toast for another try.
   const undoAll = async () => {
     if (!toast) return;
-    try {
-      for (const id of toast.ids) await api.undoSlip(id);
-      setToast(null);
-      entries.reload();
-    } catch (e) {
-      setUndoError(e instanceof Error ? e.message : String(e));
+    const kept: string[] = [];
+    let reason: string | null = null;
+    for (const id of toast.ids) {
+      try {
+        await api.undoSlip(id);
+      } catch (e) {
+        kept.push(id);
+        reason ??= errorText(e);
+      }
     }
+    entries.reload();
+    if (!kept.length) {
+      setToast(null);
+      return;
+    }
+    setToast({ ...toast, ids: kept });
+    setUndoError(kept.length < toast.ids.length ? `${toast.ids.length - kept.length} undone; ${kept.length} couldn't be: ${reason}` : reason);
   };
 
   const body = <SlipBody rules={weekRules} entries={entries.data ?? []} onPlaced={onPlaced} />;
@@ -63,7 +75,7 @@ export function Board() {
         title={lg?.openWeek ? `${lg.openWeek.label} board` : "Board"}
         sub={
           lg
-            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes from 8am to 1am ET, and whenever someone bets. All times Eastern.`
+            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than 2 minutes old. All times Eastern.`
             : undefined
         }
       />

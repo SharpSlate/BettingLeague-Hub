@@ -40,6 +40,10 @@ const GAMES: [id: string, hours: number, home: string, away: string][] = [
   ["UNDO3", 5, "Miami Dolphins", "New York Jets"],
   ["FLAG", 5, "Houston Texans", "Tennessee Titans"],
   ["PROBE", 5, "Denver Broncos", "Las Vegas Raiders"],
+  ["TEASE1", 5, "Atlanta Falcons", "Carolina Panthers"],
+  ["TEASE2", 5, "New Orleans Saints", "Tampa Bay Buccaneers"],
+  ["LATE", 5, "Cleveland Browns", "Cincinnati Bengals"],
+  ["IDS", 5, "Los Angeles Rams", "San Francisco 49ers"],
 ];
 
 type Pick = { id: string; market: "spread" | "total" | "moneyline"; side: string };
@@ -160,6 +164,37 @@ describe("both sides of a game across separate bets", () => {
     await db.q(member(commish), "select public.admin_set_manager($1, $2, false)", [aliceEntry, owner]);
   });
 
+  it("a game id written differently is still the same game", async () => {
+    await bet(aliceEntry, alice, { id: "IDS", market: "spread", side: "home" });
+    const odd = ids.IDS!.replace(/-/g, "").toUpperCase();
+    await fails(place(db, {
+      entry: aliceEntry, user: alice, type: "straight", stakeCents: 10_000, potentialPayoutCents: 30_000,
+      legs: [{ gameId: odd, market: "spread", side: "away", point: 3, price: -110 }],
+    }), "opposite_side");
+  });
+
+  it("when picks show as they're placed, a late manager is held to the bets they can see", async () => {
+    await setRule("{visibility}", "on_placement");
+    try {
+      const erin = await makeUser(db, "erin@example.com", "Erin");
+      await bet(bobEntry, bob, { id: "LATE", market: "spread", side: "home" });
+      await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [bobEntry, erin]);
+      await fails(bet(bobEntry, erin, { id: "LATE", market: "spread", side: "away" }), "opposite_side");
+      await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [bobEntry, erin]);
+    } finally {
+      await setRule("{visibility}", "kickoff_per_leg");
+    }
+  });
+
+  it("the bet service can ask which legs would be refused before it pulls lines", async () => {
+    const conflicts = (entry: string, user: string, picks: Pick[]) =>
+      db.q(service, "select public.opposite_side_legs_internal($1, $2, $3::jsonb) as legs", [entry, user, JSON.stringify(picks.map(leg))]).then((r) => r[0].legs);
+    // Alice has the home side of SIDES riding, and nothing on UNDO2.
+    expect(await conflicts(aliceEntry, alice, [{ id: "UNDO2", market: "spread", side: "away" }, { id: "SIDES", market: "moneyline", side: "away" }])).toEqual([1]);
+    expect(await conflicts(bobEntry, bob, [{ id: "SIDES", market: "moneyline", side: "home" }])).toEqual([0]);
+    expect(await conflicts(aliceEntry, alice, [{ id: "SIDES", market: "spread", side: "home" }])).toEqual([]);
+  });
+
   it("rules missing the setting, or the undo one, can't be published", async () => {
     const publish = (doc: unknown) => db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]);
     await fails(publish({ ...DAY_ONE_RULES, acrossBets: {} }), "bad_rules");
@@ -207,6 +242,44 @@ describe("undo", () => {
     } finally {
       await setRule("{pricing,straight}", "book");
     }
+  });
+
+  it("a teaser's undo looks only at its numbers, since the table pays it", async () => {
+    const id = await place(db, {
+      entry: bobEntry, user: bob, type: "teaser", teaserPoints: 6, stakeCents: 10_000, potentialPayoutCents: 19_091,
+      legs: [
+        { gameId: ids.TEASE1!, market: "spread", side: "home", point: -3, price: -110 },
+        { gameId: ids.TEASE2!, market: "spread", side: "home", point: -3, price: -110 },
+      ],
+    });
+    await reprice("TEASE1", standardLines().map((o) => (o.market === "spread" ? { ...o, price: -115 } : o)));
+    await undo(db, id, bob);
+  });
+
+  it("checks everything but the lines first, changing nothing, and says whether the lines count", async () => {
+    const id = await spread("UNDO2");
+    const check = await db.q(service, "select public.undo_slip_internal($1, $2, true) as lines", [id, bob]);
+    expect(check[0].lines).toBe(true);
+    expect((await db.su("select status from public.slips where id = $1", [id]))[0].status).toBe("pending");
+    await fails(db.q(service, "select public.undo_slip_internal($1, $2, true)", [id, alice]), "not_found");
+    await setRule("{undoMinutes}", 0);
+    try {
+      await fails(db.q(service, "select public.undo_slip_internal($1, $2, true)", [id, bob]), "undo_window_passed");
+    } finally {
+      await setRule("{undoMinutes}", 5);
+    }
+  });
+
+  it("gets its own line refresh even right after the bet's, within the daily limits", async () => {
+    const claim = (undo: boolean) => db.q(service, "select public.claim_bet_refresh_internal(120, $1, $2) as r", [bob, undo]).then((r) => r[0].r as string);
+    await db.su("delete from public.bet_refreshes; update public.league_settings set bet_refresh_claimed_at = null");
+    expect(await claim(false)).toBe("claimed");
+    await db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
+    expect(await claim(false)).toBe("limit");
+    expect(await claim(true)).toBe("claimed");
+    await db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes', bet_refresh_member_daily_cap = 2");
+    expect(await claim(true)).toBe("limit");
+    await db.su("update public.league_settings set bet_refresh_member_daily_cap = 20");
   });
 
   it("the commissioner can allow undo after a move", async () => {
@@ -267,6 +340,25 @@ describe("entries that share a manager betting against each other", () => {
 
   it("members can't read the list", async () => {
     await fails(db.q(member(alice), "select * from public.admin_recent_problems(50)"), "admin_only");
+  });
+
+  it("counts a manager only if they managed both entries when the bets were placed", async () => {
+    const zed = await makeUser(db, "zed@example.com", "Zed");
+    // Alice and Bob took opposite sides of FLAG's total before Zed managed either entry.
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, zed]);
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [bobEntry, zed]);
+    expect(await flags()).toEqual(["Dana One and Dana Two, which share a manager (Dana), took opposite sides of Titans at Texans."]);
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [aliceEntry, zed]);
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [bobEntry, zed]);
+  });
+
+  it("the same pull failure again and again shows once, so it can't crowd out the flag", async () => {
+    for (let i = 0; i < 12; i++) {
+      await db.q(service, "select public.record_pull_internal('lines', 'schedule', false, 'stopped at the credit floor (4000 left)', null, null)");
+    }
+    const top = await db.q(member(owner), "select kind, error from public.admin_recent_problems(10)");
+    expect(top.filter((r) => r.kind === "fair_play")).toHaveLength(1);
+    expect(top.filter((r) => r.error.startsWith("stopped at the credit floor"))).toEqual([{ kind: "lines", error: "stopped at the credit floor (4000 left) (12 times)" }]);
   });
 
   it("an admin-voided bet doesn't count", async () => {

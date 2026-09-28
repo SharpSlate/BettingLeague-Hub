@@ -6,7 +6,7 @@ import { kickoff, units } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
 import type { GameView, MyEntry } from "../lib/types.ts";
 
-function EntryCard({ e, lastKickoff, penalty }: { e: MyEntry; lastKickoff: string | null; penalty: boolean }) {
+function EntryCard({ e, lastKickoff, penalty, minimumPct }: { e: MyEntry; lastKickoff: string | null; penalty: boolean; minimumPct: number }) {
   const req = e.requiredCents ?? 0;
   const short = Math.max(0, req - e.wageredCents);
   const pct = req ? Math.min(100, Math.round((e.wageredCents / req) * 100)) : 100;
@@ -24,7 +24,7 @@ function EntryCard({ e, lastKickoff, penalty }: { e: MyEntry; lastKickoff: strin
       {req ? (
         <div className="stack-sm">
           <div className="row spread small">
-            <span className="muted">30% minimum for week {e.week}</span>
+            <span className="muted">{minimumPct}% minimum for week {e.week}</span>
             <span className="num">{units(e.wageredCents)} / {units(req)}</span>
           </div>
           <div className={`bar${short === 0 ? " done" : ""}`}><i style={{ width: `${pct}%` }} /></div>
@@ -73,7 +73,7 @@ export function MyBets() {
           <Empty>You don't manage an entry yet. Ask the commissioner to add you to one.</Empty>
         ) : (
           <div className="entry-cards">
-            {mine.map((e) => <EntryCard key={e.entryId} e={e} lastKickoff={lastKickoff} penalty={weekRules?.weeklyMinimum.penalty === "deduct_shortfall"} />)}
+            {mine.map((e) => <EntryCard key={e.entryId} e={e} lastKickoff={lastKickoff} penalty={weekRules?.weeklyMinimum.penalty === "deduct_shortfall"} minimumPct={weekRules?.weeklyMinimum.pct ?? 30} />)}
           </div>
         )}
         <div className="row wrap spread">

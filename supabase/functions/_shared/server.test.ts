@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { gradePending, type GameResult, type PendingSlip } from "./grading.ts";
-import { pullLines, runScores, type Settings, type Store } from "./jobs.ts";
+import { pullLines, refreshForUndo, runScores, type Settings, type Store } from "./jobs.ts";
 import { normalizeOdds, normalizeScores, oddsUrl, readUsage, scoresUrl, type NormalizedEvent, type NormalizedScore } from "./odds-api.ts";
 import { checkPlacement, type CurrentLine, type GameInfo } from "./placement.ts";
 import { DAY_ONE_RULES } from "./rules/defaults.ts";
@@ -228,8 +228,11 @@ class FakeStore implements Store {
   async settings() { return this.settingsValue; }
   async lastCredits() { return this.credits; }
   lastPull: Date | null = null;
+  lastAttempt: Date | null = null;
   startingSoon = 0;
+  claims: { userId: string | null; forUndo: boolean }[] = [];
   async lastGoodLinesPull() { return this.lastPull; }
+  async lastLinesAttempt() { return this.lastAttempt; }
   async ingestLines(trigger: string, events: NormalizedEvent[], _cost: number | null, remaining: number | null) {
     if (this.failIngest) throw new Error("connection reset");
     this.lines = events;
@@ -246,7 +249,10 @@ class FakeStore implements Store {
     this.pulls.push({ kind, trigger, ok, error });
     this.costs.push({ error, cost, remaining });
   }
-  async claimBetRefresh() { return this.claimOk; }
+  async claimBetRefresh(_s: number, userId: string | null, forUndo: boolean) {
+    this.claims.push({ userId, forUndo });
+    return this.claimOk;
+  }
   async gamesAwaitingScores() { return this.awaiting; }
   async gamesStartingSoon() { return this.startingSoon; }
   async pendingSlips() { return this.pending; }
@@ -289,19 +295,35 @@ describe("pullLines", () => {
     const store = new FakeStore();
     const f = fakeFetch(fixture("odds.json"));
     const ago = (min: number) => new Date(inWindow.getTime() - min * 60_000);
-    store.lastPull = ago(20);
-    expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toEqual({ status: "skipped", reason: "not due yet" });
-    store.lastPull = ago(28); // the last pull finished a little after its 10-minute tick
-    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
+    const run = async () => (await pullLines(store, "KEY", f, "schedule", inWindow)).status;
+    // The scheduler calls every 10 minutes: a pull is due once the next call would be
+    // more than 30 minutes after the last attempt.
+    store.lastAttempt = ago(19.9);
+    expect(await run()).toBe("skipped");
+    store.lastAttempt = ago(20.1);
+    expect(await run()).toBe("pulled");
+    // Near kickoff, every call pulls, unless something pulled in the last 2 minutes.
     store.startingSoon = 1;
-    store.lastPull = ago(5);
-    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("skipped");
-    store.lastPull = ago(9);
-    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
-    // A bet's refresh isn't held to the schedule (its own limits decide).
-    store.lastPull = ago(1);
-    expect((await pullLines(store, "KEY", f, "bet", inWindow)).status).toBe("pulled");
-    expect(f.calls).toHaveLength(3);
+    store.lastAttempt = ago(1.5);
+    expect(await run()).toBe("skipped");
+    store.lastAttempt = ago(2.5);
+    expect(await run()).toBe("pulled");
+    expect(f.calls).toHaveLength(2);
+  });
+  it("counts a failed attempt, so a feed that's down is tried once an interval, not every call", async () => {
+    const store = new FakeStore();
+    const f = fakeFetch(fixture("odds.json"));
+    store.lastPull = new Date(inWindow.getTime() - 5 * 3_600_000); // the last good pull, hours ago
+    store.lastAttempt = new Date(inWindow.getTime() - 10 * 60_000); // a failure 10 minutes ago
+    expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toEqual({ status: "skipped", reason: "not due yet" });
+    expect(f.calls).toHaveLength(0);
+  });
+  it("a bet's refresh isn't held to the schedule; its own limits decide", async () => {
+    const store = new FakeStore();
+    const f = fakeFetch(fixture("odds.json"));
+    store.lastAttempt = new Date(inWindow.getTime() - 60_000);
+    expect((await pullLines(store, "KEY", f, "bet", inWindow, "u1")).status).toBe("pulled");
+    expect(store.claims).toEqual([{ userId: "u1", forUndo: false }]);
   });
   it("stops at the credit floor, then probes again after six hours", async () => {
     const store = new FakeStore();
@@ -441,5 +463,52 @@ describe("runScores", () => {
     expect(r.scores).toEqual({ status: "pulled", count: 2, remaining: 89998 });
     expect(r.settled).toBe(1);
     expect(store.settled).toEqual(["s1"]);
+  });
+});
+
+describe("refreshing the lines before an undo", () => {
+  const t0 = new Date("2026-10-04T15:00:00Z");
+  const clock = () => t0;
+  const noSleep = async () => {};
+  it("uses lines that are already fresh, without a pull", async () => {
+    const store = new FakeStore();
+    const f = fakeFetch(fixture("odds.json"));
+    store.lastPull = new Date(t0.getTime() - 60_000);
+    expect(await refreshForUndo(store, "KEY", f, "u1", clock, noSleep)).toBe(true);
+    expect(f.calls).toHaveLength(0);
+  });
+  it("pulls when they're older, asking to skip the member's gap between refreshes", async () => {
+    const store = new FakeStore();
+    const f = fakeFetch(fixture("odds.json"));
+    store.lastPull = new Date(t0.getTime() - 3 * 60_000);
+    expect(await refreshForUndo(store, "KEY", f, "u1", clock, noSleep)).toBe(true);
+    expect(store.claims).toEqual([{ userId: "u1", forUndo: true }]);
+    expect(f.calls).toHaveLength(1);
+  });
+  it("says no when the lines can't be refreshed, rather than checking old ones", async () => {
+    for (const setup of [
+      (s: FakeStore) => { s.claimOk = "limit"; },
+      (s: FakeStore) => { s.credits = { remaining: 100, at: t0 }; },
+    ]) {
+      const store = new FakeStore();
+      store.lastPull = new Date(t0.getTime() - 3 * 60_000);
+      setup(store);
+      expect(await refreshForUndo(store, "KEY", fakeFetch(fixture("odds.json")), "u1", clock, noSleep)).toBe(false);
+    }
+    const down = new FakeStore();
+    down.lastPull = new Date(t0.getTime() - 3 * 60_000);
+    expect(await refreshForUndo(down, "KEY", fakeFetch({ message: "down" }, 503), "u1", clock, noSleep)).toBe(false);
+  });
+  it("waits for another bet's pull already on its way", async () => {
+    const store = new FakeStore();
+    store.claimOk = "recent";
+    store.lastPull = new Date(t0.getTime() - 3 * 60_000);
+    let waits = 0;
+    const landsSoon = async () => { if (++waits === 3) store.lastPull = t0; };
+    expect(await refreshForUndo(store, "KEY", fakeFetch(fixture("odds.json")), "u1", clock, landsSoon)).toBe(true);
+    const never = new FakeStore();
+    never.claimOk = "recent";
+    never.lastPull = new Date(t0.getTime() - 3 * 60_000);
+    expect(await refreshForUndo(never, "KEY", fakeFetch(fixture("odds.json")), "u1", clock, noSleep)).toBe(false);
   });
 });

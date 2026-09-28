@@ -42,6 +42,8 @@ function clockText(hhmm: string): string {
 }
 
 const decimal = (american: number) => (american > 0 ? 1 + american / 100 : 1 + 100 / -american);
+const minutes = (n: number) => `${n} minute${n === 1 ? "" : "s"}`;
+const COUNT_WORDS = ["No", "One", "Two", "Three"];
 
 export function pushRuleText(r: RuleSet): string {
   switch (r.betTypes.teaser.pushRule) {
@@ -57,7 +59,7 @@ export function pushRuleText(r: RuleSet): string {
 /** The undo rule in a few words, for the bet slip. */
 export function undoText(r: RuleSet): string {
   if (r.undoMinutes <= 0) return "Bets are final once placed.";
-  return `You can undo within ${r.undoMinutes} minutes${r.undoAfterLineMove ? "" : " if the line hasn't moved"}.`;
+  return `You can undo within ${minutes(r.undoMinutes)}${r.undoAfterLineMove ? "" : " if the line hasn't moved"}.`;
 }
 
 /** What each leg must win, on average, for a teaser card at the first points option to break even. */
@@ -65,7 +67,7 @@ export function teaserBreakEvenText(r: RuleSet): string | null {
   const t = r.betTypes.teaser;
   const pts = t.points[0];
   if (!t.enabled || pts === undefined) return null;
-  const counts = [...new Set([2, 3, t.maxLegs])].filter((n) => n >= 2 && n <= t.maxLegs);
+  const counts = [...new Set([t.minLegs, Math.max(3, t.minLegs), t.maxLegs])].filter((n) => n >= 2 && n <= t.maxLegs).sort((a, b) => a - b);
   const parts = counts.flatMap((n) => {
     const price = teaserPrice(r, pts, n);
     return price === null ? [] : [{ n, pct: Math.round(100 * (1 / decimal(price)) ** (1 / n)) }];
@@ -81,31 +83,29 @@ export function teaserBreakEvenText(r: RuleSet): string | null {
 
 function sameGameItems(r: RuleSet): RuleItem[] {
   const { parlay, teaser } = r.betTypes;
-  const none = (s: SameGameRules) => !s.spreadTotal && !s.moneylineTotal && !s.spreadMoneyline && !s.bothSides;
-  if ((!parlay.enabled || none(parlay.sameGame)) && (!teaser.enabled || none(teaser.sameGame))) {
+  // Moneylines can't be teased, so only two pairings mean anything for a teaser.
+  const pairs = (s: SameGameRules, isTeaser: boolean) => [
+    { on: s.spreadTotal, text: "a spread and a total" },
+    ...(isTeaser ? [] : [{ on: s.moneylineTotal, text: "a moneyline and a total" }, { on: s.spreadMoneyline, text: "a spread and either moneyline" }]),
+    { on: s.bothSides, text: "both sides of one market" },
+  ];
+  const none = (s: SameGameRules, isTeaser: boolean) => pairs(s, isTeaser).every((x) => !x.on);
+  if ((!parlay.enabled || none(parlay.sameGame, false)) && (!teaser.enabled || none(teaser.sameGame, true))) {
     return [{
       lead: "One game, one leg.",
-      text: "A parlay or teaser can't include two legs from the same game. Legs from one game tend to win or lose together (a big favorite covering and the over, say), so multiplying their odds would overpay.",
+      text: `A ${[parlay.enabled && "parlay", teaser.enabled && "teaser"].filter(Boolean).join(" or ")} can't include two legs from the same game. Legs from one game tend to win or lose together (a big favorite covering and the over, say), so multiplying their odds would overpay.`,
     }];
   }
-  const describe = (s: SameGameRules) => {
-    const allowed: string[] = [];
-    const blocked: string[] = [];
-    (s.spreadTotal ? allowed : blocked).push("a spread and a total");
-    (s.moneylineTotal ? allowed : blocked).push("a moneyline and a total");
-    (s.spreadMoneyline ? allowed : blocked).push("a spread and either moneyline");
-    (s.bothSides ? allowed : blocked).push("both sides of one market");
-    return { allowed, blocked };
-  };
   const items: RuleItem[] = [];
-  for (const [name, on, s] of [["Parlays", parlay.enabled, parlay.sameGame], ["Teasers", teaser.enabled, teaser.sameGame]] as const) {
+  for (const [name, on, s, isTeaser] of [["Parlays", parlay.enabled, parlay.sameGame, false], ["Teasers", teaser.enabled, teaser.sameGame, true]] as const) {
     if (!on) continue;
-    const d = describe(s);
-    const text = [
-      d.allowed.length ? `may combine ${d.allowed.join("; ")} from the same game` : "",
-      d.blocked.length ? `${d.allowed.length ? "but not" : "may not combine"} ${d.blocked.join("; ")}` : "",
-    ].filter(Boolean).join(", ");
-    items.push({ lead: `${name} from one game.`, text: `${name} ${text}.` });
+    const list = pairs(s, isTeaser);
+    const allowed = list.filter((x) => x.on).map((x) => x.text);
+    const blocked = list.filter((x) => !x.on).map((x) => x.text);
+    const text = !allowed.length
+      ? `${name} can't include two legs from the same game.`
+      : `${name} may combine ${allowed.join("; ")} from the same game${blocked.length ? `, but not ${blocked.join("; ")}` : ""}.`;
+    items.push({ lead: `${name} from one game.`, text });
   }
   return items;
 }
@@ -120,11 +120,10 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
   // ---- at a glance
   const types = [straight.enabled && "straight", parlay.enabled && "parlay", teaser.enabled && "teaser"].filter(Boolean) as string[];
   const glance: Glance[] = [
-    { label: "Starting bank", value: `${units(r.bank.startUnits * 100)} units`, detail: "for new entries" },
     {
       label: "Weekly minimum",
-      value: `${wm.pct}% of your bank`,
-      detail: wm.penalty === "deduct_shortfall" ? "any shortfall comes off your bank" : wm.penalty === "warn" ? "a warning if you fall short" : "for information only",
+      value: wm.pct > 0 ? `${wm.pct}% of your bank` : "None",
+      detail: wm.pct <= 0 ? undefined : wm.penalty === "deduct_shortfall" ? "any shortfall comes off your bank" : wm.penalty === "warn" ? "a warning if you fall short" : "for information only",
     },
     { label: "Lines", value: books[0] ? bookName(books[0]) : "The posted price", detail: books[1] ? `${bookName(books[1])} if ${bookName(books[0]!)} has none` : undefined },
     {
@@ -133,10 +132,15 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
       detail: [parlay.enabled && `parlays ${parlay.minLegs}–${parlay.maxLegs} legs`, teaser.enabled && `teasers ${teaser.minLegs}–${teaser.maxLegs}`].filter(Boolean).join(", ") || undefined,
     },
     { label: "Stakes", value: `${units(s.minUnits * 100)} to ${units(s.maxUnits * 100)} units`, detail: "never more than you have available" },
+    {
+      label: "Combining",
+      value: sameGameItems(r).some((x) => typeof x !== "string" && x.lead === "One game, one leg.") ? "One leg per game" : "Some same-game pairs",
+      detail: r.acrossBets.oppositeSides ? "both sides of a game allowed" : "never both sides of a game",
+    },
     { label: "Bets lock", value: r.lock === "game_kickoff" ? "At kickoff" : "At the week's first kickoff", detail: r.lock === "game_kickoff" ? "each leg at its own game" : "for the whole week" },
     {
       label: "Undo",
-      value: r.undoMinutes > 0 ? `Within ${r.undoMinutes} minutes` : "Not allowed",
+      value: r.undoMinutes > 0 ? `Within ${minutes(r.undoMinutes)}` : "Not allowed",
       detail: r.undoMinutes > 0 ? (r.undoAfterLineMove ? "before kickoff" : "if the line hasn't moved") : undefined,
     },
     {
@@ -160,8 +164,13 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
       text: `${teaser.minLegs} to ${teaser.maxLegs} legs of ${marketList(teaser.markets)}, at ${teaser.points.join(", ")} points. Each leg's number moves by the teaser points in your favor, every leg has to win, and the card pays the price in the table below; the legs' own prices don't count. Moneylines can't be teased.${teaser.totalsNeedSpread ? " A total can only be teased alongside a spread." : ""}`,
     });
   }
-  const teaserExample = teaser.enabled && pts !== undefined && teaserPrice(r, pts, 2) !== null
-    ? `A ${pts}-point teaser moves Ravens ${point(-7.5)} to ${point(-7.5 + pts)}, and an over 47.5 to over ${47.5 - pts}. If both legs win, a 2-leg card pays ${odds(teaserPrice(r, pts, 2)!)}.`
+  const smallest = teaser.minLegs;
+  const moves = [
+    teaser.markets.includes("spread") ? `Ravens ${point(-7.5)} to ${point(-7.5 + (pts ?? 0))}` : "",
+    teaser.markets.includes("total") ? `an over 47.5 to over ${47.5 - (pts ?? 0)}` : "",
+  ].filter(Boolean);
+  const teaserExample = teaser.enabled && pts !== undefined && moves.length && teaserPrice(r, pts, smallest) !== null
+    ? `A ${pts}-point teaser moves ${moves.join(", and ")}. If every leg wins, a ${smallest}-leg card pays ${odds(teaserPrice(r, pts, smallest)!)}.`
     : undefined;
 
   // ---- lines and prices
@@ -207,7 +216,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     {
       lead: "Undo.",
       text: r.undoMinutes > 0
-        ? `You can undo a bet within ${r.undoMinutes} minutes of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line"}; after that, bets are final.`
+        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. The site updates the lines first; if it can't just then, try again in a minute"}. After that, bets are final.`
         : "Bets are final once placed.",
     },
     {
@@ -232,7 +241,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
   // ---- weekly minimum
   const exampleBank = 1_000_000;
   const required = requiredMinimumCents(exampleBank, wm.pct);
-  const weekly: RuleItem[] = [
+  const weekly: RuleItem[] = wm.pct <= 0 ? [{ lead: "None.", text: "There's no weekly minimum." }] : [
     { lead: "How much.", text: `Each week you must wager at least ${wm.pct}% of your bank as it stood when the week opened, rounded up to a whole unit.` },
     { lead: "What counts.", text: "Pushed bets count, and so do bets on a game that's called off. Bets you undo and bets an admin voids don't." },
     {
@@ -244,14 +253,16 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
           : "It's shown for information only.",
     },
   ];
-  const weeklyExample = wm.penalty === "deduct_shortfall" && required > 0
-    ? `With a ${units(exampleBank)}-unit bank when the week opens, you need ${units(required)} units in bets. If you've bet ${units(required - 100_000)} when it closes, ${units(100_000)} comes off your bank.`
+  // A third short, in whole units: 1,000 of 3,000 at 30%.
+  const short = Math.round(required / 300) * 100;
+  const weeklyExample = wm.penalty === "deduct_shortfall" && short > 0
+    ? `With a ${units(exampleBank)}-unit bank when the week opens, you need ${units(required)} units in bets. If you've bet ${units(required - short)} when it closes, ${units(short)} comes off your bank.`
     : undefined;
 
   // ---- fair play
   const fair: RuleItem[] = [
     { lead: "Hidden picks.", text: r.visibility === "kickoff_per_leg" ? "Nobody sees your picks before their games kick off, admins included." : "Nobody sees your picks before they're revealed, admins included." },
-    { lead: "An open log.", text: "Every admin action, from score corrections and voids to bank adjustments, hand-set lines and rule changes, needs a reason and is listed in the Admin log for everyone to read." },
+    { lead: "An open log.", text: "Every admin action, rule changes included, is listed in the Admin log for everyone to read. Score corrections, voids, bank adjustments, hand-set lines and changes to a game also need a written reason." },
     { lead: "Entries with an owner in common", text: "shouldn't bet against each other (opposite sides of the same game). The commissioner gets a list of any that do, once the picks are public." },
     { lead: "Rule changes", text: "take effect only from a week that hasn't opened yet, and every bet is graded under the rules it was placed with." },
     { lead: "Play units only.", text: "The buy-in and prizes are handled offline by the commissioner; this site never takes or holds money." },
@@ -259,18 +270,18 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
 
   // ---- banks and standings
   const standings: RuleItem[] = [
-    { lead: "Starting bank.", text: `New entries start with ${units(r.bank.startUnits * 100)} units${r.bank.bonusUnits ? `, plus a ${units(r.bank.bonusUnits * 100)}-unit sign-up bonus where the commissioner grants one` : ""}. Entries that came over from Splash kept their Splash bank.` },
+    { lead: "Starting bank.", text: `Entries that came over from Splash kept their Splash bank. A new entry starts with the bank the commissioner gives it: normally ${units(r.bank.startUnits * 100)} units${r.bank.bonusUnits ? `, plus a ${units(r.bank.bonusUnits * 100)}-unit sign-up bonus where the commissioner grants one` : ""}.` },
     { lead: "Stakes.", text: `From ${units(s.minUnits * 100)} to ${units(s.maxUnits * 100)} units${s.incrementUnits === 1 ? ", in whole units" : `, in steps of ${s.incrementUnits}`}, and never more than your available units.${s.maxPctOfBank !== null ? ` No single bet can be more than ${s.maxPctOfBank}% of your bank.` : ""}` },
     { lead: "Ranking.", text: "Standings rank entries by bank. Ties go to the higher net, then the higher total winnings." },
   ];
 
   const sections: RuleSection[] = [
-    { id: "bets", title: "The bets", intro: "Three kinds of bet, all in play units.", items: bets, example: teaserExample },
+    { id: "bets", title: "The bets", intro: `${COUNT_WORDS[bets.length] ?? bets.length} kind${bets.length === 1 ? "" : "s"} of bet, all in play units.`, items: bets, example: teaserExample },
     { id: "lines", title: "Lines and prices", intro: "Where the numbers come from, and when they change.", items: lines },
     { id: "combining", title: "Combining picks", intro: "What can go on one slip, and what separate bets can't do together.", items: combining },
     { id: "timing", title: "Locks, undo and picks", intro: "When betting closes, and who sees what.", items: timing },
     { id: "grading", title: "Pushes, voids and corrections", items: grading },
-    { id: "minimum", title: "Weekly minimum", intro: "Every entry has to keep betting.", items: weekly, example: weeklyExample },
+    { id: "minimum", title: "Weekly minimum", intro: wm.pct > 0 && wm.penalty !== "none" ? "Every entry has to keep betting." : undefined, items: weekly, example: weeklyExample },
     { id: "fair", title: "Fair play", intro: "How the league stays even.", items: fair },
     { id: "standings", title: "Banks, stakes and standings", items: standings },
   ];

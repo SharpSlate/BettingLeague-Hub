@@ -13,7 +13,7 @@ import {
   type OddsApiEvent,
   type OddsApiScoreEvent,
 } from "./odds-api.ts";
-import { inPullWindow } from "./schedule.ts";
+import { inPullWindow, isStale } from "./schedule.ts";
 
 export type Trigger = "schedule" | "bet" | "admin";
 export type Fetch = (url: string) => Promise<Response>;
@@ -39,6 +39,8 @@ export interface Store {
   /** Credits left as of the latest Odds API response, and when. */
   lastCredits(): Promise<{ remaining: number; at: Date } | null>;
   lastGoodLinesPull(): Promise<Date | null>;
+  /** The latest line pull tried, whether or not it worked (a credit-floor stop counts). */
+  lastLinesAttempt(): Promise<Date | null>;
   ingestLines(trigger: Trigger, events: NormalizedEvent[], cost: number | null, remaining: number | null): Promise<number>;
   ingestScores(trigger: Trigger, scores: NormalizedScore[], cost: number | null, remaining: number | null): Promise<number>;
   recordPull(kind: "lines" | "scores", trigger: Trigger, ok: boolean, error: string, cost: number | null, remaining: number | null): Promise<void>;
@@ -47,7 +49,7 @@ export interface Store {
    * refresh has just run or is running; "limit" when the member's or the day's limit is
    * used up.
    */
-  claimBetRefresh(minSeconds: number, userId: string | null): Promise<"claimed" | "recent" | "limit">;
+  claimBetRefresh(minSeconds: number, userId: string | null, forUndo: boolean): Promise<"claimed" | "recent" | "limit">;
   /** How many games have kicked off in the last 3 days and aren't final or void yet. */
   gamesAwaitingScores(now: Date): Promise<number>;
   /** How many scheduled games lock for betting within the next `hours`. */
@@ -81,12 +83,10 @@ export function redact(text: string): string {
     .replace(/https?:\/\/\S+/g, (url) => url.split("?")[0] + (url.includes("?") ? "?[hidden]" : ""));
 }
 
-/**
- * The scheduler calls every 10 minutes, and a pull finishes a little after the call that
- * started it, so a pull counts as due this much early; otherwise every other call would
- * find the last pull a few seconds short and skip.
- */
-const DUE_SLACK_MS = 3 * 60_000;
+/** pg_cron calls the lines job this often (supabase/migrations/20260928000005_schedule.sql). */
+const TICK_MS = 10 * 60_000;
+/** The schedule never pulls again this soon after another pull, a bet's included. */
+const MIN_GAP_MS = 2 * 60_000;
 
 /** After this long without an API response, probe once even if the last count was under the floor (plans reset monthly). */
 const PROBE_AFTER_MS = 6 * 3_600_000;
@@ -143,16 +143,20 @@ async function storePaid<T>(
 
 export async function pullLines(
   store: Store, apiKey: string, fetchImpl: Fetch, trigger: Trigger, now = new Date(), userId: string | null = null,
+  opts: { forUndo?: boolean } = {},
 ): Promise<PullOutcome> {
   const s = await store.settings();
   if (trigger === "schedule") {
     if (!inPullWindow(now, s.pullWindowStart, s.pullWindowEnd, s.timezone)) return { status: "skipped", reason: "outside the pull window" };
     // Every pullEveryMinutes, or every pullNearKickoffMinutes while a game is about to
-    // lock. A pull for a bet counts, so a busy afternoon doesn't pull twice as often.
-    const last = await store.lastGoodLinesPull();
+    // lock: a pull is due once waiting for the next call would leave the lines older than
+    // that. The last attempt counts, a bet's included and whether or not it worked, so a
+    // feed that's down or the credit floor is tried (and recorded) once an interval, not
+    // on every call.
+    const last = await store.lastLinesAttempt();
     const soon = (await store.gamesStartingSoon(now, s.nearKickoffHours)) > 0;
     const every = (soon ? s.pullNearKickoffMinutes : s.pullEveryMinutes) * 60_000;
-    if (last && now.getTime() - last.getTime() < every - DUE_SLACK_MS) return { status: "skipped", reason: "not due yet" };
+    if (last && now.getTime() - last.getTime() < Math.max(every - TICK_MS, MIN_GAP_MS)) return { status: "skipped", reason: "not due yet" };
   }
   const low = await belowCreditFloor(store, s.creditFloor, now);
   if (low !== null) {
@@ -163,7 +167,7 @@ export async function pullLines(
   // use what it brings in (or the lines they already have). Each member's bets, and
   // bets as a whole, also have limits (see claim_bet_refresh_internal).
   if (trigger === "bet") {
-    const claim = await store.claimBetRefresh(s.refreshOnBetSeconds, userId);
+    const claim = await store.claimBetRefresh(s.refreshOnBetSeconds, userId, opts.forUndo ?? false);
     if (claim !== "claimed") return { status: "skipped", reason: claim };
   }
   const r = await callApi<OddsApiEvent[]>(store, "lines", trigger, oddsUrl(apiKey, s.books), fetchImpl);
@@ -171,6 +175,32 @@ export async function pullLines(
   const count = await storePaid(store, "lines", trigger, r, () => store.ingestLines(trigger, normalizeOdds(r.data), r.cost, r.remaining));
   if (typeof count !== "number") return { status: "failed", reason: count.error, remaining: r.remaining };
   return { status: "pulled", count, remaining: r.remaining };
+}
+
+/**
+ * Brings the lines up to date before an undo, which is refused once a line on the bet has
+ * moved: pulls if they're more than refreshOnBetSeconds old (an undo isn't held to the
+ * member's gap between refreshes, since the bet it takes back usually used it), or waits
+ * a moment for a pull already on its way. Says whether the lines are now recent enough
+ * to check against; if not (the feed is down, a limit was reached), the undo should be
+ * tried again shortly rather than checked against old lines.
+ */
+export async function refreshForUndo(
+  store: Store, apiKey: string, fetchImpl: Fetch, userId: string,
+  clock: () => Date = () => new Date(), sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<boolean> {
+  const s = await store.settings();
+  const before = await store.lastGoodLinesPull();
+  if (!isStale(before, clock(), s.refreshOnBetSeconds)) return true;
+  const pulled = await pullLines(store, apiKey, fetchImpl, "bet", clock(), userId, { forUndo: true });
+  if (pulled.status === "pulled") return true;
+  if (pulled.status !== "skipped" || pulled.reason !== "recent") return false;
+  for (let i = 0; i < 10; i++) {
+    await sleep(500);
+    const latest = await store.lastGoodLinesPull();
+    if (latest && (!before || latest > before)) return !isStale(latest, clock(), s.refreshOnBetSeconds);
+  }
+  return false;
 }
 
 export interface ScoresRun {

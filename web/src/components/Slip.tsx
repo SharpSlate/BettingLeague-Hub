@@ -159,7 +159,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
       {entry.requiredCents ? (
         <div className="stack-sm">
           <div className="row spread small">
-            <span className="muted">This week's 30% minimum</span>
+            <span className="muted">This week's {rules.weeklyMinimum.pct}% minimum</span>
             <span className="num">{units(entry.wageredCents)} / {units(entry.requiredCents)}</span>
           </div>
           <div className={`bar${minPct >= 100 ? " done" : ""}`}><i style={{ width: `${minPct}%` }} /></div>
@@ -246,7 +246,8 @@ export function SlipBody({ rules, entries, onPlaced }: {
       </button>
       <p className="rules-note">
         {mode === "teaser" ? pushRuleText(rules) : mode === "parlay" ? "A pushed leg drops out and the rest are multiplied." : "A push returns your stake."}{" "}
-        Each leg locks at its game's kickoff. {undoText(rules)} <Link to="/league">All the rules</Link>
+        {rules.lock === "game_kickoff" ? "Each leg locks at its game's kickoff." : "Betting closes at the week's first kickoff."} {undoText(rules)}{" "}
+        <Link to="/league" onClick={() => slip.setOpen(false)}>All the rules</Link>
       </p>
     </div>
   );

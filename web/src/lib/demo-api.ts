@@ -1,7 +1,7 @@
 // The demo backend: the whole site on made-up sample data, in memory, with no
 // server. It uses the same shared rules code as the real site, so the slip
 // checks, payouts and grading are the real ones. Everything resets on reload.
-import { checkAcrossBets, DAY_ONE_RULES, requiredMinimumCents, type BetType, type Leg, type RuleSet } from "@rules";
+import { checkAcrossBets, DAY_ONE_RULES, oppositeSides, requiredMinimumCents, type BetType, type Leg, type RuleSet } from "@rules";
 import { gradePending, type GameResult, type PendingSlip } from "../../../supabase/functions/_shared/grading.ts";
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
 import { TEAMS, team } from "./teams.ts";
@@ -83,7 +83,7 @@ function seed(now: number) {
     mk("e-fells", "Fells Point Fades", ["u-dan"], 1_455_000, -45_000, [7, 7, 1]),
     mk("e-canton", "Canton Crushers", ["u-mo"], 1_730_050, 230_050, [8, 6, 0]),
     mk("e-fedhill", "Federal Hill Hammers", ["u-rico", "u-tess"], 1_210_000, -290_000, [6, 8, 1]),
-    mk("e-hampden", "Hampden Hustle", ["u-jay"], 890_500, -609_500, [4, 10, 0]),
+    mk("e-hampden", "Hampden Hustle", ["u-jay", "u-rico"], 890_500, -609_500, [4, 10, 0]),
     mk("e-vernon", "Mount Vernon Money", ["u-lou"], 1_604_400, 104_400, [8, 7, 0]),
   ];
 
@@ -133,6 +133,10 @@ function seed(now: number) {
     // Live now, so revealed.
     slip("e-canton", "u-mo", OPEN_WEEK, "straight", 400_000, [leg("g-live", "moneyline", "away")], { quotedAmerican: 190, potentialPayoutCents: 1_160_000, placedAt: now - 20 * H }),
     slip("e-crab", YOU, OPEN_WEEK, "parlay", 50_000, [leg("g-live", "total", "over"), leg("g-7", "spread", "away")], { quotedAmerican: 264, potentialPayoutCents: 182_231, placedAt: now - 10 * H }),
+    // Two entries Rico helps run, on opposite sides of the live game: the Admin page's
+    // fair-play flag.
+    slip("e-fedhill", "u-rico", OPEN_WEEK, "straight", 100_000, [leg("g-live", "spread", "home")], { potentialPayoutCents: 190_909, placedAt: now - 18 * H }),
+    slip("e-hampden", "u-rico", OPEN_WEEK, "straight", 100_000, [leg("g-live", "spread", "away")], { potentialPayoutCents: 190_909, placedAt: now - 17 * H }),
     // Half revealed: its odds and payout stay hidden until the second leg kicks off.
     // 1,000 units x 21/11 x 5/2 = 4,772.73.
     slip("e-vernon", "u-lou", OPEN_WEEK, "parlay", 100_000, [leg("g-live", "spread", "home"), leg("g-4", "moneyline", "away")], { quotedAmerican: 377, potentialPayoutCents: 477_273, placedAt: now - 4 * H }),
@@ -238,7 +242,7 @@ export class DemoApi implements Api {
         riskCents: risk + (season ? b.risk : 0), returnCents: ret + (season ? b.ret : 0),
         netCents: season ? this.bank(e) - e.startingBankCents : ret - risk + other, winningsCents: winnings + (season ? b.winnings : 0),
         atRiskCents: pend.reduce((a, s) => a + s.stakeCents, 0), week: OPEN_WEEK,
-        requiredCents: requiredMinimumCents(this.weekStartBank(e), 30), wageredCents: wk.reduce((a, s) => a + s.stakeCents, 0),
+        requiredCents: requiredMinimumCents(this.weekStartBank(e), this.s.rules[0]!.document.weeklyMinimum.pct), wageredCents: wk.reduce((a, s) => a + s.stakeCents, 0),
       };
     });
   }
@@ -262,7 +266,7 @@ export class DemoApi implements Api {
   async myEntries(): Promise<MyEntry[]> {
     return this.s.entries.filter((e) => this.mine(e.id)).map((e) => ({
       entryId: e.id, name: e.name, availableCents: this.available(e), pendingCents: this.pending(e), bankCents: this.bank(e), week: OPEN_WEEK,
-      requiredCents: requiredMinimumCents(this.weekStartBank(e), 30),
+      requiredCents: requiredMinimumCents(this.weekStartBank(e), this.s.rules[0]!.document.weeklyMinimum.pct),
       wageredCents: this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && this.counts(s)).reduce((a, s) => a + s.stakeCents, 0),
     }));
   }
@@ -377,17 +381,21 @@ export class DemoApi implements Api {
 
   async undoSlip(slipId: string) {
     await wait();
+    const rules = this.s.rules[0]!.document;
     const s = this.s.slips.find((x) => x.id === slipId);
     if (!s || !this.mine(s.entryId)) throw new Error("not_found");
     if (s.status !== "pending") throw new Error("not_pending");
-    if (Date.now() > s.placedAt + DAY_ONE_RULES.undoMinutes * 60_000) throw new Error("undo_window_passed");
+    if (Date.now() > s.placedAt + rules.undoMinutes * 60_000) throw new Error("undo_window_passed");
     if (this.revealed(s)) throw new Error("game_started");
-    // As undo_slip_internal does: no undo once a line on the bet has moved.
-    const moved = s.legs.some((l) => {
+    // As undo_slip_internal does: no undo once a line on the bet has moved (a teaser's
+    // legs, and flat-priced spreads and totals, only by their number).
+    const moved = !rules.undoAfterLineMove && s.legs.some((l) => {
       const now = this.s.games.find((g) => g.id === l.gameId)?.lines.find((x) => x.market === l.market && x.side === l.side);
-      return !now || now.point !== l.point || now.price !== l.price;
+      if (!now || now.point !== l.point) return true;
+      if (s.type === "teaser" || (rules.pricing.straight === "flat" && l.market !== "moneyline")) return false;
+      return now.price !== l.price;
     });
-    if (moved && !DAY_ONE_RULES.undoAfterLineMove) throw new Error("undo_line_moved");
+    if (moved) throw new Error("undo_line_moved");
     s.status = "undone";
     this.entry(s.entryId).ledger.push({ amount: s.stakeCents, kind: "undo", at: Date.now(), note: "" });
   }
@@ -401,7 +409,33 @@ export class DemoApi implements Api {
     }));
   }
   async adminRecentProblems(): Promise<AdminProblem[]> {
-    return [];
+    // As admin_recent_problems does for fair play: two entries with a manager in common on
+    // opposite sides of one game, once both picks are public (the demo has no failed pulls).
+    const now = Date.now();
+    const live = this.s.slips.filter((x) => x.status !== "undone" && x.status !== "void");
+    const flags = new Map<string, AdminProblem>();
+    for (const a of live) {
+      for (const b of live) {
+        if (a.entryId >= b.entryId) continue;
+        const ea = this.entry(a.entryId);
+        const eb = this.entry(b.entryId);
+        const shared = ea.managers.filter((m) => eb.managers.includes(m));
+        if (!shared.length) continue;
+        for (const la of a.legs) {
+          for (const lb of b.legs) {
+            const g = this.s.games.find((x) => x.id === la.gameId);
+            if (!g || lb.gameId !== la.gameId || !oppositeSides(la, lb) || g.kickoffAt > now || g.kickoffAt < now - 7 * D) continue;
+            const [first, second] = [ea.name, eb.name].sort();
+            const who = shared.map((m) => this.s.users.find((u) => u.id === m)!.displayName).sort().join(", ");
+            flags.set(`${ea.id}|${eb.id}|${g.id}`, {
+              at: new Date(g.kickoffAt).toISOString(), kind: "fair_play", trigger: "check",
+              error: `${first} and ${second}, which share a manager (${who}), took opposite sides of ${team(g.away).shortName} at ${team(g.home).shortName}.`,
+            });
+          }
+        }
+      }
+    }
+    return [...flags.values()].sort((x, y) => y.at.localeCompare(x.at));
   }
   async adminAddMember(email: string, displayName: string, entryId: string | null) {
     await wait();

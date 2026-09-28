@@ -33,17 +33,23 @@ export function League() {
 
 export function TeaserTable({ rules }: { rules: RuleSet }) {
   const t = rules.betTypes.teaser;
-  const legs = Array.from({ length: t.maxLegs - t.minLegs + 1 }, (_, i) => t.minLegs + i);
+  // From 2 legs even when a new card needs more: a card cut down by pushes or voids is
+  // paid at the row for the legs it has left.
+  const legs = Array.from({ length: Math.max(0, t.maxLegs - 1) }, (_, i) => 2 + i);
   return (
     <div className="scroll-x">
       <table className="table teaser-table">
         <thead><tr><th>Legs</th>{t.points.map((p) => <th key={p}>{p} pts</th>)}</tr></thead>
         <tbody>
           {legs.map((n) => (
-            <tr key={n}><td>{n}</td>{t.points.map((p) => <td key={p} className="num">{t.prices[String(p)]?.[String(n)] !== undefined ? odds(t.prices[String(p)]![String(n)]!) : "—"}</td>)}</tr>
+            <tr key={n}>
+              <td>{n}{n < t.minLegs ? <span className="muted"> *</span> : null}</td>
+              {t.points.map((p) => <td key={p} className="num">{t.prices[String(p)]?.[String(n)] !== undefined ? odds(t.prices[String(p)]![String(n)]!) : "—"}</td>)}
+            </tr>
           ))}
         </tbody>
       </table>
+      {t.minLegs > 2 ? <p className="small muted" style={{ margin: "8px 12px" }}>* Only for cards cut down by pushes or voids; a new card needs at least {t.minLegs} legs.</p> : null}
     </div>
   );
 }

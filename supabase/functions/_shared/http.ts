@@ -67,6 +67,7 @@ const FRIENDLY: Record<string, string> = {
   week_closed: "That bet's week has closed, so it can't be undone.",
   undo_window_passed: "The undo window has passed.",
   undo_line_moved: "A line on that bet has moved since you placed it, so it can't be undone.",
+  undo_lines_stale: "The lines couldn't be updated just now, and undo has to check them. Try again in a minute.",
   client_ref_conflict: "That bet couldn't be matched to your slip. Reload and try again.",
   client_ref_used: "That bet was undone or voided. Place it again as a new bet.",
 };

@@ -198,6 +198,13 @@ describe("validateRuleSet", () => {
     ({ ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, teaser: { ...DAY_ONE_RULES.betTypes.teaser, ...t } } });
   const withStake = (st: Partial<RuleSet["stake"]>): RuleSet => ({ ...DAY_ONE_RULES, stake: { ...DAY_ONE_RULES.stake, ...st } });
 
+  it("needs at least one bet type, and each teaser points option once", () => {
+    const off = (t: keyof RuleSet["betTypes"]) => ({ ...DAY_ONE_RULES.betTypes[t], enabled: false });
+    const none: RuleSet = { ...DAY_ONE_RULES, betTypes: { straight: off("straight"), parlay: off("parlay"), teaser: off("teaser") } as RuleSet["betTypes"] };
+    expect(validateRuleSet(none).map((p) => p.code)).toContain("bet_types");
+    expect(validateRuleSet(withTeaser({ points: [6, 6, 7] })).map((p) => p.code)).toContain("teaser_points");
+  });
+
   it("needs yes-or-no answers for undo after a line move and for both sides across bets", () => {
     const bad = { ...DAY_ONE_RULES, undoAfterLineMove: "no", acrossBets: {} } as unknown as RuleSet;
     const c = validateRuleSet(bad).map((p) => p.code);

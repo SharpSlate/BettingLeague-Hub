@@ -1,8 +1,9 @@
 // Places a bet slip for the signed-in member.
 //
 // 1. If this is a retry of a bet already placed (same client ref), returns that bet.
-// 2. Checks the slip with the shared rules code, and the entry, week and games,
-//    before anything costs credits: a slip that fails here never pulls lines.
+// 2. Checks the slip with the shared rules code, and the entry, week and games (and that
+//    it doesn't take the other side of a game from one of the entry's bets), before
+//    anything costs credits: a slip that fails here never pulls lines.
 // 3. Refreshes the lines if the last good pull is more than 2 minutes old. Bets share
 //    one refresh at a time, so they can't run the Odds API credits down.
 // 4. Checks each leg against the current lines. If a number moved, answers 409 with
@@ -14,7 +15,7 @@
 // through the database directly, so they can't undo against lines the site hasn't seen.
 import { currentUser, env, serviceClient, siteOrigins } from "../_shared/env.ts";
 import { dbErrorCode, friendlyMessage, json, preflight } from "../_shared/http.ts";
-import { pullLines } from "../_shared/jobs.ts";
+import { pullLines, refreshForUndo } from "../_shared/jobs.ts";
 import { checkPlacement, type CurrentLine, type GameInfo, type PlacementInput } from "../_shared/placement.ts";
 import type { BetType, Leg, RuleSet } from "../_shared/rules/types.ts";
 import { isStale } from "../_shared/schedule.ts";
@@ -47,26 +48,22 @@ function parse(body: unknown): (PlacementInput & { clientRef: string | null }) |
 async function undo(req: Request, origins: string, userId: string, slipId: unknown): Promise<Response> {
   if (typeof slipId !== "string" || !UUID.test(slipId)) return json(req, origins, 400, { error: "bad_request", message: "That bet couldn't be read." });
   const db = serviceClient();
-  const store = new SupabaseStore(db);
+  const refuse = (message: string) => {
+    const code = dbErrorCode(message);
+    return json(req, origins, 409, { error: code, message: friendlyMessage(code) });
+  };
   try {
-    const settings = await store.settings();
-    const before = await store.lastGoodLinesPull();
-    if (isStale(before, new Date(), settings.refreshOnBetSeconds)) {
-      const pulled = await pullLines(store, env("ODDS_API_KEY"), fetch, "bet", new Date(), userId);
-      // Another bet's refresh is on its way: wait a moment for it.
-      if (pulled.status === "skipped" && pulled.reason === "recent") {
-        for (let i = 0; i < 10; i++) {
-          await new Promise((r) => setTimeout(r, 500));
-          const latest = await store.lastGoodLinesPull();
-          if (latest && (!before || latest > before)) break;
-        }
-      }
+    const args = { p_slip: slipId.toLowerCase(), p_user: userId };
+    // Every check but the lines first, so a bet that can't be undone anyway costs no pull.
+    // It answers whether the bet's lines are checked at all (the rules can allow undo
+    // after a move).
+    const pre = await db.rpc("undo_slip_internal", { ...args, p_check_only: true });
+    if (pre.error) return refuse(pre.error.message);
+    if (pre.data !== false && !(await refreshForUndo(new SupabaseStore(db), env("ODDS_API_KEY"), fetch, userId))) {
+      return json(req, origins, 409, { error: "undo_lines_stale", message: friendlyMessage("undo_lines_stale") });
     }
-    const { error } = await db.rpc("undo_slip_internal", { p_slip: slipId.toLowerCase(), p_user: userId });
-    if (error) {
-      const code = dbErrorCode(error.message);
-      return json(req, origins, 409, { error: code, message: friendlyMessage(code) });
-    }
+    const { error } = await db.rpc("undo_slip_internal", args);
+    if (error) return refuse(error.message);
     return json(req, origins, 200, { undone: true });
   } catch (e) {
     console.error("undo failed", e);
@@ -140,6 +137,11 @@ Deno.serve(async (req) => {
     // A slip that breaks a rule or is on a game that has started fails without a pull.
     if (!check.ok && check.kind === "invalid" && check.problems.some((p) => p.code !== "line_unavailable")) {
       return json(req, origins, 422, { error: "invalid", problems: check.problems });
+    }
+    // So does one on the other side of a game from one of the entry's bets.
+    const across = (await db.rpc("opposite_side_legs_internal", { p_entry: input.entryId, p_user: user.id, p_legs: input.legs })).data as number[] | null;
+    if (across?.length) {
+      return json(req, origins, 422, { error: "invalid", problems: across.map((leg) => ({ code: "opposite_side", message: friendlyMessage("opposite_side"), leg })) });
     }
     const settings = await store.settings();
     const before = await store.lastGoodLinesPull();

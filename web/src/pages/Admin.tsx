@@ -98,7 +98,7 @@ function Status({ reload }: { reload: () => void }) {
             <dt>Open week</dt><dd>{lg.openWeek?.label ?? "None"}{lg.openWeek ? ` (rules version ${lg.openWeek.ruleSetVersion})` : ""}</dd>
             <dt>Last line pull</dt><dd>{ago(lg.lastPullAt)}</dd>
             <dt>Odds API credits</dt><dd className="num">{lg.creditsRemaining?.toLocaleString() ?? "unknown"}</dd>
-            <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min</dd>
+            <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min ({lg.pullNearKickoffMinutes} in the {lg.nearKickoffHours} hours before a kickoff)</dd>
           </dl>
         ) : <Loading />}
       </div>

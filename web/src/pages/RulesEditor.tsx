@@ -66,13 +66,14 @@ function Check({ label, value, onChange }: { label: string; value: boolean; onCh
   );
 }
 
-function SameGame({ value, onChange }: { value: SameGameRules; onChange: (v: SameGameRules) => void }) {
+function SameGame({ value, onChange, teaser = false }: { value: SameGameRules; onChange: (v: SameGameRules) => void; teaser?: boolean }) {
   const set = (k: keyof SameGameRules) => (b: boolean) => onChange({ ...value, [k]: b });
+  // Moneylines can't be teased, so their pairings don't apply to teasers.
   return (
     <div className="stack-sm">
       <Check label="Spread + total" value={value.spreadTotal} onChange={set("spreadTotal")} />
-      <Check label="Moneyline + total" value={value.moneylineTotal} onChange={set("moneylineTotal")} />
-      <Check label="Spread + either moneyline" value={value.spreadMoneyline} onChange={set("spreadMoneyline")} />
+      {teaser ? null : <Check label="Moneyline + total" value={value.moneylineTotal} onChange={set("moneylineTotal")} />}
+      {teaser ? null : <Check label="Spread + either moneyline" value={value.spreadMoneyline} onChange={set("spreadMoneyline")} />}
       <Check label="Both sides of one market" value={value.bothSides} onChange={set("bothSides")} />
     </div>
   );
@@ -171,7 +172,7 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
         <div className="body stack">
           <div className="grid-2">
             <div><h3 style={{ marginBottom: 8 }}>From one game, parlays may combine</h3><SameGame value={doc.betTypes.parlay.sameGame} onChange={(v) => edit((d) => { d.betTypes.parlay.sameGame = v; })} /></div>
-            <div><h3 style={{ marginBottom: 8 }}>From one game, teasers may combine</h3><SameGame value={t.sameGame} onChange={(v) => edit((d) => { d.betTypes.teaser.sameGame = v; })} /></div>
+            <div><h3 style={{ marginBottom: 8 }}>From one game, teasers may combine</h3><SameGame teaser value={t.sameGame} onChange={(v) => edit((d) => { d.betTypes.teaser.sameGame = v; })} /></div>
           </div>
           <Check label="An entry may bet both sides of a game in separate bets (both teams, or the over and the under)" value={doc.acrossBets.oppositeSides} onChange={(b) => edit((d) => { d.acrossBets.oppositeSides = b; })} />
         </div>

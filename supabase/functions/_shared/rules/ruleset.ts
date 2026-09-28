@@ -41,6 +41,8 @@ export function validateRuleSet(r: RuleSet): Problem[] {
     add("teaser_legs", "Teaser legs must be whole numbers from at least 2 up to at most 20.");
   }
   if (teaser.markets.includes("moneyline")) add("teaser_markets", "Moneylines can't be teased.");
+  if (!straight.enabled && !parlay.enabled && !teaser.enabled) add("bet_types", "Turn on at least one bet type.");
+  if (new Set(teaser.points).size !== teaser.points.length) add("teaser_points", "Each teaser points option can be listed only once.");
   if (teaser.enabled && teaser.points.length === 0) add("teaser_points", "Teasers need at least one points option.");
   for (const p of teaser.points) {
     if (!(p > 0) || !Number.isInteger(p * 2)) add("teaser_points", `Teaser points must be whole or half points: ${p}.`);
