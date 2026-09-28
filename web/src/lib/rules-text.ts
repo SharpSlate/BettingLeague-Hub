@@ -88,7 +88,9 @@ export function describeRules(r: RuleSet): RuleSection[] {
 
   const timing = [
     "A week opens for betting once the previous week's last game is final, normally after the Monday night game. You can't bet ahead. An admin can open the next week by hand, for example around a postponed game.",
-    r.lock === "game_kickoff" ? "Each leg locks at its own game's kickoff." : "Betting for the week closes at its first kickoff.",
+    r.lock === "game_kickoff"
+      ? "Each leg locks at its own game's kickoff, or earlier if the odds feed shows the game starting earlier."
+      : "Betting for the week closes at its first kickoff, or earlier if the odds feed shows that game starting earlier.",
     r.undoMinutes > 0 ? `You can undo a bet within ${r.undoMinutes} minutes of placing it, as long as none of its games has started. After that, bets are final.` : "Bets are final once placed.",
     r.visibility === "kickoff_per_leg"
       ? "Other members see your picks as each game kicks off, leg by leg. Before that they only see that you made a pick."

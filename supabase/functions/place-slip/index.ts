@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
         // checks the same things.)
         const priorLegs = (await db.from("slip_legs").select("game_id, market, side").eq("slip_id", prior.id)).data ?? [];
         const have = new Set(priorLegs.map((l: any) => `${l.game_id}|${l.market}|${l.side}`));
-        const want = new Set(input.legs.map((l) => `${l.gameId}|${l.market}|${l.side}`));
+        const want = new Set(input.legs.map((l) => `${l.gameId.toLowerCase()}|${l.market}|${l.side}`));
         const same = prior.entry_id === input.entryId && prior.placed_by === user.id && prior.type === input.type
           && (prior.teaser_points === null ? null : Number(prior.teaser_points)) === (input.type === "teaser" ? input.teaserPoints : null)
           && Number(prior.stake_cents) === input.stakeCents && prior.leg_count === input.legs.length
@@ -83,9 +83,12 @@ Deno.serve(async (req) => {
     if (!bal?.manages || !bal.active) return json(req, origins, 403, { error: "not_manager", message: friendlyMessage("not_manager") });
 
     const gameIds = [...new Set(input.legs.map((l) => l.gameId))];
-    const gameRows = (await db.from("games").select("id, kickoff_at, status, week").in("id", gameIds)).data ?? [];
+    const gameRows = (await db.from("games").select("id, kickoff_at, feed_commence, status, week").in("id", gameIds)).data ?? [];
+    // Betting on a game closes at its kickoff or at the feed's own start time, whichever
+    // comes first (as place_slip_internal checks).
+    const locksAt = (g: any) => new Date(Math.min(Date.parse(g.kickoff_at), g.feed_commence ? Date.parse(g.feed_commence) : Infinity));
     const games = new Map<string, GameInfo>(
-      gameRows.map((g: any) => [g.id, { id: g.id, kickoffAt: new Date(g.kickoff_at), status: g.status, week: g.week }]),
+      gameRows.map((g: any) => [g.id, { id: g.id, locksAt: locksAt(g), status: g.status, week: g.week }]),
     );
     const loadLines = async (): Promise<CurrentLine[]> =>
       ((await db.from("current_lines").select("game_id, market, side, point, price, source").in("game_id", gameIds)).data ?? []).map((l: any) => ({

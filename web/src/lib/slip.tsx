@@ -58,6 +58,20 @@ function load(): SlipState {
   }
 }
 
+/** Drops a bet's id from the saved slip at once, rather than at the next save after a render. */
+function unsaveRef(key: string) {
+  try {
+    const raw = localStorage.getItem(STORAGE);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as Partial<SlipState>;
+    if (!saved.refs?.[key]) return;
+    const { [key]: _gone, ...refs } = saved.refs;
+    localStorage.setItem(STORAGE, JSON.stringify({ ...saved, refs }));
+  } catch {
+    /* private mode */
+  }
+}
+
 export interface Moved { key: string; label: string; from: string; to: string; point: number | null; price: number }
 
 export interface SlipStatus {
@@ -146,21 +160,23 @@ export function SlipProvider({ children }: { children: ReactNode }) {
       setStatus: (p) => setStatusState((x) => ({ ...x, ...p })),
       clientRef: (key, fingerprint) => {
         // Another tab may have sent this same bet already: its id is in the saved slip.
+        const mine = refs.current[key];
         const saved = load().refs?.[key];
-        const cur = refs.current[key]?.fingerprint === fingerprint ? refs.current[key] : saved?.fingerprint === fingerprint ? saved : undefined;
-        if (cur) {
-          refs.current = { ...refs.current, [key]: cur };
-          return cur.ref;
-        }
-        const ref = newClientRef();
-        refs.current = { ...refs.current, [key]: { fingerprint, ref } };
-        set((x) => ({ ...x, refs: refs.current }));
-        return ref;
+        const cur = mine?.fingerprint === fingerprint ? mine
+          : saved?.fingerprint === fingerprint ? saved
+          : { fingerprint, ref: newClientRef() };
+        const next = { ...refs.current, [key]: cur };
+        refs.current = next;
+        set((x) => ({ ...x, refs: next }));
+        return cur.ref;
       },
       forgetRef: (key) => {
         const { [key]: _gone, ...rest } = refs.current;
         refs.current = rest;
-        set((x) => ({ ...x, refs: refs.current }));
+        // clientRef also reads the saved slip, so drop the id there now too; otherwise a
+        // resend right after this (see Slip.tsx) would pick the used id back up.
+        unsaveRef(key);
+        set((x) => ({ ...x, refs: rest }));
       },
     }),
     [s, open, status],

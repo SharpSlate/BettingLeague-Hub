@@ -109,9 +109,11 @@ create table public.games (
   -- The kickoff moves only when the next pull reports the same time, so one bad reading
   -- can't show a game's picks early or keep betting open past the real start.
   feed_kickoff timestamptz,
-  -- The start time in the feed's latest reading, whatever the league's kickoff says. A
-  -- score reading counts as believable when either time is near, so an admin moving a
-  -- kickoff later can't keep betting open on a game the feed shows under way.
+  -- The start time in the feed's latest reading, whatever the league's kickoff says.
+  -- Betting on a game closes at its kickoff or at this time, whichever comes first, so
+  -- neither a kickoff the feed hasn't confirmed yet nor an admin moving a kickoff later
+  -- can keep betting open on a game the feed shows under way. Once this time has passed
+  -- it stays, so the feed can't reopen betting either. (Picks still show at the kickoff.)
   feed_commence timestamptz,
   final_at timestamptz,
   updated_at timestamptz not null default now(),
@@ -259,6 +261,12 @@ create table public.week_entry_status (
   wagered_cents bigint,
   shortfall_cents bigint,
   deducted_cents bigint,
+  -- Shortfall not taken at the close because the entry didn't have the units. It stays
+  -- waived whatever happens to the week's bets later.
+  waived_cents bigint,
+  -- Shortfall added after the close (a bet stopped counting) that couldn't be taken for
+  -- lack of units. It's cancelled first if the shortfall comes down again.
+  unpaid_cents bigint,
   primary key (week, entry_id)
 );
 

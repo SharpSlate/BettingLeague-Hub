@@ -145,9 +145,9 @@ describe("gradePending", () => {
 describe("checkPlacement", () => {
   const now = new Date("2026-10-01T12:00:00Z");
   const games = new Map<string, GameInfo>([
-    ["a", { id: "a", kickoffAt: new Date("2026-10-04T17:00:00Z"), status: "scheduled", week: 5 }],
-    ["old", { id: "old", kickoffAt: new Date("2026-10-01T11:00:00Z"), status: "scheduled", week: 5 }],
-    ["next", { id: "next", kickoffAt: new Date("2026-10-11T17:00:00Z"), status: "scheduled", week: 6 }],
+    ["a", { id: "a", locksAt: new Date("2026-10-04T17:00:00Z"), status: "scheduled", week: 5 }],
+    ["old", { id: "old", locksAt: new Date("2026-10-01T11:00:00Z"), status: "scheduled", week: 5 }],
+    ["next", { id: "next", locksAt: new Date("2026-10-11T17:00:00Z"), status: "scheduled", week: 6 }],
   ]);
   const lines: CurrentLine[] = [
     { gameId: "a", market: "spread", side: "home", point: -3, price: -112, source: "draftkings" },

@@ -42,7 +42,7 @@ function PriceButton({ game, line, market, side, rules }: { game: GameView; line
 }
 
 export function GameCard({ game, now, rules }: { game: GameView; now: number; rules?: RuleSet }) {
-  const started = game.status !== "scheduled" || new Date(game.kickoffAt).getTime() <= now;
+  const started = game.status !== "scheduled" || new Date(game.locksAt).getTime() <= now;
   const line = (market: Market, side: Side) => game.lines.find((l) => l.market === market && l.side === side);
   const sources = [...new Set(game.lines.map((l) => l.source))];
   const asOf = game.lines.reduce<string | null>((a, l) => (!a || l.asOf > a ? l.asOf : a), null);

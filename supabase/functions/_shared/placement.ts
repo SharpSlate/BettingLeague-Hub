@@ -16,7 +16,8 @@ export interface CurrentLine {
 
 export interface GameInfo {
   id: string;
-  kickoffAt: Date;
+  /** When betting on the game closes: its kickoff, or the feed's own start time if that's earlier. */
+  locksAt: Date;
   status: string;
   week: number;
 }
@@ -48,7 +49,7 @@ export function checkPlacement(
     const g = games.get(leg.gameId);
     if (!g) problems.push({ code: "unknown_game", message: "That game isn't on the board.", leg: i });
     else if (g.week !== openWeek) problems.push({ code: "game_not_this_week", message: "That game isn't in this week's slate.", leg: i });
-    else if (g.status !== "scheduled" || g.kickoffAt <= now) problems.push({ code: "game_started", message: "That game has started.", leg: i });
+    else if (g.status !== "scheduled" || g.locksAt <= now) problems.push({ code: "game_started", message: "That game has started.", leg: i });
   });
   if (problems.length) return { ok: false, kind: "invalid", problems };
 

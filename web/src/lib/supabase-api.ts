@@ -117,7 +117,9 @@ export class SupabaseApi implements Api {
       ? (check(await this.db.from("current_lines").select("*").in("game_id", games.map((g) => g.id))) as any[])
       : [];
     return games.map((g) => ({
-      id: g.id, week: g.week, kickoffAt: g.kickoff_at, home: byAbbr.get(g.home_team)!, away: byAbbr.get(g.away_team)!,
+      id: g.id, week: g.week, kickoffAt: g.kickoff_at,
+      locksAt: g.feed_commence && Date.parse(g.feed_commence) < Date.parse(g.kickoff_at) ? g.feed_commence : g.kickoff_at,
+      home: byAbbr.get(g.home_team)!, away: byAbbr.get(g.away_team)!,
       status: g.status, homeScore: g.home_score, awayScore: g.away_score,
       lines: lines.filter((l) => l.game_id === g.id).map((l) => ({
         market: l.market, side: l.side, point: n(l.point), price: l.price, source: l.source, asOf: l.as_of,

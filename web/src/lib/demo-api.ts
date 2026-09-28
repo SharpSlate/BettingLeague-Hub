@@ -169,7 +169,7 @@ export class DemoApi implements Api {
   private listeners = new Set<() => void>();
   private nextId = 1000;
   /** Bets placed, by the id the site sent with each, so a retry returns the same bet. */
-  private placedRefs = new Map<string, { slipId: string; payoutCents: number; american: number }>();
+  private placedRefs = new Map<string, { slipId: string; payoutCents: number; american: number; bet: string }>();
 
   private emit() { for (const l of this.listeners) l(); }
   private entry(id: string) { return this.s.entries.find((e) => e.id === id)!; }
@@ -250,7 +250,8 @@ export class DemoApi implements Api {
   async games(week: number): Promise<GameView[]> {
     await wait(60);
     return this.s.games.filter((g) => g.week === week).sort((a, b) => a.kickoffAt - b.kickoffAt).map((g) => ({
-      id: g.id, week: g.week, kickoffAt: new Date(g.kickoffAt).toISOString(), home: team(g.home), away: team(g.away), status: g.status,
+      id: g.id, week: g.week, kickoffAt: new Date(g.kickoffAt).toISOString(), locksAt: new Date(g.kickoffAt).toISOString(),
+      home: team(g.home), away: team(g.away), status: g.status,
       homeScore: g.homeScore, awayScore: g.awayScore,
       lines: g.status === "scheduled" ? g.lines.map((l) => ({ ...l, asOf: new Date(l.asOf).toISOString() })) : [],
     }));
@@ -327,12 +328,23 @@ export class DemoApi implements Api {
 
   async placeSlip(req: PlacementRequest): Promise<PlaceResult> {
     await wait(350);
+    // As the server does: a resend of the same bet gets the bet back; the same id on a
+    // different bet, or on one since undone or voided, is refused.
+    const bet = JSON.stringify([req.entryId, req.type, req.type === "teaser" ? req.teaserPoints : null, req.stakeCents,
+      req.legs.map((l) => `${l.gameId}|${l.market}|${l.side}`).sort()]);
     const prior = this.placedRefs.get(req.clientRef);
-    if (prior) return { ok: true, ...prior };
+    if (prior) {
+      if (prior.bet !== bet) return { ok: false, kind: "error", code: "client_ref_conflict", message: "That bet couldn't be matched to your slip. Reload and try again." };
+      const status = this.s.slips.find((x) => x.id === prior.slipId)?.status;
+      if (status === "undone" || status === "void") {
+        return { ok: false, kind: "error", code: "client_ref_used", message: "That bet was undone or voided. Place it again as a new bet." };
+      }
+      return { ok: true, slipId: prior.slipId, payoutCents: prior.payoutCents, american: prior.american };
+    }
     const e = this.entry(req.entryId);
     if (!e || !this.mine(e.id)) return { ok: false, kind: "error", message: "You don't manage that entry." };
     const rules = this.s.rules[0]!.document;
-    const games = new Map<string, GameInfo>(this.s.games.map((g) => [g.id, { id: g.id, kickoffAt: new Date(g.kickoffAt), status: g.status, week: g.week }]));
+    const games = new Map<string, GameInfo>(this.s.games.map((g) => [g.id, { id: g.id, locksAt: new Date(g.kickoffAt), status: g.status, week: g.week }]));
     const lines = this.s.games.flatMap((g) => (g.status === "scheduled" ? g.lines.map((l) => ({ gameId: g.id, ...l })) : []));
     const check = checkPlacement({ ...req }, rules, { availableCents: this.available(e), bankCents: this.bank(e) }, OPEN_WEEK, games, lines, new Date());
     if (!check.ok) {
@@ -353,7 +365,7 @@ export class DemoApi implements Api {
       payoutCents: null, placedAt: Date.now(), settledAt: null, legs,
     });
     e.ledger.push({ amount: -req.stakeCents, kind: "stake", at: Date.now(), note: "" });
-    this.placedRefs.set(req.clientRef, { slipId: id, payoutCents: check.quote.payoutCents, american: check.quote.american });
+    this.placedRefs.set(req.clientRef, { slipId: id, payoutCents: check.quote.payoutCents, american: check.quote.american, bet });
     return { ok: true, slipId: id, payoutCents: check.quote.payoutCents, american: check.quote.american };
   }
 

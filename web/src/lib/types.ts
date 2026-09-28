@@ -50,6 +50,8 @@ export interface GameView {
   id: string;
   week: number;
   kickoffAt: string;
+  /** When betting on it closes: the kickoff, or the feed's own start time if that's earlier. */
+  locksAt: string;
   home: Team;
   away: Team;
   status: GameStatus;
