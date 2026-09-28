@@ -234,3 +234,30 @@ https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026
 Add this file to the new repo as `HANDOFF.md`, or paste it into the chat, then send:
 
 > Read `HANDOFF.md`. Before writing code, ask me the section 5 questions and what the commissioner dislikes about Splash, then propose the schema, the rules-engine design and the page list for approval. The rules must be commissioner-editable, not Splash's fixed rules. Build on the section 4 stack unless I choose otherwise. Test grading with hand-checked fixtures, and run a separate review pass before anything goes live.
+
+## 8. Review notes from the local session (2026-09-27)
+
+Written after reading `DECISIONS.md` and `docs/DESIGN.md` on the cloud session's branch. Already covered there, so keep them as they are:
+- **Line of record:** each leg stores the quoted point and price, and a moved line must be accepted before the bet goes in (DESIGN §2 and `slip_legs`).
+- **Admins can't see picks before kickoff** (DESIGN §5).
+
+Three gaps:
+
+1. **The shared Odds API key can starve the site.**
+   - The key also feeds the owner's other projects. On 2026-09-27 it fell to 3,278 credits after a one-off history pull. That is below the site's 5,000 floor, so a live site would have stopped refreshing lines until the plan renewed.
+   - Pick one fix: a separate key and plan for the league, or a free fallback when the guard trips. ESPN's scoreboard JSON (section 3) carries DraftKings' spread, total and moneyline for every game.
+   - ESPN's server returns 403 to a browser-style User-Agent sent from a server. Send the HTTP library's default one, or none.
+   - Either way, decide what the Board does when lines can't refresh: show them as stale and pause betting, rather than take bets on old numbers.
+2. **Check each final score against a second source before banks move.**
+   - Grading reads The Odds API's scores alone. Before a game's slips settle, compare its final with a free second source: ESPN's scoreboard, or nflverse's `games.csv` (https://github.com/nflverse/nfldata/raw/master/data/games.csv, which can lag a few hours).
+   - If they agree, grade. If not, hold that game and flag the admins.
+   - An admin regrade exists, but a wrong grade nobody notices moves banks silently.
+3. **Decide who owns the Supabase project.**
+   - DESIGN §5 notes that the project owner can read the database directly, pending picks included. The owner is also a player.
+   - The cleaner setup: the commissioner owns the Supabase project and is an admin on this repo, the owner is a collaborator, and the league is told how it is set up.
+   - For a play-money pool this can't be engineered away cheaply; ownership plus disclosure is the fix.
+
+Checked and dropped: same-game teaser correlation.
+- The worry was that legs from one game, such as a dog with the under or a favorite with the over, win together more often than their prices assume.
+- On 2,937 regular-season games from 2015 to 2025 they don't. 6-point legs from one game won together within 0.6 points of what independent legs would: dog + under 49.3% against 49.2%, favorite + over 46.4% against 46.3%.
+- So the "everything allowed" same-game teaser rule gives no one a pricing edge.
