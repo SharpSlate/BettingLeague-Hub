@@ -5,7 +5,7 @@ Settled choices for the league site, newest first. Anything not listed here is s
 | Date | Decision | By | Notes |
 |---|---|---|---|
 | 2026-09-28 | **Site name:** BALTIMORE DEGENERATES. | Owner | Colors, logo and web address are still open. |
-| 2026-09-28 | **Cutover target:** week 4. | Owner | Week 4 betting opens after week 3's Monday night game, and its first game is Thursday, Oct 1. Whether to run it as a trial beside Splash first is still open. |
+| 2026-09-28 | **Cutover:** week 4 is a trial beside Splash. The owner and the commissioner copy their Splash bets into the new site, and the grading is compared after Monday night, Oct 5. Everyone switches on Tuesday, Oct 6, for week 5. | Owner | Splash stays official for week 4. The standings are imported from Splash after week 4. |
 | 2026-09-28 | **Admin log:** every admin action and rule change is readable by all members. | Owner | |
 | 2026-09-28 | **Weekly minimum, what counts:** pushed bets count as wagered; bets an admin voids don't, and neither do undone bets. | Owner | |
 | 2026-09-28 | **Undo window:** a member can undo a bet within 5 minutes of placing it, as long as none of its games has kicked off. The stake comes back. After that, bets are final. | Owner | For typos. |

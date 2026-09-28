@@ -190,11 +190,10 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 ## 9. Cutover from Splash
 
-1. Pick a Tuesday. The owner's target is week 4 (betting opens after week 3's Monday night game).
+1. Go-live is Tuesday, Oct 6 (week 5). Week 4 is a trial: the owner and the commissioner copy their Splash bets into the new site, and we compare the grading after Monday night, Oct 5.
 2. The commissioner (or owner) supplies Splash's standings then.
 3. Each entry's bank comes in as an `import` ledger row. Its record, net, risk and return become its baseline.
 4. Pick history stays on Splash as a static snapshot and isn't migrated.
-5. Optional: run a trial week first. The owner and commissioner copy their Splash bets into the new site, and we compare the grading.
 
 ## 10. Testing and review
 
@@ -215,5 +214,4 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 1. **Standings definitions** for Net, Risk and Return, from the Splash inventory.
 2. **Branding:** the name is BALTIMORE DEGENERATES; colors, logo and web address are still open.
-3. **Trial week:** go live for week 4 directly, or run week 4 as a trial beside Splash and go live for week 5.
-4. **The commissioner's own complaints** about Splash.
+3. **The commissioner's own complaints** about Splash.
