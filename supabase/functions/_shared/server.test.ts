@@ -215,7 +215,7 @@ class FakeStore implements Store {
   settled: string[] = [];
   advanceTo: number | null = null;
   advanced = 0;
-  claimOk = true;
+  claimOk: "claimed" | "recent" | "limit" = "claimed";
   failIngest = false;
   failSettle = new Set<string>();
   costs: { error: string; cost: number | null; remaining: number | null }[] = [];
@@ -299,9 +299,12 @@ describe("pullLines under stress", () => {
   const inWindow = new Date("2026-10-01T16:00:00Z");
   it("lets only one bet at a time pull; the rest don't call the API", async () => {
     const store = new FakeStore();
-    store.claimOk = false;
+    store.claimOk = "recent";
     const f = fakeFetch(fixture("odds.json"));
-    expect(await pullLines(store, "KEY", f, "bet", inWindow)).toMatchObject({ status: "skipped" });
+    expect(await pullLines(store, "KEY", f, "bet", inWindow)).toEqual({ status: "skipped", reason: "recent" });
+    // A used-up limit says so, so the bet doesn't wait for a refresh that isn't coming.
+    store.claimOk = "limit";
+    expect(await pullLines(store, "KEY", f, "bet", inWindow)).toEqual({ status: "skipped", reason: "limit" });
     expect(f.calls).toHaveLength(0);
   });
   it("never stores the API key from a network error", async () => {

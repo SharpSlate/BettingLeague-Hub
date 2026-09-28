@@ -75,7 +75,8 @@ export class SupabaseStore implements Store {
   }
 
   async claimBetRefresh(minSeconds: number, userId: string | null) {
-    return (await must<boolean>(this.db.rpc("claim_bet_refresh_internal", { p_min_seconds: minSeconds, p_user: userId }), "claim refresh")) === true;
+    const r = await must<string>(this.db.rpc("claim_bet_refresh_internal", { p_min_seconds: minSeconds, p_user: userId }), "claim refresh");
+    return r === "claimed" || r === "recent" ? r : "limit";
   }
 
   async gamesAwaitingScores(now: Date) {

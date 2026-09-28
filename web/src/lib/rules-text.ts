@@ -78,9 +78,9 @@ export function describeRules(r: RuleSet): RuleSection[] {
   const wm = r.weeklyMinimum;
   const weekly = [
     `Each week you must wager at least ${wm.pct}% of your bank as it stood when the week opened, rounded up to a whole unit.`,
-    "Pushed bets count toward it. Bets you undo and bets an admin voids don't.",
+    "Pushed bets count toward it. Bets you undo, bets an admin voids and bets on a cancelled game don't.",
     wm.penalty === "deduct_shortfall"
-      ? "Whatever you're short when the week closes is taken off your bank. It never takes a bank below zero."
+      ? "Whatever you're short when the week closes is taken off your bank. It never takes a bank below zero. If one of a closed week's bets is voided or regraded later, the deduction is redone for that bet's stake."
       : wm.penalty === "warn"
         ? "Entries that fall short get a warning; there's no automatic penalty."
         : "It's shown for information only.",

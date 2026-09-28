@@ -37,8 +37,12 @@ export interface Store {
   ingestLines(trigger: Trigger, events: NormalizedEvent[], cost: number | null, remaining: number | null): Promise<number>;
   ingestScores(trigger: Trigger, scores: NormalizedScore[], cost: number | null, remaining: number | null): Promise<number>;
   recordPull(kind: "lines" | "scores", trigger: Trigger, ok: boolean, error: string, cost: number | null, remaining: number | null): Promise<void>;
-  /** For a bet-triggered pull: true for the bet that should pull, false while a refresh is recent or the member's or day's limit is used up. */
-  claimBetRefresh(minSeconds: number, userId: string | null): Promise<boolean>;
+  /**
+   * For a bet-triggered pull: "claimed" for the bet that should pull; "recent" while a
+   * refresh has just run or is running; "limit" when the member's or the day's limit is
+   * used up.
+   */
+  claimBetRefresh(minSeconds: number, userId: string | null): Promise<"claimed" | "recent" | "limit">;
   /** How many games have kicked off in the last 3 days and aren't final or void yet. */
   gamesAwaitingScores(now: Date): Promise<number>;
   pendingSlips(): Promise<PendingSlip[]>;
@@ -138,8 +142,9 @@ export async function pullLines(
   // Bets that find the lines stale share one refresh: the first one pulls, the rest
   // use what it brings in (or the lines they already have). Each member's bets, and
   // bets as a whole, also have limits (see claim_bet_refresh_internal).
-  if (trigger === "bet" && !(await store.claimBetRefresh(s.refreshOnBetSeconds, userId))) {
-    return { status: "skipped", reason: "the lines were just refreshed, or the refresh limit is reached" };
+  if (trigger === "bet") {
+    const claim = await store.claimBetRefresh(s.refreshOnBetSeconds, userId);
+    if (claim !== "claimed") return { status: "skipped", reason: claim };
   }
   const r = await callApi<OddsApiEvent[]>(store, "lines", trigger, oddsUrl(apiKey, s.books), fetchImpl);
   if ("error" in r) return { status: "failed", reason: r.error };

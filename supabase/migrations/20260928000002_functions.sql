@@ -258,25 +258,42 @@ begin
 
     select * into v_game from public.games where odds_api_id = ev ->> 'id' for update;
     if not found then
-      insert into public.games (odds_api_id, week, kickoff_at, home_team, away_team)
-      values (ev ->> 'id', v_week, v_kick, v_home, v_away)
+      insert into public.games (odds_api_id, week, kickoff_at, home_team, away_team, feed_commence)
+      values (ev ->> 'id', v_week, v_kick, v_home, v_away, v_kick)
       returning * into v_game;
-    elsif v_game.status = 'scheduled' and v_game.kickoff_at > v_at and v_game.kickoff_at <> v_kick then
-      -- A start time already in the past is believed only for a game that was due within
-      -- the hour; for a game hours away it's a bad reading, and would show its picks.
-      if v_kick > v_at or v_game.kickoff_at <= v_at + interval '1 hour' then
-        update public.games
-           set kickoff_at = v_kick,
-               week = case
-                 when week_moved or exists (select 1 from public.slip_legs l where l.game_id = v_game.id) then week
-                 else v_week
-               end,
-               updated_at = v_at
-         where id = v_game.id;
+    else
+      if v_game.feed_commence is distinct from v_kick then
+        update public.games set feed_commence = v_kick where id = v_game.id;
       end if;
-    elsif v_game.status = 'postponed' and v_kick is distinct from coalesce(v_game.rescheduled_at, v_game.kickoff_at) then
-      -- The kickoff stays put (it decides when picks show); the new time keeps score pulls going.
-      update public.games set rescheduled_at = v_kick, updated_at = v_at where id = v_game.id;
+      if v_game.status = 'scheduled' and v_game.kickoff_at > v_at and v_game.kickoff_at <> v_kick then
+        -- A new start time moves the kickoff when two pulls in a row agree on it, so one
+        -- bad reading can't show a game's picks early or keep betting open past the real
+        -- start. A game due within the hour follows a single reading of an earlier time,
+        -- since its start is imminent anyway. A start already in the past is believed
+        -- only for a game that was due within the hour; for a game hours away it's a bad
+        -- reading (if the game really is under way, its scores close betting on it).
+        if (v_game.feed_kickoff is not distinct from v_kick
+            or (v_kick < v_game.kickoff_at and v_game.kickoff_at <= v_at + interval '1 hour'))
+           and (v_kick > v_at or v_game.kickoff_at <= v_at + interval '1 hour') then
+          update public.games
+             set kickoff_at = v_kick,
+                 feed_kickoff = null,
+                 week = case
+                   when week_moved or exists (select 1 from public.slip_legs l where l.game_id = v_game.id) then week
+                   else v_week
+                 end,
+                 updated_at = v_at
+           where id = v_game.id;
+        else
+          update public.games set feed_kickoff = v_kick where id = v_game.id;
+        end if;
+      elsif v_game.feed_kickoff is not null and v_game.kickoff_at = v_kick then
+        -- The feed is back to the kickoff the league has.
+        update public.games set feed_kickoff = null where id = v_game.id;
+      elsif v_game.status = 'postponed' and v_kick is distinct from coalesce(v_game.rescheduled_at, v_game.kickoff_at) then
+        -- The kickoff stays put (it decides when picks show); the new time keeps score pulls going.
+        update public.games set rescheduled_at = v_kick, updated_at = v_at where id = v_game.id;
+      end if;
     end if;
 
     for bk in select * from jsonb_array_elements(coalesce(ev -> 'books', '[]'::jsonb)) loop
@@ -301,10 +318,12 @@ end $$;
 
 -- A bet asks for fresh lines when they're older than p_min_seconds. Only one bet per
 -- p_min_seconds gets to pull, however many arrive at once; one member's bets get at most
--- one refresh per bet_refresh_member_minutes; and bets get at most bet_refresh_daily_cap
--- refreshes a day. So neither a burst of bets nor a script of slips that are refused
--- afterwards can run the Odds API credits down. Returns true to the bet that should pull.
-create or replace function public.claim_bet_refresh_internal(p_min_seconds int, p_user uuid default null) returns boolean
+-- one refresh per bet_refresh_member_minutes and bet_refresh_member_daily_cap a day; and
+-- bets in all get at most bet_refresh_daily_cap a day. So neither a burst of bets nor a
+-- script of slips refused afterwards can run the Odds API credits down. Returns
+-- 'claimed' to the bet that should pull; otherwise 'recent' (a refresh just ran or is
+-- running) or 'limit' (a member's or the day's limit is used up).
+create or replace function public.claim_bet_refresh_internal(p_min_seconds int, p_user uuid default null) returns text
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare v_now timestamptz; v_set public.league_settings%rowtype;
@@ -312,16 +331,17 @@ begin
   perform pg_advisory_xact_lock(hashtext('bet_refresh'));
   v_now := clock_timestamp();
   select * into v_set from public.league_settings;
-  if v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return false; end if;
-  if p_user is not null and exists (
-    select 1 from public.bet_refreshes where user_id = p_user and at > v_now - make_interval(mins => v_set.bet_refresh_member_minutes)
+  if v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return 'recent'; end if;
+  if p_user is not null and (
+       exists (select 1 from public.bet_refreshes where user_id = p_user and at > v_now - make_interval(mins => v_set.bet_refresh_member_minutes))
+    or (select count(*) from public.bet_refreshes where user_id = p_user and at > v_now - interval '24 hours') >= v_set.bet_refresh_member_daily_cap
   ) then
-    return false;
+    return 'limit';
   end if;
-  if (select count(*) from public.bet_refreshes where at > v_now - interval '24 hours') >= v_set.bet_refresh_daily_cap then return false; end if;
+  if (select count(*) from public.bet_refreshes where at > v_now - interval '24 hours') >= v_set.bet_refresh_daily_cap then return 'limit'; end if;
   update public.league_settings set bet_refresh_claimed_at = v_now;
   insert into public.bet_refreshes (user_id, at) values (p_user, v_now);
-  return true;
+  return 'claimed';
 end $$;
 
 -- How many games need scores: kicked off in the last 3 days and not final or void. A
@@ -371,9 +391,9 @@ begin
   for sc in select * from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) loop
     select * into g from public.games where odds_api_id = sc ->> 'id' for update;
     continue when not found or g.status = 'void';
-    -- Scores for a game the league has more than an hour from kickoff are a bad reading
-    -- (a postponed game counts from its new time).
-    continue when coalesce(g.rescheduled_at, g.kickoff_at) > v_now + interval '1 hour' and g.kickoff_at > v_now + interval '1 hour';
+    -- Scores for a game that both the league and the feed have more than an hour from its
+    -- start are a bad reading. (If either says it's near or under way, they count.)
+    continue when g.kickoff_at > v_now + interval '1 hour' and coalesce(g.feed_commence, g.kickoff_at) > v_now + interval '1 hour';
     continue when jsonb_typeof(sc -> 'homeScore') is distinct from 'number' or jsonb_typeof(sc -> 'awayScore') is distinct from 'number';
     v_home := (sc ->> 'homeScore')::int;
     v_away := (sc ->> 'awayScore')::int;
@@ -467,7 +487,19 @@ begin
       -- Only a retry of the same bet gets the bet back; the ref on a different bet, or on
       -- one that's been undone or voided since, is refused.
       if v_existing.entry_id <> p_entry or v_existing.placed_by <> p_user or v_existing.type <> p_type
-         or v_existing.stake_cents <> p_stake_cents or v_existing.leg_count <> jsonb_array_length(p_legs) then
+         or v_existing.teaser_points is distinct from p_teaser_points
+         or v_existing.stake_cents <> p_stake_cents or v_existing.leg_count <> jsonb_array_length(p_legs)
+         or exists (
+           select 1 from jsonb_array_elements(p_legs) x
+           where not exists (select 1 from public.slip_legs l where l.slip_id = v_existing.id
+                               and l.game_id::text = x ->> 'gameId' and l.market = x ->> 'market' and l.side = x ->> 'side')
+         )
+         or exists (
+           select 1 from public.slip_legs l
+           where l.slip_id = v_existing.id
+             and not exists (select 1 from jsonb_array_elements(p_legs) x
+                             where l.game_id::text = x ->> 'gameId' and l.market = x ->> 'market' and l.side = x ->> 'side')
+         ) then
         raise exception 'client_ref_conflict';
       end if;
       if v_existing.status in ('undone', 'void') then raise exception 'client_ref_used'; end if;
@@ -683,6 +715,8 @@ begin
     where wes.week = p_week order by wes.entry_id
   loop
     perform 1 from public.entries where id = r.entry_id for update;
+    -- Wait for any of the entry's bets being settled right now, so the sum sees its result.
+    perform 1 from public.slips where entry_id = r.entry_id and week = p_week order by id for share;
     -- Pushes count as wagered; undone bets and voided bets don't.
     select coalesce(sum(stake_cents), 0) into v_wagered from public.slips
      where entry_id = r.entry_id and week = p_week and status not in ('undone', 'void');
@@ -708,6 +742,10 @@ end $$;
 -- its bets changed in a way that changes what counts as wagered (a regrade that turns
 -- a void bet into a graded one or back, or an admin void), and posts the difference
 -- as its own ledger row. Does nothing for a week that hasn't closed.
+-- The deduction moves by the change in shortfall, which is the stake of the bet that
+-- changed: a bet that no longer counts adds its stake (taken from units free now, never
+-- below zero), and one that now counts gives back up to what was deducted. The part of
+-- a shortfall waived at the close for lack of funds stays waived.
 create or replace function app.recheck_minimum(p_week int, p_entry uuid) returns void
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -716,7 +754,6 @@ declare
   v_doc jsonb;
   v_wagered bigint;
   v_short bigint;
-  v_target bigint;
   v_delta bigint;
 begin
   select * into w from public.week_entry_status where week = p_week and entry_id = p_entry for update;
@@ -726,10 +763,15 @@ begin
    where entry_id = p_entry and week = p_week and status not in ('undone', 'void');
   if v_wagered = w.wagered_cents then return; end if;
   v_short := greatest(0, w.required_cents - v_wagered);
-  v_target := case when v_doc -> 'weeklyMinimum' ->> 'penalty' = 'deduct_shortfall' then v_short else 0 end;
-  -- Positive gives back an over-deduction; negative takes more, never below zero.
-  v_delta := coalesce(w.deducted_cents, 0) - v_target;
-  if v_delta < 0 then v_delta := -least(-v_delta, greatest(0, app.available_cents(p_entry))); end if;
+  -- Positive gives units back; negative takes more.
+  v_delta := coalesce(w.shortfall_cents, 0) - v_short;
+  if v_delta > 0 then
+    v_delta := least(v_delta, coalesce(w.deducted_cents, 0));
+  elsif v_doc -> 'weeklyMinimum' ->> 'penalty' = 'deduct_shortfall' then
+    v_delta := -least(-v_delta, greatest(0, app.available_cents(p_entry)));
+  else
+    v_delta := 0;
+  end if;
   if v_delta <> 0 then
     insert into public.ledger (entry_id, amount_cents, kind, week, note)
     values (p_entry, v_delta, 'weekly_minimum', p_week,
@@ -776,6 +818,7 @@ begin
   perform pg_advisory_xact_lock(hashtext('advance_week'));
   select week into v_open from public.weeks where status = 'open';
   if p_force and v_open is distinct from p_expected_open then raise exception 'week_changed'; end if;
+  if p_end_season and v_open is null then raise exception 'no_open_week'; end if;
   if v_open is null then
     if not p_force then return null; end if;
     select min(w.week) into v_next from public.weeks w
@@ -838,6 +881,15 @@ begin
   -- newest version is always the one in effect from its week on.
   if p_effective_week < (select max(effective_week) from public.rule_sets) then
     raise exception 'effective_week_before_scheduled';
+  end if;
+  -- The shared rules check already requires real numbers; this is the backstop for the
+  -- ones the weekly minimum and undo read in SQL.
+  if jsonb_typeof(p_document #> '{weeklyMinimum,pct}') is distinct from 'number'
+     or jsonb_typeof(p_document -> 'undoMinutes') is distinct from 'number'
+     or jsonb_typeof(p_document #> '{stake,minUnits}') is distinct from 'number'
+     or jsonb_typeof(p_document #> '{stake,maxUnits}') is distinct from 'number'
+     or jsonb_typeof(p_document #> '{stake,incrementUnits}') is distinct from 'number' then
+    raise exception 'bad_rules';
   end if;
   select coalesce(max(version), 0) + 1 into v_version from public.rule_sets;
   insert into public.rule_sets (version, effective_week, document, note, created_by)
@@ -1116,10 +1168,18 @@ begin
   if not exists (select 1 from public.entries where id = p_entry) then raise exception 'not_found'; end if;
   if not exists (select 1 from public.profiles where id = p_user) then raise exception 'not_found'; end if;
   -- An admin joining someone else's entry would see its bets from then on, so another
-  -- admin has to do it.
+  -- admin has to do it; and while the entry has bets riding, no admin can join it alone
+  -- or take away its last manager (the first step of removing a manager, adding
+  -- yourself, and putting them back).
   if p_add and p_user = v_actor
-     and exists (select 1 from public.entry_managers where entry_id = p_entry and user_id <> v_actor) then
+     and (exists (select 1 from public.entry_managers where entry_id = p_entry and user_id <> v_actor)
+          or exists (select 1 from public.slips where entry_id = p_entry and status = 'pending')) then
     raise exception 'self_add_blocked';
+  end if;
+  if not p_add
+     and not exists (select 1 from public.entry_managers where entry_id = p_entry and user_id <> p_user)
+     and exists (select 1 from public.slips where entry_id = p_entry and status = 'pending') then
+    raise exception 'last_manager';
   end if;
   if p_add then
     insert into public.entry_managers (entry_id, user_id) values (p_entry, p_user) on conflict do nothing;
@@ -1201,12 +1261,15 @@ as $$
 declare r public.slips%rowtype; v_n int := 0;
 begin
   perform set_config('app.reopening', 'on', true);
+  -- Lock every slip first, in id order, before touching any week's minimum.
+  perform 1 from public.slips s
+   where s.id in (select l.slip_id from public.slip_legs l where l.game_id = p_game)
+   order by s.id for update;
   for r in
     select s.* from public.slips s
     where s.id in (select l.slip_id from public.slip_legs l where l.game_id = p_game)
       and (s.status in ('won', 'lost', 'push') or (s.status = 'void' and s.void_reason is null))
     order by s.id
-    for update
   loop
     if coalesce(r.payout_cents, 0) > 0 then
       insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, note, created_by)
@@ -1263,6 +1326,8 @@ begin
          kickoff_at = coalesce(p_kickoff_at, kickoff_at),
          feed_final_home = null,
          feed_final_away = null,
+         feed_kickoff = null,
+         rescheduled_at = case when p_status = 'postponed' then rescheduled_at end,
          updated_at = v_now
    where id = p_game;
   perform app.audit(v_actor, 'game_status_set', 'game', p_game::text,
@@ -1328,6 +1393,8 @@ language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); v public.slips%rowtype; v_shown boolean;
 begin
+  -- The slip's games first, then the slip: the order settling and corrections use.
+  perform 1 from public.games g where g.id in (select l.game_id from public.slip_legs l where l.slip_id = p_slip) order by g.id for share;
   select * into v from public.slips where id = p_slip for update;
   if not found then raise exception 'not_found'; end if;
   if v.status in ('void', 'undone') then raise exception 'already_void'; end if;

@@ -82,7 +82,10 @@ export function errorText(e: unknown): string {
     bad_price: "Prices are American odds from 100 to 100000, plus or minus.",
     bad_point: "Lines are whole or half points.",
     week_already_open: "Only games in a week that hasn't opened yet can be moved.",
-    self_add_blocked: "That entry already has managers, so another admin has to add you to it.",
+    self_add_blocked: "That entry already has managers or bets riding, so another admin has to add you to it.",
+    last_manager: "That's the entry's only manager and it has bets riding. Add the new manager first, then remove this one.",
+    no_open_week: "No week is open, so there's nothing to close.",
+    bad_rules: "Some of the rules' numbers are missing or aren't numbers. Check the form and try again.",
     effective_week_before_scheduled: "A rules change is already scheduled for a later week. Start this one from that week or later.",
   };
   return map[m] ?? m;

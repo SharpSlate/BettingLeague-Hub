@@ -145,8 +145,13 @@ export function SlipProvider({ children }: { children: ReactNode }) {
       status,
       setStatus: (p) => setStatusState((x) => ({ ...x, ...p })),
       clientRef: (key, fingerprint) => {
-        const cur = refs.current[key];
-        if (cur && cur.fingerprint === fingerprint) return cur.ref;
+        // Another tab may have sent this same bet already: its id is in the saved slip.
+        const saved = load().refs?.[key];
+        const cur = refs.current[key]?.fingerprint === fingerprint ? refs.current[key] : saved?.fingerprint === fingerprint ? saved : undefined;
+        if (cur) {
+          refs.current = { ...refs.current, [key]: cur };
+          return cur.ref;
+        }
         const ref = newClientRef();
         refs.current = { ...refs.current, [key]: { fingerprint, ref } };
         set((x) => ({ ...x, refs: refs.current }));

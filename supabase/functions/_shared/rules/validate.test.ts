@@ -175,6 +175,20 @@ describe("validateRuleSet", () => {
     prices["6"]!["4"] = 170; // below the 3-leg +180
     expect(validateRuleSet(withTeaser({ prices })).map((p) => p.message)).toContain("At 6 points, 4 legs must pay more than 3 legs.");
   });
+  it("refuses numbers the editor couldn't read, or that arrive as null", () => {
+    // An unreadable number is NaN in the editor, and NaN becomes null on its way to the server.
+    const bad = null as unknown as number;
+    const cases: [RuleSet, string][] = [
+      [withStake({ maxPctOfBank: Number.NaN }), "stake_pct"],
+      [{ ...DAY_ONE_RULES, undoMinutes: Number.NaN }, "undo"],
+      [{ ...DAY_ONE_RULES, undoMinutes: bad }, "undo"],
+      [{ ...DAY_ONE_RULES, weeklyMinimum: { ...DAY_ONE_RULES.weeklyMinimum, pct: bad } }, "weekly_pct"],
+      [{ ...DAY_ONE_RULES, bank: { ...DAY_ONE_RULES.bank, bonusUnits: Number.NaN } }, "bank"],
+      [{ ...DAY_ONE_RULES, bank: { ...DAY_ONE_RULES.bank, startUnits: bad } }, "bank"],
+    ];
+    for (const [r, code] of cases) expect(validateRuleSet(r).map((p) => p.code)).toContain(code);
+    expect(validateRuleSet(withStake({ maxPctOfBank: null }))).toEqual([]);
+  });
 });
 
 describe("validateSlip: payout size", () => {

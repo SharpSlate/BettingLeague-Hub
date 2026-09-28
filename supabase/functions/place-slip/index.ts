@@ -54,13 +54,19 @@ Deno.serve(async (req) => {
   const store = new SupabaseStore(db);
   try {
     if (input.clientRef) {
-      const prior = (await db.from("slips").select("id, entry_id, placed_by, type, stake_cents, leg_count, status, quoted_american, potential_payout_cents")
+      const prior = (await db.from("slips").select("id, entry_id, placed_by, type, teaser_points, stake_cents, leg_count, status, quoted_american, potential_payout_cents")
         .eq("client_ref", input.clientRef).maybeSingle()).data;
       if (prior) {
         // A retry of the same bet gets the bet back. The same ref on a different bet, or on
-        // one that's since been undone or voided, isn't a retry.
+        // one that's since been undone or voided, isn't a retry. (place_slip_internal
+        // checks the same things.)
+        const priorLegs = (await db.from("slip_legs").select("game_id, market, side").eq("slip_id", prior.id)).data ?? [];
+        const have = new Set(priorLegs.map((l: any) => `${l.game_id}|${l.market}|${l.side}`));
+        const want = new Set(input.legs.map((l) => `${l.gameId}|${l.market}|${l.side}`));
         const same = prior.entry_id === input.entryId && prior.placed_by === user.id && prior.type === input.type
-          && Number(prior.stake_cents) === input.stakeCents && prior.leg_count === input.legs.length;
+          && (prior.teaser_points === null ? null : Number(prior.teaser_points)) === (input.type === "teaser" ? input.teaserPoints : null)
+          && Number(prior.stake_cents) === input.stakeCents && prior.leg_count === input.legs.length
+          && want.size === have.size && [...want].every((k) => have.has(k));
         if (!same) return json(req, origins, 409, { error: "client_ref_conflict", message: friendlyMessage("client_ref_conflict") });
         if (prior.status === "undone" || prior.status === "void") {
           return json(req, origins, 409, { error: "client_ref_used", message: friendlyMessage("client_ref_used") });
@@ -98,8 +104,8 @@ Deno.serve(async (req) => {
     if (isStale(before, new Date(), settings.refreshOnBetSeconds)) {
       const pulled = await pullLines(store, env("ODDS_API_KEY"), fetch, "bet", new Date(), user.id);
       // Too stale to bet on and another bet's refresh is on its way: wait a moment for it
-      // rather than refusing this bet as stale.
-      if (pulled.status === "skipped" && isStale(before, new Date(), settings.maxLineAgeMinutes * 60)) {
+      // rather than refusing this bet as stale. (No wait when a limit stopped the refresh.)
+      if (pulled.status === "skipped" && pulled.reason === "recent" && isStale(before, new Date(), settings.maxLineAgeMinutes * 60)) {
         for (let i = 0; i < 10; i++) {
           await new Promise((r) => setTimeout(r, 500));
           const latest = await store.lastGoodLinesPull();

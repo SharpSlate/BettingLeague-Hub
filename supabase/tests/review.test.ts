@@ -167,6 +167,8 @@ describe("the feed can't reopen betting", () => {
   it("a game with bets on it keeps its week when the feed moves it", async () => {
     await straight(bobEntry, bob, "MOVE");
     board.find((e) => e.id === "MOVE")!.commenceTime = hoursFromNow(24 * 5).toISOString();
+    // A new time takes two pulls in a row to stick.
+    await pull();
     await pull();
     const [g] = await db.su("select week, kickoff_at > now() + interval '4 days' as moved from public.games where id = $1", [ids.MOVE]);
     expect(g).toEqual({ week: 4, moved: true });
@@ -257,11 +259,11 @@ describe("placing bets", () => {
   });
 
   it("only one bet at a time gets to pull fresh lines", async () => {
-    const claim = async () => (await db.q(service, "select public.claim_bet_refresh_internal(120) as ok"))[0].ok;
-    expect(await claim()).toBe(true);
-    expect(await claim()).toBe(false);
+    const claim = async () => (await db.q(service, "select public.claim_bet_refresh_internal(120) as r"))[0].r;
+    expect(await claim()).toBe("claimed");
+    expect(await claim()).toBe("recent");
     await db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
-    expect(await claim()).toBe(true);
+    expect(await claim()).toBe("claimed");
     await fails(db.q(member(bob), "select public.claim_bet_refresh_internal(120)"), "permission denied");
   });
 

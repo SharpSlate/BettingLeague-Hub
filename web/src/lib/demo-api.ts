@@ -395,6 +395,9 @@ export class DemoApi implements Api {
   }
   async adminSetManager(entryId: string, userId: string, add: boolean) {
     const e = this.entry(entryId);
+    const riding = this.s.slips.some((s) => s.entryId === e.id && s.status === "pending");
+    if (add && userId === YOU && (e.managers.some((m) => m !== YOU) || riding)) throw new Error("self_add_blocked");
+    if (!add && !e.managers.some((m) => m !== userId) && riding) throw new Error("last_manager");
     e.managers = add ? [...new Set([...e.managers, userId])] : e.managers.filter((m) => m !== userId);
     this.audit(add ? "manager_added" : "manager_removed", "entry", entryId, { userId, member: this.s.users.find((u) => u.id === userId)?.displayName, entry: e.name }, "");
   }

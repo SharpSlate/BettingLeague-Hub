@@ -138,20 +138,20 @@ describe("regrading on demand", () => {
 });
 
 describe("bet-triggered line refreshes", () => {
-  const claim = async (user: string | null) => (await db.q(service, "select public.claim_bet_refresh_internal(120, $1) as ok", [user]))[0].ok as boolean;
+  const claim = async (user: string | null) => (await db.q(service, "select public.claim_bet_refresh_internal(120, $1) as r", [user]))[0].r as string;
   const later = () => db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
   it("allow one per member every 10 minutes", async () => {
-    expect(await claim(alice)).toBe(true);
+    expect(await claim(alice)).toBe("claimed");
     await later();
-    expect(await claim(alice)).toBe(false);
-    expect(await claim(bob)).toBe(true);
+    expect(await claim(alice)).toBe("limit");
+    expect(await claim(bob)).toBe("claimed");
   });
   it("and a set number a day in all", async () => {
     await db.su("update public.league_settings set bet_refresh_daily_cap = 3");
     await later();
-    expect(await claim(null)).toBe(true);
+    expect(await claim(null)).toBe("claimed");
     await later();
-    expect(await claim(null)).toBe(false);
+    expect(await claim(null)).toBe("limit");
     await db.su("update public.league_settings set bet_refresh_daily_cap = 200");
   });
 });
@@ -176,8 +176,11 @@ describe("resending a bet", () => {
 describe("managers", () => {
   it("whoever placed a bet always sees it, even after being removed and re-added as a manager", async () => {
     const id = await straight("MINE");
+    // With a bet riding, a new manager goes on before the old one comes off.
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, bob]);
     await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [aliceEntry, alice]);
     await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, alice]);
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [aliceEntry, bob]);
     expect((await db.q(member(alice), "select id from public.slips where id = $1", [id])).length).toBe(1);
     expect((await db.q(member(alice), "select leg_no from public.slip_legs where slip_id = $1", [id])).length).toBe(1);
   });

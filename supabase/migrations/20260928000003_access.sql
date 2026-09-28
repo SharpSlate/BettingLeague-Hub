@@ -44,6 +44,10 @@ revoke select on public.line_pulls from authenticated;
 grant select (id, at, kind, trigger, ok, events, credits_used, credits_remaining) on public.line_pulls to authenticated;
 -- Who triggered which refresh is for the limits only.
 revoke select on public.bet_refreshes from authenticated;
+-- A week's totals can include bets still hidden when an admin closes a week early; the
+-- site reads what it needs through my_entries and standings.
+revoke select on public.week_entry_status from authenticated;
+grant select (week, entry_id, bank_at_start_cents, required_cents) on public.week_entry_status to authenticated;
 
 -- League-wide information every member can read.
 create policy members_read on public.league_settings for select to authenticated using (true);

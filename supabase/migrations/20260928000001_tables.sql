@@ -26,6 +26,7 @@ create table public.league_settings (
   -- A member's bets can trigger at most one refresh this often, and bets as a whole
   -- at most this many a day; past either, bets use the scheduled pulls' lines.
   bet_refresh_member_minutes int not null default 10,
+  bet_refresh_member_daily_cap int not null default 20,
   bet_refresh_daily_cap int not null default 200
 );
 
@@ -104,6 +105,14 @@ create table public.games (
   -- already started). Keeps score pulls going around the new time without moving
   -- kickoff_at, which decides when picks show.
   rescheduled_at timestamptz,
+  -- A different start time the feed has reported once for a game that hasn't started.
+  -- The kickoff moves only when the next pull reports the same time, so one bad reading
+  -- can't show a game's picks early or keep betting open past the real start.
+  feed_kickoff timestamptz,
+  -- The start time in the feed's latest reading, whatever the league's kickoff says. A
+  -- score reading counts as believable when either time is near, so an admin moving a
+  -- kickoff later can't keep betting open on a game the feed shows under way.
+  feed_commence timestamptz,
   final_at timestamptz,
   updated_at timestamptz not null default now(),
   check (home_team <> away_team),

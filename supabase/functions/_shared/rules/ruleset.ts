@@ -29,6 +29,9 @@ export function validateRuleSet(r: RuleSet): Problem[] {
   if (badMarket(straight.markets) || badMarket(parlay.markets) || badMarket(teaser.markets)) {
     add("markets", "Markets must be spread, total or moneyline.");
   }
+  // Every number must be a real number: an editor can turn a typo into NaN, and NaN
+  // becomes null on its way to the server, where null passes comparisons like >= 0.
+  const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
   const legsOk = (min: number, max: number) => Number.isInteger(min) && Number.isInteger(max) && min >= 2 && max >= min && max <= 20;
   if (!legsOk(parlay.minLegs, parlay.maxLegs)) {
     add("parlay_legs", "Parlay legs must be whole numbers from at least 2 up to at most 20.");
@@ -66,14 +69,16 @@ export function validateRuleSet(r: RuleSet): Problem[] {
   if (!wholeCents(s.incrementUnits) || !wholeCents(s.minUnits) || !wholeCents(s.maxUnits) || s.maxUnits < s.minUnits) {
     add("stake", "Stake limits must be positive amounts in whole cents (at most 2 decimal places), with the maximum at or above the minimum.");
   }
-  if (s.maxPctOfBank !== null && !(s.maxPctOfBank > 0 && s.maxPctOfBank <= 100)) {
-    add("stake_pct", "The stake cap must be between 0 and 100 percent of the bank.");
+  if (s.maxPctOfBank !== null && !(num(s.maxPctOfBank) && s.maxPctOfBank > 0 && s.maxPctOfBank <= 100)) {
+    add("stake_pct", "The stake cap must be between 0 and 100 percent of the bank, or blank for none.");
   }
-  if (!(r.undoMinutes >= 0 && r.undoMinutes <= 60)) add("undo", "The undo window must be 0 to 60 minutes.");
-  if (!(r.weeklyMinimum.pct >= 0 && r.weeklyMinimum.pct <= 100)) add("weekly_pct", "The weekly minimum must be 0 to 100 percent.");
+  if (!(num(r.undoMinutes) && r.undoMinutes >= 0 && r.undoMinutes <= 60)) add("undo", "The undo window must be 0 to 60 minutes.");
+  if (!(num(r.weeklyMinimum.pct) && r.weeklyMinimum.pct >= 0 && r.weeklyMinimum.pct <= 100)) add("weekly_pct", "The weekly minimum must be 0 to 100 percent.");
   if (!["deduct_shortfall", "warn", "none"].includes(r.weeklyMinimum.penalty)) add("weekly_penalty", "Unknown weekly-minimum penalty.");
   if (!["kickoff_per_leg", "on_placement", "week_first_kickoff"].includes(r.visibility)) add("visibility", "Unknown visibility rule.");
   if (!["game_kickoff", "week_first_kickoff"].includes(r.lock)) add("lock", "Unknown lock rule.");
-  if (!(r.bank.startUnits >= 0 && r.bank.bonusUnits >= 0)) add("bank", "Starting bank and bonus can't be negative.");
+  if (!(num(r.bank.startUnits) && num(r.bank.bonusUnits) && r.bank.startUnits >= 0 && r.bank.bonusUnits >= 0)) {
+    add("bank", "Starting bank and bonus must be numbers, 0 or more.");
+  }
   return problems;
 }

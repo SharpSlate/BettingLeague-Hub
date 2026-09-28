@@ -7,7 +7,9 @@ import { useApi } from "../lib/api.ts";
 import { parseNumber } from "../lib/format.ts";
 import type { RuleVersion } from "../lib/types.ts";
 
-const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+// structuredClone keeps an unreadable number as NaN, so the rules check keeps flagging it
+// (a JSON copy would turn it into null, which slips past comparisons).
+const clone = <T,>(x: T): T => structuredClone(x);
 
 function flatten(o: unknown, prefix = "", out: Record<string, string> = {}): Record<string, string> {
   if (o && typeof o === "object" && !Array.isArray(o)) {
