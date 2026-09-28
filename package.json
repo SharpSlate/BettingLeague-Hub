@@ -14,6 +14,7 @@
     "db:stop": "scripts/local-postgres.sh stop"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "@types/node": "^26.6.3",
     "@types/pg": "^8.23.1",
     "pg": "^8.23.0",

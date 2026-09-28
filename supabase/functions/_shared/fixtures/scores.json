@@ -1,0 +1,38 @@
+[
+  {
+    "id": "evt_kc_buf",
+    "sport_key": "americanfootball_nfl",
+    "commence_time": "2026-10-04T17:00:00Z",
+    "completed": true,
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Buffalo Bills",
+    "scores": [
+      { "name": "Kansas City Chiefs", "score": "27" },
+      { "name": "Buffalo Bills", "score": "24" }
+    ],
+    "last_update": "2026-10-04T20:14:03Z"
+  },
+  {
+    "id": "evt_bal_pit",
+    "sport_key": "americanfootball_nfl",
+    "commence_time": "2026-10-04T20:25:00Z",
+    "completed": false,
+    "home_team": "Baltimore Ravens",
+    "away_team": "Pittsburgh Steelers",
+    "scores": [
+      { "name": "Baltimore Ravens", "score": "10" },
+      { "name": "Pittsburgh Steelers", "score": "7" }
+    ],
+    "last_update": "2026-10-04T21:40:00Z"
+  },
+  {
+    "id": "evt_later",
+    "sport_key": "americanfootball_nfl",
+    "commence_time": "2026-10-05T00:20:00Z",
+    "completed": false,
+    "home_team": "Dallas Cowboys",
+    "away_team": "New York Giants",
+    "scores": null,
+    "last_update": null
+  }
+]

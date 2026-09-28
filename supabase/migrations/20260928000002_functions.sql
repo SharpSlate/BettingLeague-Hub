@@ -428,6 +428,20 @@ begin
   return v_slip;
 end $$;
 
+-- Balance and manager check for the place-slip Edge Function.
+create or replace function public.entry_balance_internal(p_entry uuid, p_user uuid)
+returns table (manages boolean, active boolean, available_cents bigint, bank_cents bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select app.manages(e.id, p_user), e.status = 'active', app.available_cents(e.id), app.bank_cents(e.id)
+  from public.entries e where e.id = p_entry
+$$;
+
+-- For the add-member Edge Function: an existing login's id by email.
+create or replace function public.user_id_by_email_internal(p_email text) returns uuid
+language sql stable security definer set search_path = public, pg_temp
+as $$ select id from auth.users where lower(email) = lower(trim(p_email)) $$;
+
 -- A member undoes their own bet within the undo window, before any of its games starts.
 create or replace function public.undo_slip(p_slip uuid) returns void
 language plpgsql security definer set search_path = public, pg_temp
