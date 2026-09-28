@@ -131,7 +131,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
   - import the Splash standings.
 
   Admin powers do **not** include seeing anyone's picks before kickoff. The database rules apply to admins the same way, and the admin tools are built so they can't be used to peek:
-  - making yourself an entry's manager doesn't show you the bets it already placed, and the log names who was added to which entry;
+  - making yourself an entry's manager doesn't show you the bets it already placed, and the log names who was added to which entry; an admin can't add themselves to an entry that has other managers or bets riding, and an entry's last manager can't be removed while it has bets riding;
   - a kickoff can't be set in the past, moved once it has passed, or moved earlier once its week is open (real schedule changes come from the feed; to stop betting on a game at once, an admin marks it postponed), and a game that has started can't reopen for betting;
   - the admin log never shows a hidden bet's stake, or an entry's available units (which would show how much is riding on hidden bets);
   - only games in a week that hasn't opened can be moved to another week, so a refusal never tells an admin where bets are.
@@ -160,10 +160,10 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 - **Weekly minimum:**
   - when a week opens, each entry's bank is recorded and `required = ceil(0.30 × bank)`;
   - when the week closes, `shortfall = max(0, required − wagered)` comes off the bank as its own ledger row;
-  - pushed bets count as wagered; bets undone by the member or voided by an admin don't;
+  - pushed bets count as wagered; bets undone by the member, voided by an admin, or on a cancelled game don't (whether cancelled games should count is an open question in DECISIONS.md);
   - the deduction can never push a bank below zero;
   - the rest of the entry's bank carries into the next week;
-  - if a bet in a week that has already closed changes later (a regrade turns a voided bet into a graded one, or an admin voids a bet), that entry's minimum is worked out again and the difference goes on the ledger as its own row.
+  - if a bet in a week that has already closed changes later (a regrade turns a voided bet into a graded one, or an admin voids a bet), the deduction moves by that bet's stake, as its own ledger row: a bet that stops counting adds its stake to the shortfall (taken only from units free now), and one that starts counting gives back up to what was deducted. The part of a shortfall waived at the close for lack of units stays waived.
 - **Corrections:** an admin can correct a final score, or void a final game. Either reopens the bets already graded on that game: each payout is taken back with its own ledger row, and the grading job grades the bet again within 10 minutes. Bets an admin voided stay void. A grade the job worked out just before a correction is refused when it arrives (it carries the version of each game it used), so it can't slip in with the old score.
 - **Standings:** ranked by bank; ties broken by net, then total winnings. Net, Record, Risk and Return follow Splash's definitions, to be confirmed from the inventory. "This week" and "Last week" count bets by the week they belong to, so a Monday-night bet graded after midnight still counts in its own week.
 
@@ -171,7 +171,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 
 | Job | When | What |
 |---|---|---|
-| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers. A slip is checked before it can trigger a refresh, and bet refreshes are limited (one at a time, one per member per 10 minutes, 200 a day), so bets can't run the credits down |
+| Pull lines | Every 30 minutes, 8:00am–1:00am ET, plus when a bet needs it | One Odds API call for all games (3 credits); stores only changed numbers. A slip is checked before it can trigger a refresh, and bet refreshes are limited (one at a time, one per member per 10 minutes and 20 a day, 200 a day in all), so bets can't run the credits down |
 | Pull scores | Every 10 minutes, but it calls the API only while a game is live or waiting on a final | Updates scores and statuses (2 credits). A game goes final when two pulls in a row report the same final score, so one bad reading isn't paid out. A game the feed has scores for closes to betting at once |
 | Grade | After each score pull | Settles every slip whose legs are all final, and writes the payout to the ledger. A bet that can't be settled is reported and retried; it doesn't hold up the others or the week |
 | Close / open week | When every game of the open week is final and graded, or when an admin opens the next week | Applies weekly-minimum deductions, records banks and minimums for the new week, opens its games |
@@ -179,7 +179,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 
 Weeks run Tuesday to Monday, Eastern. A game belongs to the week its kickoff falls in unless an admin moves it; week 1 of 2026 started Tuesday, Sept 8. Playoff rounds are labeled by name, and the empty Pro Bowl week is skipped.
 
-The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. One reading can't pull a game that's more than an hour away into the past, and scores for a game more than an hour from kickoff are ignored, since either would show its picks early. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in, from the feed (which keeps checking for 3 days from the feed's new start time) or entered by an admin. An admin can close a week early only into a next week whose games are on the board; the season's last week is closed with its own "Close the season" step. The Admin page lists failed pulls, bets the grader couldn't settle, and games stuck live or postponed with no final.
+The feed can move a game's kickoff only while the game hasn't started; a game with bets keeps its week. A new start time takes two pulls in a row to stick (a game due within the hour follows one reading of an earlier time), and a start already in the past is never taken for a game more than an hour away, since it would show the game's picks early. Scores are ignored for a game that both the league and the feed have more than an hour from its start; scores for a game the feed has starting now count, and close betting on it, even if an admin moved its kickoff later. A game postponed after its kickoff keeps that kickoff: its bets ride, no new bets are taken, and it's graded when its final comes in, from the feed (which keeps checking for 3 days from the feed's new start time) or entered by an admin. An admin can close a week early only into a next week whose games are on the board; the season's last week is closed with its own "Close the season" step. The Admin page lists failed pulls, bets the grader couldn't settle, and games stuck live or postponed with no final.
 
 ## 8. Pages (draft; to be checked against the Splash inventory)
 
