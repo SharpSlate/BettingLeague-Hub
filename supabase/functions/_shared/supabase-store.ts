@@ -54,17 +54,15 @@ export class SupabaseStore implements Store {
     return row ? new Date(row.at) : null;
   }
 
-  async lastLinesAttempt() {
-    const row = await must<{ at: string } | null>(
-      this.db.from("line_pulls").select("at").eq("kind", "lines").order("at", { ascending: false }).limit(1).maybeSingle(),
-      "last attempt",
-    );
-    return row ? new Date(row.at) : null;
+  dbNow() {
+    return must<string>(this.db.rpc("db_now_internal"), "database clock");
   }
 
-  ingestLines(trigger: Trigger, events: NormalizedEvent[], cost: number | null, remaining: number | null) {
+  ingestLines(trigger: Trigger, events: NormalizedEvent[], cost: number | null, remaining: number | null, fetchedAfter: string) {
     return must<number>(
-      this.db.rpc("ingest_lines_internal", { p_trigger: trigger, p_events: events, p_credits_used: cost, p_credits_remaining: remaining }),
+      this.db.rpc("ingest_lines_internal", {
+        p_trigger: trigger, p_events: events, p_credits_used: cost, p_credits_remaining: remaining, p_fetched_after: fetchedAfter,
+      }),
       "ingest lines",
     );
   }

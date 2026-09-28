@@ -67,7 +67,9 @@ const FRIENDLY: Record<string, string> = {
   week_closed: "That bet's week has closed, so it can't be undone.",
   undo_window_passed: "The undo window has passed.",
   undo_line_moved: "A line on that bet has moved since you placed it, so it can't be undone.",
-  undo_lines_stale: "The lines couldn't be updated just now, and undo has to check them. Try again in a minute.",
+  undo_lines_stale: "The lines couldn't be pulled just now, and undo has to check them. Try again in a minute.",
+  undo_refresh_limit: "Undo has to pull fresh lines to check them, and the daily limit on line refreshes has been reached. If the bet was a mistake, ask the commissioner.",
+  undo_credit_floor: "Undo has to pull fresh lines to check them, and line pulls are paused because the league's odds-feed credits are nearly used up. If the bet was a mistake, ask the commissioner.",
   client_ref_conflict: "That bet couldn't be matched to your slip. Reload and try again.",
   client_ref_used: "That bet was undone or voided. Place it again as a new bet.",
 };

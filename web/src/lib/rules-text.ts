@@ -83,6 +83,7 @@ export function teaserBreakEvenText(r: RuleSet): string | null {
 
 function sameGameItems(r: RuleSet): RuleItem[] {
   const { parlay, teaser } = r.betTypes;
+  if (!parlay.enabled && !teaser.enabled) return [];
   // Moneylines can't be teased, so only two pairings mean anything for a teaser.
   const pairs = (s: SameGameRules, isTeaser: boolean) => [
     { on: s.spreadTotal, text: "a spread and a total" },
@@ -134,7 +135,9 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     { label: "Stakes", value: `${units(s.minUnits * 100)} to ${units(s.maxUnits * 100)} units`, detail: "never more than you have available" },
     {
       label: "Combining",
-      value: sameGameItems(r).some((x) => typeof x !== "string" && x.lead === "One game, one leg.") ? "One leg per game" : "Some same-game pairs",
+      value: !parlay.enabled && !teaser.enabled
+        ? "Straight bets only"
+        : sameGameItems(r).some((x) => typeof x !== "string" && x.lead === "One game, one leg.") ? "One leg per game" : "Some same-game pairs",
       detail: r.acrossBets.oppositeSides ? "both sides of a game allowed" : "never both sides of a game",
     },
     { label: "Bets lock", value: r.lock === "game_kickoff" ? "At kickoff" : "At the week's first kickoff", detail: r.lock === "game_kickoff" ? "each leg at its own game" : "for the whole week" },
@@ -182,7 +185,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     });
     lines.push({
       lead: "When they update.",
-      text: `Every ${league.pullEveryMinutes} minutes from ${clockText(league.pullWindowStart)} to ${clockText(league.pullWindowEnd)} Eastern, every ${league.pullNearKickoffMinutes} minutes in the ${league.nearKickoffHours} hours before a kickoff, and right before any bet or undo if they're more than 2 minutes old.`,
+      text: `Every ${league.pullEveryMinutes} minutes from ${clockText(league.pullWindowStart)} to ${clockText(league.pullWindowEnd)} Eastern, every ${league.pullNearKickoffMinutes} minutes in the ${league.nearKickoffHours} hours before a kickoff, and right before a bet if they're more than 2 minutes old (there's a daily limit on these extra pulls).${r.undoMinutes > 0 && !r.undoAfterLineMove ? " Every undo gets fresh lines of its own." : ""}`,
     });
   }
   lines.push({
@@ -216,7 +219,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     {
       lead: "Undo.",
       text: r.undoMinutes > 0
-        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. The site updates the lines first; if it can't just then, try again in a minute"}. After that, bets are final.`
+        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, or the daily limit on extra pulls is used up), the bet stays"}. After that, bets are final.`
         : "Bets are final once placed.",
     },
     {

@@ -21,7 +21,8 @@ describe("the Rules page says what the rules enforce", () => {
     expect(t).toContain("When DraftKings doesn't offer a line, FanDuel's is used.");
     expect(t).toContain("With a 10,000-unit bank when the week opens, you need 3,000 units in bets. If you've bet 2,000 when it closes, 1,000 comes off your bank.");
     expect(t).toContain("A 6-point teaser moves Ravens −7.5 to −1.5, and an over 47.5 to over 41.5. If every leg wins, a 2-leg card pays −110.");
-    expect(t).toContain("The site updates the lines first; if it can't just then, try again in a minute.");
+    expect(t).toContain("To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, or the daily limit on extra pulls is used up), the bet stays.");
+    expect(t).toContain("right before a bet if they're more than 2 minutes old (there's a daily limit on these extra pulls). Every undo gets fresh lines of its own.");
     expect(teaserBreakEvenText(DAY_ONE_RULES)).toBe("To break even at 6 points, each leg has to win about 72% of the time on a 2-leg card, 71% on 3 legs and 73% on 10.");
     expect(undoText(DAY_ONE_RULES)).toBe("You can undo within 5 minutes if the line hasn't moved.");
   });
@@ -40,6 +41,7 @@ describe("the Rules page says what the rules enforce", () => {
     expect(t).toContain("Teasers can't include two legs from the same game.");
     expect(t).toContain("You may bet both sides of a game in separate bets.");
     expect(t).not.toContain("none of its lines has moved");
+    expect(t).not.toContain("Every undo gets fresh lines");
     expect(t).toContain("Spreads and totals, in straight bets and parlays, pay a flat −110");
     expect(undoText(r)).toBe("You can undo within 5 minutes.");
   });
@@ -83,5 +85,15 @@ describe("the Rules page says what the rules enforce", () => {
     const none = rulesPage({ ...DAY_ONE_RULES, weeklyMinimum: { pct: 0, penalty: "none" } }, league);
     expect(none.sections.find((x) => x.id === "minimum")).toMatchObject({ intro: undefined, items: [{ lead: "None.", text: "There's no weekly minimum." }] });
     expect(none.glance.find((g) => g.label === "Weekly minimum")).toEqual({ label: "Weekly minimum", value: "None", detail: undefined });
+  });
+
+  it("says nothing about combining legs when there are only straight bets", () => {
+    const off = { ...DAY_ONE_RULES.betTypes };
+    const r: RuleSet = { ...DAY_ONE_RULES, betTypes: { ...off, parlay: { ...off.parlay, enabled: false }, teaser: { ...off.teaser, enabled: false } } };
+    const page = rulesPage(r, league);
+    const combining = page.sections.find((x) => x.id === "combining")!.items.map((i) => (typeof i === "string" ? i : i.lead));
+    expect(combining).toEqual(["No betting both sides.", "No doubles."]);
+    expect(text(r)).not.toMatch(/\bA +can't|same game\./);
+    expect(page.glance.find((g) => g.label === "Combining")!.value).toBe("Straight bets only");
   });
 });

@@ -56,12 +56,13 @@ export function MyBets() {
 
   const undo = async (id: string) => {
     try {
-      await api.undoSlip(id);
-      slips.reload();
-      entries.reload();
+      const [r] = await api.undoSlips([id]);
+      setError(r && !r.undone ? errorText(r.message) : null);
     } catch (e) {
       setError(errorText(e));
     }
+    slips.reload();
+    entries.reload();
   };
 
   const mine = entries.data ?? [];

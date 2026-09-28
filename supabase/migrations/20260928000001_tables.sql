@@ -196,7 +196,11 @@ create table public.line_pulls (
   events int,
   credits_used int,
   credits_remaining int,
-  error text
+  error text,
+  -- For a good lines pull: the database's time just before its request went out, so its
+  -- lines are at least this fresh. An undo is checked only against lines fetched after
+  -- it was asked for (see undo_slip_internal).
+  fetched_after timestamptz
 );
 create index on public.line_pulls (kind, ok, at desc);
 

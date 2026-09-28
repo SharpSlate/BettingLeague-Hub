@@ -4,7 +4,7 @@ import { createClient, FunctionsHttpError, type SupabaseClient } from "@supabase
 import type { RuleSet } from "@rules";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest, PlaceResult,
-  RuleVersion, SlipView, SplashImport, StandingRow, Team, WeekInfo,
+  RuleVersion, SlipView, SplashImport, StandingRow, Team, UndoResult, WeekInfo,
 } from "./types.ts";
 
 const n = (x: unknown) => (x === null || x === undefined ? null : Number(x));
@@ -225,10 +225,12 @@ export class SupabaseApi implements Api {
     return { ok: false, kind: "error", message: body.message ?? "Couldn't place the bet. Try again.", code: body.error };
   }
 
-  async undoSlip(slipId: string) {
-    // Through the bet service, which refreshes the lines first: undo is refused once a
-    // line on the bet has moved.
-    await this.invoke("place-slip", { action: "undo", slipId });
+  async undoSlips(slipIds: string[]): Promise<UndoResult[]> {
+    // Through the bet service, which pulls fresh lines first (one pull for them all):
+    // undo is refused once a line on a bet has moved.
+    const data = await this.invoke("place-slip", { action: "undo", slipIds });
+    return (data.results as any[]).map((r): UndoResult =>
+      r.undone ? { slipId: r.slipId, undone: true } : { slipId: r.slipId, undone: false, code: r.error, message: r.message });
   }
   async setDisplayName(name: string) {
     check(await this.db.rpc("set_display_name", { p_name: name }));

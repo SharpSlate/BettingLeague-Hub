@@ -10,9 +10,10 @@
 //    the new numbers for the member to accept.
 // 5. Hands it to place_slip_internal, which re-checks the invariants and records it.
 //
-// It also undoes bets ({action: "undo", slipId}). Undo is refused once one of the bet's
-// lines has moved, so the lines are refreshed first, the same way; members can't undo
-// through the database directly, so they can't undo against lines the site hasn't seen.
+// It also undoes bets ({action: "undo", slipIds}). Undo is refused once one of a bet's
+// lines has moved, checked against lines pulled after the undo was asked for: one pull
+// covers every bet in the request. Members can't undo through the database directly, so
+// they can't undo against lines the site hasn't pulled for them.
 import { currentUser, env, serviceClient, siteOrigins } from "../_shared/env.ts";
 import { dbErrorCode, friendlyMessage, json, preflight } from "../_shared/http.ts";
 import { pullLines, refreshForUndo } from "../_shared/jobs.ts";
@@ -20,6 +21,7 @@ import { checkPlacement, type CurrentLine, type GameInfo, type PlacementInput } 
 import type { BetType, Leg, RuleSet } from "../_shared/rules/types.ts";
 import { isStale } from "../_shared/schedule.ts";
 import { SupabaseStore } from "../_shared/supabase-store.ts";
+import { undoSlips } from "../_shared/undo.ts";
 
 const TYPES: BetType[] = ["straight", "parlay", "teaser"];
 const MARKETS = ["spread", "total", "moneyline"];
@@ -44,27 +46,19 @@ function parse(body: unknown): (PlacementInput & { clientRef: string | null }) |
   return { entryId: b.entryId, type: b.type as BetType, teaserPoints, stakeCents: b.stakeCents as number, legs, clientRef };
 }
 
-/** Undoes a bet after bringing the lines up to date, since undo checks they haven't moved. */
-async function undo(req: Request, origins: string, userId: string, slipId: unknown): Promise<Response> {
-  if (typeof slipId !== "string" || !UUID.test(slipId)) return json(req, origins, 400, { error: "bad_request", message: "That bet couldn't be read." });
+/** Undoes bets after pulling fresh lines, since undo checks their lines haven't moved. */
+async function undo(req: Request, origins: string, userId: string, raw: unknown): Promise<Response> {
+  const ids = Array.isArray(raw) ? [...new Set(raw.map((x) => (typeof x === "string" ? x.toLowerCase() : "")))] : [];
+  // A slip places a straight bet per pick, and a week's board has at most 16 games of 6
+  // picks each, so 100 covers any toast's Undo.
+  if (!ids.length || ids.length > 100 || !ids.every((id) => UUID.test(id))) {
+    return json(req, origins, 400, { error: "bad_request", message: "Those bets couldn't be read." });
+  }
   const db = serviceClient();
-  const refuse = (message: string) => {
-    const code = dbErrorCode(message);
-    return json(req, origins, 409, { error: code, message: friendlyMessage(code) });
-  };
   try {
-    const args = { p_slip: slipId.toLowerCase(), p_user: userId };
-    // Every check but the lines first, so a bet that can't be undone anyway costs no pull.
-    // It answers whether the bet's lines are checked at all (the rules can allow undo
-    // after a move).
-    const pre = await db.rpc("undo_slip_internal", { ...args, p_check_only: true });
-    if (pre.error) return refuse(pre.error.message);
-    if (pre.data !== false && !(await refreshForUndo(new SupabaseStore(db), env("ODDS_API_KEY"), fetch, userId))) {
-      return json(req, origins, 409, { error: "undo_lines_stale", message: friendlyMessage("undo_lines_stale") });
-    }
-    const { error } = await db.rpc("undo_slip_internal", args);
-    if (error) return refuse(error.message);
-    return json(req, origins, 200, { undone: true });
+    const results = await undoSlips((fn, args) => db.rpc(fn, args), userId, ids,
+      () => refreshForUndo(new SupabaseStore(db), env("ODDS_API_KEY"), fetch, userId));
+    return json(req, origins, 200, { results });
   } catch (e) {
     console.error("undo failed", e);
     return json(req, origins, 500, { error: "error", message: friendlyMessage("error") });
@@ -81,7 +75,7 @@ Deno.serve(async (req) => {
   if (!user) return json(req, origins, 401, { error: "sign_in_required", message: "Please sign in again." });
   const body = await req.json().catch(() => null);
   if (body && typeof body === "object" && (body as Record<string, unknown>).action === "undo") {
-    return undo(req, origins, user.id, (body as Record<string, unknown>).slipId);
+    return undo(req, origins, user.id, (body as Record<string, unknown>).slipIds);
   }
   const input = parse(body);
   if (!input) return json(req, origins, 400, { error: "bad_request", message: "That slip couldn't be read." });
@@ -139,7 +133,9 @@ Deno.serve(async (req) => {
       return json(req, origins, 422, { error: "invalid", problems: check.problems });
     }
     // So does one on the other side of a game from one of the entry's bets.
-    const across = (await db.rpc("opposite_side_legs_internal", { p_entry: input.entryId, p_user: user.id, p_legs: input.legs })).data as number[] | null;
+    const acrossCheck = await db.rpc("opposite_side_legs_internal", { p_entry: input.entryId, p_user: user.id, p_legs: input.legs });
+    if (acrossCheck.error) throw new Error(`opposite sides: ${acrossCheck.error.message}`);
+    const across = acrossCheck.data as number[] | null;
     if (across?.length) {
       return json(req, origins, 422, { error: "invalid", problems: across.map((leg) => ({ code: "opposite_side", message: friendlyMessage("opposite_side"), leg })) });
     }

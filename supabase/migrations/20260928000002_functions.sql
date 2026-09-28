@@ -244,14 +244,16 @@ for each row execute function app.book_lines_history();
 -- [{id, commenceTime, homeTeam, awayTeam, books: [{book, outcomes: [{market, side, point, price}]}]}]
 --
 -- Pulls are stored one at a time, each stamped after the one before, so a slow pull
--- can't overwrite a newer one and take lines off the board.
+-- can't overwrite a newer one and take lines off the board. p_fetched_after is the
+-- database's time just before the pull's request went out (see db_now_internal): the
+-- lines are at least that fresh, which is what an undo checks (undo_slip_internal).
 --
 -- A game's kickoff follows the feed only while the game is scheduled and hasn't
 -- started by the database clock. Once it has started, or an admin has postponed it,
 -- the kickoff stays put: moving it later would reopen betting and hide picks that
 -- members have already seen. A game with bets on it never changes week.
 create or replace function public.ingest_lines_internal(
-  p_trigger text, p_events jsonb, p_credits_used int, p_credits_remaining int
+  p_trigger text, p_events jsonb, p_credits_used int, p_credits_remaining int, p_fetched_after timestamptz default null
 ) returns int
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -344,8 +346,8 @@ begin
     v_n := v_n + 1;
   end loop;
 
-  insert into public.line_pulls (at, kind, trigger, ok, events, credits_used, credits_remaining)
-  values (v_at, 'lines', p_trigger, true, v_n, p_credits_used, p_credits_remaining);
+  insert into public.line_pulls (at, kind, trigger, ok, events, credits_used, credits_remaining, fetched_after)
+  values (v_at, 'lines', p_trigger, true, v_n, p_credits_used, p_credits_remaining, p_fetched_after);
   return v_n;
 end $$;
 
@@ -355,10 +357,10 @@ end $$;
 -- bets in all get at most bet_refresh_daily_cap a day. So neither a burst of bets nor a
 -- script of slips refused afterwards can run the Odds API credits down. Returns
 -- 'claimed' to the bet that should pull; otherwise 'recent' (a refresh just ran or is
--- running) or 'limit' (a member's or the day's limit is used up). An undo (p_undo) isn't
--- held to the member's gap between refreshes: the bet it takes back usually claimed that
--- member's refresh a moment ago, and undo has to check the line hasn't moved since. The
--- daily limits still apply.
+-- running) or 'limit' (a member's or the day's limit is used up). An undo (p_undo)
+-- always gets its own pull, within the daily limits: it's checked against lines fetched
+-- after it was asked for (see undo_slip_internal), so it can't share a refresh that
+-- started earlier, and the bet it takes back usually used the member's a moment ago.
 create or replace function public.claim_bet_refresh_internal(p_min_seconds int, p_user uuid default null, p_undo boolean default false) returns text
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -367,7 +369,7 @@ begin
   perform pg_advisory_xact_lock(hashtext('bet_refresh'));
   v_now := clock_timestamp();
   select * into v_set from public.league_settings;
-  if v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return 'recent'; end if;
+  if not p_undo and v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return 'recent'; end if;
   if p_user is not null and (
        (not p_undo and exists (select 1 from public.bet_refreshes where user_id = p_user and at > v_now - make_interval(mins => v_set.bet_refresh_member_minutes)))
     or (select count(*) from public.bet_refreshes where user_id = p_user and at > v_now - interval '24 hours') >= v_set.bet_refresh_member_daily_cap
@@ -407,6 +409,13 @@ as $$
     and least(g.kickoff_at, g.feed_commence) > p_now
     and least(g.kickoff_at, g.feed_commence) <= p_now + make_interval(hours => p_hours)
 $$;
+
+-- The database's clock. A line pull reads it just before its request goes out and
+-- stores it with the lines (ingest_lines_internal's p_fetched_after), so undo can tell
+-- lines fetched after it was asked for by the same clock it was asked by.
+create or replace function public.db_now_internal() returns timestamptz
+language sql volatile set search_path = public, pg_temp
+as $$ select clock_timestamp() $$;
 
 -- Records a failed (or skipped) pull so the site can show it and the guard can see it.
 create or replace function public.record_pull_internal(
@@ -714,19 +723,29 @@ as $$ select id from auth.users where lower(email) = lower(trim(p_email)) $$;
 -- its games starts, while its week is still open (so an early close can't be dodged),
 -- and, unless the rules say otherwise, only while every one of its lines is unchanged:
 -- undo is for fixing mistakes, not for taking a bet back once news has moved its line.
--- A line that's come off the board counts as moved. The place-slip Edge Function
--- calls this first with p_check_only (every check but the lines, changing nothing), so
--- a bet that can't be undone anyway never costs a line pull; then it brings the lines up
--- to date and calls it for real. Members can't call it themselves, so they can't undo
--- against lines the site hasn't refreshed. Returns whether the bet's lines are checked,
--- so the caller knows whether to refresh them first.
-create or replace function public.undo_slip_internal(p_slip uuid, p_user uuid, p_check_only boolean default false) returns boolean
+-- A line that's come off the board counts as moved.
+--
+-- The lines are checked against a pull made after the undo was asked for, never older
+-- ones. The place-slip Edge Function calls this first with p_check_only (every check but
+-- the lines, changing nothing), which returns the database's time if the bet's lines are
+-- checked (null if the rules allow undo after a move), so a bet that can't be undone
+-- anyway costs no pull. It then pulls the lines and calls this for real with that time
+-- as p_lines_since. The undo is refused as undo_lines_stale unless the lines on the
+-- board now came from a pull whose request went out after that time (line_pulls.
+-- fetched_after), and that time is from the last two minutes. Members can't call this
+-- themselves, so they can't undo against lines the site hasn't pulled for them.
+create or replace function public.undo_slip_internal(
+  p_slip uuid, p_user uuid, p_check_only boolean default false, p_lines_since timestamptz default null
+) returns timestamptz
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
   v public.slips%rowtype;
   v_doc jsonb;
   v_now timestamptz;
+  v_checked boolean;
+  v_fetched_after timestamptz;
+  v_moved boolean;
 begin
   -- Lock the entry first, as placing and closing a week do, so an undo can't slip
   -- in while the week's minimum is being worked out.
@@ -739,27 +758,36 @@ begin
   select document into v_doc from public.rule_sets where version = v.rule_set_version;
   if v_now > v.placed_at + make_interval(secs => coalesce((v_doc ->> 'undoMinutes')::numeric, 0) * 60) then raise exception 'undo_window_passed'; end if;
   if app.slip_locks_at(v.id) <= v_now then raise exception 'game_started'; end if;
-  if p_check_only then return not coalesce((v_doc ->> 'undoAfterLineMove')::boolean, false); end if;
-  -- A leg's line has moved if its number has, or its price has where the price is what
-  -- the bet was paid at: not a teaser's legs (the table pays), nor a flat-priced spread
-  -- or total.
-  if not coalesce((v_doc ->> 'undoAfterLineMove')::boolean, false) and exists (
-    select 1
-    from public.slip_legs l
-    left join public.current_lines cl on cl.game_id = l.game_id and cl.market = l.market and cl.side = l.side
-    where l.slip_id = v.id
-      and (cl.game_id is null
-           or cl.point is distinct from l.point
-           or (cl.price <> l.price
-               and v.type <> 'teaser'
-               and not (v_doc -> 'pricing' ->> 'straight' = 'flat' and l.market <> 'moneyline')))
-  ) then
-    raise exception 'undo_line_moved';
+  v_checked := not coalesce((v_doc ->> 'undoAfterLineMove')::boolean, false);
+  if p_check_only then return case when v_checked then v_now end; end if;
+  if v_checked then
+    -- One statement, so the pull it looks at is the one the board's lines came from.
+    -- A leg's line has moved if its number has, or its price has where the price is
+    -- what the bet was paid at: not a teaser's legs (the table pays), nor a flat-priced
+    -- spread or total.
+    select (select lp.fetched_after from public.line_pulls lp where lp.kind = 'lines' and lp.ok order by lp.at desc limit 1),
+           exists (
+             select 1
+             from public.slip_legs l
+             left join public.current_lines cl on cl.game_id = l.game_id and cl.market = l.market and cl.side = l.side
+             where l.slip_id = v.id
+               and (cl.game_id is null
+                    or cl.point is distinct from l.point
+                    or (cl.price <> l.price
+                        and v.type <> 'teaser'
+                        and not (v_doc -> 'pricing' ->> 'straight' = 'flat' and l.market <> 'moneyline')))
+           )
+      into v_fetched_after, v_moved;
+    if p_lines_since is null or p_lines_since > v_now or p_lines_since < v_now - interval '2 minutes'
+       or coalesce(v_fetched_after < p_lines_since, true) then
+      raise exception 'undo_lines_stale';
+    end if;
+    if v_moved then raise exception 'undo_line_moved'; end if;
   end if;
   update public.slips set status = 'undone', undone_at = v_now where id = p_slip;
   insert into public.ledger (entry_id, amount_cents, kind, slip_id, week, created_by)
   values (v.entry_id, v.stake_cents, 'undo', v.id, v.week, p_user);
-  return not coalesce((v_doc ->> 'undoAfterLineMove')::boolean, false);
+  return v_now;
 end $$;
 
 -- Settles a slip with the grade the grading job computed from the slip's own rule set.
@@ -1611,9 +1639,10 @@ begin
       union all
       -- Two entries with a manager in common on opposite sides of one game (both teams, or
       -- the over and the under), for the commissioner to look at: someone who managed both
-      -- entries when each bet was placed. Only once both picks are public: before that the
-      -- flag would give hidden picks away, admins included. (A manager removed since isn't
-      -- counted; manager changes are all in the admin log.)
+      -- entries when each bet was placed, or who placed both bets. Only once both picks
+      -- are public: before that the flag would give hidden picks away, admins included.
+      -- (A manager removed since who didn't place both bets isn't counted; manager
+      -- changes are all in the admin log.)
       select max(p.kickoff_at), 'fair_play', 'check',
              format('%s and %s, which share a manager (%s), took opposite sides of %s at %s.',
                     least(p.a_name, p.b_name), greatest(p.a_name, p.b_name),
@@ -1625,9 +1654,15 @@ begin
         join public.slips sa on sa.id = la.slip_id
         join public.slip_legs lb on lb.game_id = la.game_id
         join public.slips sb on sb.id = lb.slip_id and sb.entry_id > sa.entry_id
-        join public.entry_managers ma on ma.entry_id = sa.entry_id and ma.added_at <= sa.placed_at
-        join public.entry_managers mb on mb.entry_id = sb.entry_id and mb.user_id = ma.user_id and mb.added_at <= sb.placed_at
-        join public.profiles pr on pr.id = ma.user_id
+        join lateral (
+          select ma.user_id
+          from public.entry_managers ma
+          join public.entry_managers mb on mb.entry_id = sb.entry_id and mb.user_id = ma.user_id and mb.added_at <= sb.placed_at
+          where ma.entry_id = sa.entry_id and ma.added_at <= sa.placed_at
+          union
+          select sa.placed_by where sa.placed_by = sb.placed_by
+        ) m on true
+        join public.profiles pr on pr.id = m.user_id
         join public.entries ea on ea.id = sa.entry_id
         join public.entries eb on eb.id = sb.entry_id
         join public.games g on g.id = la.game_id

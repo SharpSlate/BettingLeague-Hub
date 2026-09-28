@@ -3,7 +3,9 @@
 // the cost of the vig), and no undoing a bet once its line has moved (undo was a free
 // option on news).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { UndoRefresh } from "../functions/_shared/jobs.ts";
 import { DAY_ONE_RULES } from "../functions/_shared/rules/index.ts";
+import { undoSlips } from "../functions/_shared/undo.ts";
 import {
   centerOnWeek4,
   event,
@@ -44,6 +46,7 @@ const GAMES: [id: string, hours: number, home: string, away: string][] = [
   ["TEASE2", 5, "New Orleans Saints", "Tampa Bay Buccaneers"],
   ["LATE", 5, "Cleveland Browns", "Cincinnati Bengals"],
   ["IDS", 5, "Los Angeles Rams", "San Francisco 49ers"],
+  ["STALE", 5, "Philadelphia Eagles", "Washington Commanders"],
 ];
 
 type Pick = { id: string; market: "spread" | "total" | "moneyline"; side: string };
@@ -256,11 +259,18 @@ describe("undo", () => {
     await undo(db, id, bob);
   });
 
-  it("checks everything but the lines first, changing nothing, and says whether the lines count", async () => {
+  it("checks everything but the lines first, changing nothing, and gives the time the lines must be fetched after", async () => {
     const id = await spread("UNDO2");
-    const check = await db.q(service, "select public.undo_slip_internal($1, $2, true) as lines", [id, bob]);
-    expect(check[0].lines).toBe(true);
+    const check = await db.q(service, "select public.undo_slip_internal($1, $2, true) as since", [id, bob]);
+    expect(check[0].since).toBeInstanceOf(Date);
     expect((await db.su("select status from public.slips where id = $1", [id]))[0].status).toBe("pending");
+    // No time when the rules allow undo after a move: the lines aren't checked.
+    await setRule("{undoAfterLineMove}", true);
+    try {
+      expect((await db.q(service, "select public.undo_slip_internal($1, $2, true) as since", [id, bob]))[0].since).toBeNull();
+    } finally {
+      await setRule("{undoAfterLineMove}", false);
+    }
     await fails(db.q(service, "select public.undo_slip_internal($1, $2, true)", [id, alice]), "not_found");
     await setRule("{undoMinutes}", 0);
     try {
@@ -270,14 +280,19 @@ describe("undo", () => {
     }
   });
 
-  it("gets its own line refresh even right after the bet's, within the daily limits", async () => {
+  it("gets its own line pull every time, within the daily limits", async () => {
     const claim = (undo: boolean) => db.q(service, "select public.claim_bet_refresh_internal(120, $1, $2) as r", [bob, undo]).then((r) => r[0].r as string);
     await db.su("delete from public.bet_refreshes; update public.league_settings set bet_refresh_claimed_at = null");
     expect(await claim(false)).toBe("claimed");
+    // A bet right after shares that refresh. An undo can't: its lines have to come from
+    // a pull that went out after it was asked for.
+    expect(await claim(false)).toBe("recent");
+    expect(await claim(true)).toBe("claimed");
+    expect(await claim(true)).toBe("claimed");
+    // Nor is it held to the member's 5 minutes between refreshes, which a bet is.
     await db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
     expect(await claim(false)).toBe("limit");
-    expect(await claim(true)).toBe("claimed");
-    await db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes', bet_refresh_member_daily_cap = 2");
+    await db.su("update public.league_settings set bet_refresh_member_daily_cap = 3");
     expect(await claim(true)).toBe("limit");
     await db.su("update public.league_settings set bet_refresh_member_daily_cap = 20");
   });
@@ -292,6 +307,125 @@ describe("undo", () => {
     await setRule("{undoAfterLineMove}", true);
     try {
       await undo(db, id, bob);
+    } finally {
+      await setRule("{undoAfterLineMove}", false);
+    }
+  });
+});
+
+describe("an undo's lines", () => {
+  const ask = async (id: string) => (await db.q(service, "select public.undo_slip_internal($1, $2, true) as since", [id, bob]))[0].since as Date;
+  const undoAt = (id: string, since: Date | null) => db.q(service, "select public.undo_slip_internal($1, $2, false, $3)", [id, bob, since]);
+  /** A pull of the same board, as if its request went out at fetchedAfter. */
+  const pullAt = (fetchedAfter: Date | null) =>
+    db.q(service, "select public.ingest_lines_internal('bet', $1::jsonb, 3, 90000, $2)", [JSON.stringify(board), fetchedAfter]);
+  const plus = (d: Date, ms: number) => new Date(d.getTime() + ms);
+  const stale = () => bet(bobEntry, bob, { id: "STALE", market: "spread", side: "home" });
+
+  it("must come from a pull whose request went out after the undo was asked for", async () => {
+    const id = await stale();
+    const since = await ask(id);
+    await fails(undoAt(id, null), "undo_lines_stale");
+    // The board's lines are from a pull with no time on it (as older rows have), then
+    // from one that went out before the undo was asked for: both refused.
+    await pullAt(null);
+    await fails(undoAt(id, since), "undo_lines_stale");
+    await pullAt(plus(since, -1000));
+    await fails(undoAt(id, since), "undo_lines_stale");
+    await pullAt(plus(since, 5));
+    await undoAt(id, since);
+  });
+
+  it("an older pull landing after the undo's own puts the board back, so it waits for another", async () => {
+    const id = await stale();
+    const since = await ask(id);
+    await pullAt(plus(since, 5)); // the undo's own pull
+    await pullAt(plus(since, -2000)); // a bet's pull that went out earlier lands last
+    await fails(undoAt(id, since), "undo_lines_stale");
+    await pullAt(plus(since, 10));
+    await undoAt(id, since);
+  });
+
+  it("the time has to be from the last two minutes, and not ahead of the clock", async () => {
+    const id = await stale();
+    const old = plus(await ask(id), -3 * 60_000);
+    await pullAt(plus(old, 5));
+    await fails(undoAt(id, old), "undo_lines_stale");
+    const ahead = plus(new Date(), 60_000);
+    await pullAt(ahead);
+    await fails(undoAt(id, ahead), "undo_lines_stale");
+    const since = await ask(id);
+    await pullAt(plus(since, 5));
+    await undoAt(id, since);
+  });
+});
+
+describe("undoing through the bet service", () => {
+  // The place-slip function's undo, run against the database: calls made the way
+  // PostgREST makes them (named arguments, answers as text), and a pull that stores the
+  // board as it stands when the pull goes out.
+  const rpc = async (fn: string, args: Record<string, unknown>) => {
+    const keys = Object.keys(args);
+    try {
+      const sql = `select (public.${fn}(${keys.map((k, i) => `${k} => $${i + 1}`).join(", ")}))::text as r`;
+      return { data: (await db.q(service, sql, keys.map((k) => args[k])))[0].r as unknown, error: null };
+    } catch (e) {
+      return { data: null, error: { message: (e as Error).message } };
+    }
+  };
+  let pulls = 0;
+  const pull = (answer: UndoRefresh = "ok", outcomes?: Outcome[]) => async (): Promise<UndoRefresh> => {
+    pulls++;
+    if (answer !== "ok") return answer;
+    if (outcomes) board.find((e) => e.id === "STALE")!.books = [{ book: "draftkings", outcomes }];
+    await db.q(service, "select public.ingest_lines_internal('bet', $1::jsonb, 3, 90000, public.db_now_internal())", [JSON.stringify(board)]);
+    return "ok";
+  };
+  const stale = () => bet(bobEntry, bob, { id: "STALE", market: "spread", side: "home" });
+
+  it("sees news that moved the line since the bet, however fresh the bet's own lines were", async () => {
+    await reprice("STALE", standardLines()); // lines seconds old, as a bet's own refresh leaves them
+    const id = await stale();
+    pulls = 0;
+    expect(await undoSlips(rpc, bob, [id], pull("ok", standardLines(-4)))).toEqual([
+      { slipId: id, undone: false, error: "undo_line_moved", message: expect.stringContaining("has moved") },
+    ]);
+    expect(pulls).toBe(1);
+    await reprice("STALE", standardLines());
+  });
+
+  it("pulls once for all the bets in a request, and answers for each in order", async () => {
+    const mine = [await stale(), await stale()];
+    const alices = await bet(aliceEntry, alice, { id: "STALE", market: "total", side: "over" });
+    pulls = 0;
+    expect(await undoSlips(rpc, bob, [mine[0]!, alices, mine[1]!], pull())).toEqual([
+      { slipId: mine[0], undone: true },
+      { slipId: alices, undone: false, error: "not_found", message: expect.any(String) },
+      { slipId: mine[1], undone: true },
+    ]);
+    expect(pulls).toBe(1);
+  });
+
+  it("a bet that can't be undone anyway costs no pull", async () => {
+    const id = await stale();
+    await undoSlips(rpc, bob, [id], pull());
+    pulls = 0;
+    expect(await undoSlips(rpc, bob, [id], pull())).toEqual([{ slipId: id, undone: false, error: "not_pending", message: expect.any(String) }]);
+    expect(pulls).toBe(0);
+  });
+
+  it("when the lines can't be pulled, the bet stays, with why", async () => {
+    const id = await stale();
+    for (const [answer, code] of [["limit", "undo_refresh_limit"], ["credit_floor", "undo_credit_floor"], ["failed", "undo_lines_stale"]] as const) {
+      expect((await undoSlips(rpc, bob, [id], pull(answer)))[0]).toMatchObject({ undone: false, error: code });
+    }
+    expect((await db.su("select status from public.slips where id = $1", [id]))[0].status).toBe("pending");
+    // Unless the rules allow undo after a move: then there's nothing to pull for.
+    await setRule("{undoAfterLineMove}", true);
+    try {
+      pulls = 0;
+      expect(await undoSlips(rpc, bob, [id], pull("failed"))).toEqual([{ slipId: id, undone: true }]);
+      expect(pulls).toBe(0);
     } finally {
       await setRule("{undoAfterLineMove}", false);
     }
@@ -359,6 +493,15 @@ describe("entries that share a manager betting against each other", () => {
     const top = await db.q(member(owner), "select kind, error from public.admin_recent_problems(10)");
     expect(top.filter((r) => r.kind === "fair_play")).toHaveLength(1);
     expect(top.filter((r) => r.error.startsWith("stopped at the credit floor"))).toEqual([{ kind: "lines", error: "stopped at the credit floor (4000 left) (12 times)" }]);
+  });
+
+  it("still counts someone who placed both bets after they stop managing one of the entries", async () => {
+    // Removing them afterwards is in the admin log, but the flag shouldn't depend on
+    // someone reading it.
+    const yan = await makeUser(db, "yan@example.com", "Yan");
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [two, yan]);
+    await db.q(member(owner), "select public.admin_set_manager($1, $2, false)", [two, dana]);
+    expect(await flags()).toEqual(["Dana One and Dana Two, which share a manager (Dana), took opposite sides of Titans at Texans."]);
   });
 
   it("an admin-voided bet doesn't count", async () => {

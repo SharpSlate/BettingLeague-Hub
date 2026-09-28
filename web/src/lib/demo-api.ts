@@ -7,7 +7,7 @@ import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shar
 import { TEAMS, team } from "./teams.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest,
-  PlaceResult, RuleVersion, SlipView, SplashImport, StandingRow, WeekInfo,
+  PlaceResult, RuleVersion, SlipView, SplashImport, StandingRow, UndoResult, WeekInfo,
 } from "./types.ts";
 
 const H = 3_600_000;
@@ -379,8 +379,21 @@ export class DemoApi implements Api {
     return { ok: true, slipId: id, payoutCents: check.quote.payoutCents, american: check.quote.american };
   }
 
-  async undoSlip(slipId: string) {
+  async undoSlips(slipIds: string[]): Promise<UndoResult[]> {
     await wait();
+    // Codes stand in for the server's messages; the page words them (errorText).
+    return slipIds.map((slipId): UndoResult => {
+      try {
+        this.undoOne(slipId);
+        return { slipId, undone: true };
+      } catch (e) {
+        const code = (e as Error).message;
+        return { slipId, undone: false, code, message: code };
+      }
+    });
+  }
+
+  private undoOne(slipId: string) {
     const rules = this.s.rules[0]!.document;
     const s = this.s.slips.find((x) => x.id === slipId);
     if (!s || !this.mine(s.entryId)) throw new Error("not_found");

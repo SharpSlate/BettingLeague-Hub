@@ -217,6 +217,12 @@ export interface SplashImport {
   note: string;
 }
 
+/**
+ * One bet's undo. code says why one wasn't undone; only undo_lines_stale (the lines
+ * couldn't be pulled just then) and error are worth trying again soon.
+ */
+export type UndoResult = { slipId: string; undone: true } | { slipId: string; undone: false; code: string; message: string };
+
 export interface Api {
   readonly demo: boolean;
 
@@ -242,7 +248,8 @@ export interface Api {
   auditLog(limit?: number): Promise<AuditRow[]>;
 
   placeSlip(req: PlacementRequest): Promise<PlaceResult>;
-  undoSlip(slipId: string): Promise<void>;
+  /** Undoes bets, each on its own: the answer says what happened to each. */
+  undoSlips(slipIds: string[]): Promise<UndoResult[]>;
   setDisplayName(name: string): Promise<void>;
 
   adminUsers(): Promise<AdminUser[]>;
