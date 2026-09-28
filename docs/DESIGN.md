@@ -28,7 +28,7 @@ Members' browsers talk to Supabase directly for reading. Every write that touche
    - checks that the stake is within the rule limits and the entry's available units, and that the lines are still current;
    - writes the slip, its legs and a ledger debit for the stake, stamped with the rule-set version and the person who placed it.
 
-Bets are final once placed. The one proposed exception is a short undo window for typos (section 12).
+A member can undo a bet within 5 minutes of placing it, as long as none of its games has kicked off; the stake comes back. After that, bets are final.
 
 ## 3. Rules engine
 
@@ -47,11 +47,12 @@ The league's rules are a single JSON document. Every change creates a new versio
 | Teaser | legs | 2–10, any mix of spreads and totals; moneylines can't be teased |
 | Teaser | points | 6, 6.5, 7 |
 | Teaser | same game | everything allowed |
-| Teaser | price table | by (legs, points): Splash's 2- and 3-leg rows, plus the proposed rows below |
+| Teaser | price table | by (legs, points): Splash's 2- and 3-leg rows, plus the day-one rows below |
 | Push rules | straight | stake back |
 | Push rules | parlay | the leg drops out and the odds are recomputed; all legs pushed refunds |
 | Push rules | teaser | **reduce**: the table price for the legs left (at least the 2-leg price); all pushed refunds |
 | Stakes | minimum / maximum | 1 unit / 250,000 units (Splash's max), and never more than the entry's available units |
+| Undo | window | 5 minutes after placing, and only before any of the bet's games kicks off |
 | Weekly minimum | percent, rounding | 30%, rounded up |
 | Weekly minimum | penalty | the shortfall is deducted when the week closes |
 | Visibility | others' picks | at each game's kickoff, leg by leg |
@@ -69,7 +70,7 @@ The league's rules are a single JSON document. Every change creates a new versio
 
 The rules code is one TypeScript module with no dependencies. It covers validating a slip, pricing it, and grading it from final scores. The site and the Edge Functions import the same file. The database separately enforces the things that must hold even if that code had a bug: kickoff locks, the open week, available units, and single-use of each stake.
 
-### Proposed teaser prices for 4–10 legs (for the commissioner to set)
+### Teaser prices for 4–10 legs (day-one default; the commissioner can change them)
 
 Splash only prices 2 and 3 legs. The rows below keep the per-leg break-even that Splash's own 3-leg price implies, rounded down to tidy numbers:
 
@@ -85,7 +86,7 @@ Splash only prices 2 and 3 legs. The rows below keep the per-leg break-even that
 | 9 | +2050 | +1650 | +1250 |
 | 10 | +2950 | +2300 | +1750 |
 
-The break-even rate per leg is 70.95% at 6 points, 72.72% at 6.5 and 74.69% at 7. Long cards multiply any per-leg edge: a player whose 6-point legs win 75% of the time expects about +18% on a 3-leg card at these prices, but about +72% on a 10-leg card. The commissioner should set the final rows.
+The break-even rate per leg is 70.95% at 6 points, 72.72% at 6.5 and 74.69% at 7. Long cards multiply any per-leg edge: a player whose 6-point legs win 75% of the time expects about +18% on a 3-leg card at these prices, but about +72% on a 10-leg card. The commissioner can replace these rows for any future week.
 
 ## 4. Data model
 
@@ -115,7 +116,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 - **Members** can read:
   - the standings, rules and schedule;
   - every game and line;
-  - the audit log (proposed);
+  - the audit log;
   - their own entries' bets, always;
   - other entries' bets only as each leg's game kicks off. Before that, the league sees only that a pick was placed, as on Splash.
 - **Nobody writes tables directly.** Bets go through `place-slip`, and admin actions go through admin-only server functions that each write an audit row.
@@ -154,6 +155,7 @@ All times are stored in UTC and shown in Eastern. Units are stored to the cent.
 - **Weekly minimum:**
   - when a week opens, each entry's bank is recorded and `required = ceil(0.30 × bank)`;
   - when the week closes, `shortfall = max(0, required − wagered)` comes off the bank as its own ledger row;
+  - pushed bets count as wagered; bets undone by the member or voided by an admin don't;
   - the deduction can never push a bank below zero;
   - the rest of the entry's bank carries into the next week.
 - **Standings:** ranked by bank; ties broken by net, then total winnings. Net, Record, Risk and Return follow Splash's definitions, to be confirmed from the inventory.
@@ -188,7 +190,7 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 ## 9. Cutover from Splash
 
-1. Pick a Tuesday.
+1. Pick a Tuesday. The owner's target is week 4 (betting opens after week 3's Monday night game).
 2. The commissioner (or owner) supplies Splash's standings then.
 3. Each entry's bank comes in as an `import` ledger row. Its record, net, risk and return become its baseline.
 4. Pick history stays on Splash as a static snapshot and isn't migrated.
@@ -211,11 +213,7 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 ## 12. Still open
 
-1. The teaser rows for 4–10 legs (section 3), and whether to keep 6 / 6.5 / 7 points.
-2. **Undo window:** can a member undo a bet within 2 minutes of placing it, before kickoff, to fix typos? After that, bets are final.
-3. **Weekly-minimum details:** do pushed bets count as wagered (proposed: yes), and do bets an admin voids count (proposed: no)?
-4. **Audit log:** readable by all members (proposed: yes).
-5. **Standings definitions** for Net, Risk and Return, from the Splash inventory.
-6. Cutover week and whether to run a trial week.
-7. Name, branding and domain.
-8. The commissioner's own complaints about Splash.
+1. **Standings definitions** for Net, Risk and Return, from the Splash inventory.
+2. **Branding:** the name is BALTIMORE DEGENERATES; colors, logo and web address are still open.
+3. **Trial week:** go live for week 4 directly, or run week 4 as a trial beside Splash and go live for week 5.
+4. **The commissioner's own complaints** about Splash.
