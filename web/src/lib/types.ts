@@ -28,6 +28,10 @@ export interface League {
   pullEveryMinutes: number;
   pullNearKickoffMinutes: number;
   nearKickoffHours: number;
+  /** A bet refreshes the lines when they're older than this... */
+  refreshOnBetSeconds: number;
+  /** ...at most once this often for each member's bets. */
+  betRefreshMemberMinutes: number;
   books: string[];
   lastPullAt: string | null;
   creditsRemaining: number | null;

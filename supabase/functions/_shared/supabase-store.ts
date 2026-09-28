@@ -58,6 +58,10 @@ export class SupabaseStore implements Store {
     return must<string>(this.db.rpc("db_now_internal"), "database clock");
   }
 
+  linesFetchedSince(since: string) {
+    return must<boolean>(this.db.rpc("lines_fetched_since_internal", { p_since: since }), "lines fetched since");
+  }
+
   ingestLines(trigger: Trigger, events: NormalizedEvent[], cost: number | null, remaining: number | null, fetchedAfter: string) {
     return must<number>(
       this.db.rpc("ingest_lines_internal", {

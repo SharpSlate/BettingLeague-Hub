@@ -43,6 +43,8 @@ function clockText(hhmm: string): string {
 
 const decimal = (american: number) => (american > 0 ? 1 + american / 100 : 1 + 100 / -american);
 const minutes = (n: number) => `${n} minute${n === 1 ? "" : "s"}`;
+/** 120 -> "2 minutes", 90 -> "90 seconds". */
+export const duration = (secs: number) => (secs % 60 === 0 ? minutes(secs / 60) : `${secs} seconds`);
 const COUNT_WORDS = ["No", "One", "Two", "Three"];
 
 export function pushRuleText(r: RuleSet): string {
@@ -185,14 +187,16 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     });
     lines.push({
       lead: "When they update.",
-      text: `Every ${league.pullEveryMinutes} minutes from ${clockText(league.pullWindowStart)} to ${clockText(league.pullWindowEnd)} Eastern, every ${league.pullNearKickoffMinutes} minutes in the ${league.nearKickoffHours} hours before a kickoff, and right before a bet if they're more than 2 minutes old (there's a daily limit on these extra pulls).${r.undoMinutes > 0 && !r.undoAfterLineMove ? " Every undo gets fresh lines of its own." : ""}`,
+      text: `Every ${league.pullEveryMinutes} minutes from ${clockText(league.pullWindowStart)} to ${clockText(league.pullWindowEnd)} Eastern, every ${league.pullNearKickoffMinutes} minutes in the ${league.nearKickoffHours} hours before a kickoff, and right before a bet if they're more than ${duration(league.refreshOnBetSeconds)} old (each member's bets can do that once every ${minutes(league.betRefreshMemberMinutes)}, up to a daily limit).${r.undoMinutes > 0 && !r.undoAfterLineMove ? " Every undo gets fresh lines of its own." : ""}`,
     });
   }
+  const priced = parlay.enabled ? "straight bets and parlays" : "straight bets";
+  const table = teaser.enabled ? " Teasers pay the teaser table instead." : "";
   lines.push({
     lead: "Prices.",
     text: r.pricing.straight === "flat"
-      ? `Spreads and totals, in straight bets and parlays, pay a flat ${odds(r.pricing.flatPrice)}; moneylines pay the posted price. Teasers pay the teaser table.`
-      : "Straight bets and parlay legs pay the posted price. Teasers pay the teaser table instead.",
+      ? `Spreads and totals, in ${priced}, pay a flat ${odds(r.pricing.flatPrice)}; moneylines pay the posted price.${table}`
+      : `${parlay.enabled ? "Straight bets and parlay legs pay" : "Straight bets pay"} the posted price.${table}`,
   });
   lines.push({ lead: "If a number moves", text: "while it's on your slip, the site shows you the new one to accept before the bet goes in." });
   lines.push({ lead: "Your bet keeps its line.", text: "Every bet keeps the exact number and price it was placed at, and is graded on those." });
@@ -219,7 +223,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     {
       lead: "Undo.",
       text: r.undoMinutes > 0
-        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, or the daily limit on extra pulls is used up), the bet stays"}. After that, bets are final.`
+        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, the daily limit on these pulls is used up, or the league's odds credits are running low), the bet stays"}. After that, bets are final.`
         : "Bets are final once placed.",
     },
     {
@@ -233,11 +237,15 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
   ];
 
   // ---- grading
+  const multi = parlay.enabled || teaser.enabled;
   const grading: RuleItem[] = [
     { lead: "Straight bets.", text: "A push returns the stake." },
-    { lead: "Parlays.", text: "A pushed or voided leg drops out and the rest are multiplied. If every leg pushes, the stake comes back." },
-    { lead: "Teasers.", text: pushRuleText(r) },
-    { lead: "Called-off games.", text: "A leg on a game that's voided drops out, and the card is priced on the legs that are left." },
+    ...(parlay.enabled ? [{ lead: "Parlays.", text: "A pushed or voided leg drops out and the rest are multiplied. If every leg pushes, the stake comes back." }] : []),
+    ...(teaser.enabled ? [{ lead: "Teasers.", text: pushRuleText(r) }] : []),
+    {
+      lead: "Called-off games.",
+      text: multi ? "A leg on a game that's voided drops out, and the card is priced on the legs that are left." : "A bet on a game that's voided gets its stake back.",
+    },
     { lead: "Score corrections.", text: "If a final score is corrected, every bet on the game is graded again. Winnings already paid are taken back first, which can leave a bank below zero until it's won back; an entry can't bet while it has nothing available." },
   ];
 

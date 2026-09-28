@@ -49,15 +49,14 @@ function parse(body: unknown): (PlacementInput & { clientRef: string | null }) |
 /** Undoes bets after pulling fresh lines, since undo checks their lines haven't moved. */
 async function undo(req: Request, origins: string, userId: string, raw: unknown): Promise<Response> {
   const ids = Array.isArray(raw) ? [...new Set(raw.map((x) => (typeof x === "string" ? x.toLowerCase() : "")))] : [];
-  // A slip places a straight bet per pick, and a week's board has at most 16 games of 6
-  // picks each, so 100 covers any toast's Undo.
+  // The site sends at most 100 at a time.
   if (!ids.length || ids.length > 100 || !ids.every((id) => UUID.test(id))) {
     return json(req, origins, 400, { error: "bad_request", message: "Those bets couldn't be read." });
   }
   const db = serviceClient();
   try {
     const results = await undoSlips((fn, args) => db.rpc(fn, args), userId, ids,
-      () => refreshForUndo(new SupabaseStore(db), env("ODDS_API_KEY"), fetch, userId));
+      (since) => refreshForUndo(new SupabaseStore(db), env("ODDS_API_KEY"), fetch, userId, since));
     return json(req, origins, 200, { results });
   } catch (e) {
     console.error("undo failed", e);

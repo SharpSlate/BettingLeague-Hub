@@ -6,6 +6,7 @@ import type { League } from "./types.ts";
 const league: League = {
   name: "BALTIMORE DEGENERATES", openWeek: null, timezone: "America/New_York",
   pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
+  refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
   books: ["draftkings", "fanduel"], lastPullAt: null, creditsRemaining: null,
 };
 const text = (r: RuleSet, l: League | null = league) =>
@@ -21,8 +22,8 @@ describe("the Rules page says what the rules enforce", () => {
     expect(t).toContain("When DraftKings doesn't offer a line, FanDuel's is used.");
     expect(t).toContain("With a 10,000-unit bank when the week opens, you need 3,000 units in bets. If you've bet 2,000 when it closes, 1,000 comes off your bank.");
     expect(t).toContain("A 6-point teaser moves Ravens −7.5 to −1.5, and an over 47.5 to over 41.5. If every leg wins, a 2-leg card pays −110.");
-    expect(t).toContain("To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, or the daily limit on extra pulls is used up), the bet stays.");
-    expect(t).toContain("right before a bet if they're more than 2 minutes old (there's a daily limit on these extra pulls). Every undo gets fresh lines of its own.");
+    expect(t).toContain("To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, the daily limit on these pulls is used up, or the league's odds credits are running low), the bet stays.");
+    expect(t).toContain("right before a bet if they're more than 2 minutes old (each member's bets can do that once every 5 minutes, up to a daily limit). Every undo gets fresh lines of its own.");
     expect(teaserBreakEvenText(DAY_ONE_RULES)).toBe("To break even at 6 points, each leg has to win about 72% of the time on a 2-leg card, 71% on 3 legs and 73% on 10.");
     expect(undoText(DAY_ONE_RULES)).toBe("You can undo within 5 minutes if the line hasn't moved.");
   });
@@ -95,5 +96,6 @@ describe("the Rules page says what the rules enforce", () => {
     expect(combining).toEqual(["No betting both sides.", "No doubles."]);
     expect(text(r)).not.toMatch(/\bA +can't|same game\./);
     expect(page.glance.find((g) => g.label === "Combining")!.value).toBe("Straight bets only");
+    expect(text(r)).not.toMatch(/parlay|teaser/i);
   });
 });

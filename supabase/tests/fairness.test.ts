@@ -280,20 +280,29 @@ describe("undo", () => {
     }
   });
 
-  it("gets its own line pull every time, within the daily limits", async () => {
+  it("gets pulls of its own, apart from the bets' limits, at most one per member every 10 seconds", async () => {
     const claim = (undo: boolean) => db.q(service, "select public.claim_bet_refresh_internal(120, $1, $2) as r", [bob, undo]).then((r) => r[0].r as string);
+    const back = (which: "undo" | "bet", by: string) =>
+      db.su(`update public.bet_refreshes set at = at - interval '${by}' where ${which === "undo" ? "" : "not "}for_undo`);
     await db.su("delete from public.bet_refreshes; update public.league_settings set bet_refresh_claimed_at = null");
     expect(await claim(false)).toBe("claimed");
-    // A bet right after shares that refresh. An undo can't: its lines have to come from
-    // a pull that went out after it was asked for.
-    expect(await claim(false)).toBe("recent");
+    // Right after a bet's refresh an undo still pulls: its lines must come after it was asked for.
     expect(await claim(true)).toBe("claimed");
+    // Another within 10 seconds waits for that pull instead of making its own.
+    expect(await claim(true)).toBe("recent");
+    await back("undo", "11 seconds");
     expect(await claim(true)).toBe("claimed");
-    // Nor is it held to the member's 5 minutes between refreshes, which a bet is.
+    // Undo pulls don't start the bets' gaps or count toward their limits, and the reverse.
     await db.su("update public.league_settings set bet_refresh_claimed_at = now() - interval '3 minutes'");
-    expect(await claim(false)).toBe("limit");
-    await db.su("update public.league_settings set bet_refresh_member_daily_cap = 3");
+    await back("bet", "6 minutes");
+    expect(await claim(false)).toBe("claimed");
+    await back("undo", "11 seconds");
+    await db.su("update public.league_settings set undo_refresh_member_daily_cap = 2");
     expect(await claim(true)).toBe("limit");
+    await db.su("update public.league_settings set undo_refresh_member_daily_cap = 10, bet_refresh_member_daily_cap = 2, bet_refresh_claimed_at = now() - interval '3 minutes'");
+    await back("bet", "6 minutes");
+    expect(await claim(false)).toBe("limit");
+    expect(await claim(true)).toBe("claimed");
     await db.su("update public.league_settings set bet_refresh_member_daily_cap = 20");
   });
 
@@ -346,6 +355,17 @@ describe("an undo's lines", () => {
     await undoAt(id, since);
   });
 
+  it("the site can ask whether the board already has lines fetched after the ask, and skip the pull", async () => {
+    const id = await stale();
+    const since = await ask(id);
+    const ready = async () => (await db.q(service, "select public.lines_fetched_since_internal($1) as ok", [since]))[0].ok as boolean;
+    await pullAt(plus(since, -1000));
+    expect(await ready()).toBe(false);
+    await pullAt(plus(since, 5));
+    expect(await ready()).toBe(true);
+    await undoAt(id, since);
+  });
+
   it("the time has to be from the last two minutes, and not ahead of the clock", async () => {
     const id = await stale();
     const old = plus(await ask(id), -3 * 60_000);
@@ -374,7 +394,7 @@ describe("undoing through the bet service", () => {
     }
   };
   let pulls = 0;
-  const pull = (answer: UndoRefresh = "ok", outcomes?: Outcome[]) => async (): Promise<UndoRefresh> => {
+  const pull = (answer: UndoRefresh = "ok", outcomes?: Outcome[]) => async (_since: string): Promise<UndoRefresh> => {
     pulls++;
     if (answer !== "ok") return answer;
     if (outcomes) board.find((e) => e.id === "STALE")!.books = [{ book: "draftkings", outcomes }];

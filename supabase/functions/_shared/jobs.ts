@@ -41,6 +41,8 @@ export interface Store {
   lastGoodLinesPull(): Promise<Date | null>;
   /** The database's clock, exactly as it gives it (a timestamp string). */
   dbNow(): Promise<string>;
+  /** Whether the board's lines came from a pull whose request went out at or after `since` (a database time). */
+  linesFetchedSince(since: string): Promise<boolean>;
   /** fetchedAfter: the database's time just before the request went out (see undo_slip_internal). */
   ingestLines(trigger: Trigger, events: NormalizedEvent[], cost: number | null, remaining: number | null, fetchedAfter: string): Promise<number>;
   ingestScores(trigger: Trigger, scores: NormalizedScore[], cost: number | null, remaining: number | null): Promise<number>;
@@ -180,7 +182,15 @@ export async function pullLines(
   const fetchedAfter = await store.dbNow();
   const r = await callApi<OddsApiEvent[]>(store, "lines", trigger, oddsUrl(apiKey, s.books), fetchImpl);
   if ("error" in r) return { status: "failed", reason: r.error };
-  const count = await storePaid(store, "lines", trigger, r, () => store.ingestLines(trigger, normalizeOdds(r.data), r.cost, r.remaining, fetchedAfter));
+  const events = normalizeOdds(r.data);
+  // An answer with no games while games are still to come is the feed's glitch, not an
+  // empty slate. Stored, it would take every line off the board (and an undo would read
+  // its bet's line as moved), so it's recorded as a failed pull and the board kept.
+  if (!events.length && (await store.gamesStartingSoon(now, 14 * 24)) > 0) {
+    await store.recordPull("lines", trigger, false, "the feed answered with no games; the board was kept as it was", r.cost, r.remaining);
+    return { status: "failed", reason: "no games in the answer", remaining: r.remaining };
+  }
+  const count = await storePaid(store, "lines", trigger, r, () => store.ingestLines(trigger, events, r.cost, r.remaining, fetchedAfter));
   if (typeof count !== "number") return { status: "failed", reason: count.error, remaining: r.remaining };
   return { status: "pulled", count, remaining: r.remaining };
 }
@@ -189,19 +199,28 @@ export async function pullLines(
 export type UndoRefresh = "ok" | "limit" | "credit_floor" | "failed";
 
 /**
- * Pulls the lines for an undo, which is refused once a line on the bet has moved. The
- * undo is checked against this pull, never one whose request went out before the undo
- * was asked for (undo_slip_internal checks), so an undo always pulls: within the daily
- * refresh limits, but not the gaps between refreshes, since the bet it takes back
- * usually used the member's a moment ago. Says why not when the lines couldn't be
- * pulled: a limit or the credit floor, which trying again soon won't fix, or a failed
- * pull, which it might.
+ * Makes sure the board's lines were fetched after an undo was asked for (`since`, the
+ * database's time then), pulling them if not: undo is refused once a line on the bet
+ * has moved, and undo_slip_internal won't check against older lines. Undo pulls have
+ * limits of their own, apart from the bets' (claim_bet_refresh_internal), and a
+ * member's undos pull at most once every 10 seconds; an undo arriving within that
+ * waits for the pull already made, or for the 10 seconds to pass. Says why not when the
+ * lines can't be had: a limit or the credit floor, which trying again soon won't fix,
+ * or a failed pull, which it might.
  */
-export async function refreshForUndo(store: Store, apiKey: string, fetchImpl: Fetch, userId: string, now = new Date()): Promise<UndoRefresh> {
-  const pulled = await pullLines(store, apiKey, fetchImpl, "bet", now, userId, { forUndo: true });
-  if (pulled.status === "pulled") return "ok";
-  if (pulled.status === "skipped" && pulled.reason === "credit floor") return "credit_floor";
-  if (pulled.status === "skipped" && pulled.reason === "limit") return "limit";
+export async function refreshForUndo(
+  store: Store, apiKey: string, fetchImpl: Fetch, userId: string, since: string,
+  now = new Date(), sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<UndoRefresh> {
+  for (let i = 0; i < 15; i++) {
+    if (await store.linesFetchedSince(since)) return "ok";
+    const pulled = await pullLines(store, apiKey, fetchImpl, "bet", now, userId, { forUndo: true });
+    if (pulled.status === "pulled") return "ok";
+    if (pulled.status === "failed") return "failed";
+    if (pulled.reason === "credit floor") return "credit_floor";
+    if (pulled.reason === "limit") return "limit";
+    await sleep(1000); // "recent": another of the member's undos pulled a moment ago
+  }
   return "failed";
 }
 

@@ -233,6 +233,9 @@ class FakeStore implements Store {
   /** The order things happened in: the database clock read, the request, the store. */
   log: string[] = [];
   fetchedAfter: string | null = null;
+  /** Whether the board's lines were fetched after the undo was asked for; a stored pull makes them so. */
+  fresh = false;
+  async linesFetchedSince() { return this.fresh; }
   async lastGoodLinesPull() { return this.lastPull; }
   async dbNow() {
     this.log.push("clock");
@@ -242,6 +245,7 @@ class FakeStore implements Store {
     if (this.failIngest) throw new Error("connection reset");
     this.log.push("store");
     this.fetchedAfter = fetchedAfter;
+    this.fresh = true;
     this.lines = events;
     this.pulls.push({ kind: "lines", trigger, ok: true, error: "" });
     if (remaining !== null) this.credits = { remaining, at: new Date() };
@@ -360,6 +364,17 @@ describe("pullLines", () => {
     expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toMatchObject({ status: "skipped", reason: "credit floor" });
     expect(f.calls).toHaveLength(0);
     store.credits = { remaining: 4_000, at: new Date(inWindow.getTime() - 7 * 3_600_000) };
+    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
+  });
+  it("keeps the board when the feed answers with no games while games are still to come", async () => {
+    const store = new FakeStore();
+    store.startingSoon = 5;
+    const f = fakeFetch([]);
+    expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toEqual({ status: "failed", reason: "no games in the answer", remaining: 90000 });
+    expect(store.pulls).toEqual([{ kind: "lines", trigger: "schedule", ok: false, error: "the feed answered with no games; the board was kept as it was" }]);
+    expect(store.costs[0]).toMatchObject({ cost: 3, remaining: 90000 });
+    // With nothing left to play (after the season), an empty answer is stored as it is.
+    store.startingSoon = 0;
     expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
   });
   it("records a failed call without storing anything", async () => {
@@ -496,25 +511,44 @@ describe("runScores", () => {
 
 describe("pulling the lines for an undo", () => {
   const t0 = new Date("2026-10-04T15:00:00Z");
-  it("always pulls, even when the lines are fresh, skipping the gaps between refreshes", async () => {
+  const since = "2026-10-04 15:00:00.5+00";
+  const noSleep = async () => {};
+  it("pulls unless the board's lines were fetched after the undo was asked for", async () => {
     const store = new FakeStore();
     const f = fakeFetch(fixture("odds.json"));
-    store.lastPull = new Date(t0.getTime() - 10_000);
-    expect(await refreshForUndo(store, "KEY", f, "u1", t0)).toBe("ok");
+    store.lastPull = new Date(t0.getTime() - 10_000); // seconds old, but from before the ask
+    expect(await refreshForUndo(store, "KEY", f, "u1", since, t0, noSleep)).toBe("ok");
     expect(store.claims).toEqual([{ userId: "u1", forUndo: true }]);
     expect(f.calls).toHaveLength(1);
-    expect(store.fetchedAfter).toBe("2026-10-01 16:00:00.123456+00");
+    const already = new FakeStore();
+    already.fresh = true;
+    const g = fakeFetch(fixture("odds.json"));
+    expect(await refreshForUndo(already, "KEY", g, "u1", since, t0, noSleep)).toBe("ok");
+    expect(g.calls).toHaveLength(0);
+    expect(already.claims).toEqual([]);
+  });
+  it("waits for the pull another of the member's undos just made, rather than making its own", async () => {
+    const store = new FakeStore();
+    store.claimOk = "recent";
+    const f = fakeFetch(fixture("odds.json"));
+    let waits = 0;
+    const lands = async () => { if (++waits === 2) store.fresh = true; };
+    expect(await refreshForUndo(store, "KEY", f, "u1", since, t0, lands)).toBe("ok");
+    expect(f.calls).toHaveLength(0);
   });
   it("says why when it can't: a limit or the credit floor (no use trying soon), or a failed pull", async () => {
     const limit = new FakeStore();
     limit.claimOk = "limit";
-    expect(await refreshForUndo(limit, "KEY", fakeFetch(fixture("odds.json")), "u1", t0)).toBe("limit");
+    expect(await refreshForUndo(limit, "KEY", fakeFetch(fixture("odds.json")), "u1", since, t0, noSleep)).toBe("limit");
     const floor = new FakeStore();
     floor.credits = { remaining: 100, at: t0 };
-    expect(await refreshForUndo(floor, "KEY", fakeFetch(fixture("odds.json")), "u1", t0)).toBe("credit_floor");
-    expect(await refreshForUndo(new FakeStore(), "KEY", fakeFetch({ message: "down" }, 503), "u1", t0)).toBe("failed");
+    expect(await refreshForUndo(floor, "KEY", fakeFetch(fixture("odds.json")), "u1", since, t0, noSleep)).toBe("credit_floor");
+    expect(await refreshForUndo(new FakeStore(), "KEY", fakeFetch({ message: "down" }, 503), "u1", since, t0, noSleep)).toBe("failed");
     const unstored = new FakeStore();
     unstored.failIngest = true;
-    expect(await refreshForUndo(unstored, "KEY", fakeFetch(fixture("odds.json")), "u1", t0)).toBe("failed");
+    expect(await refreshForUndo(unstored, "KEY", fakeFetch(fixture("odds.json")), "u1", since, t0, noSleep)).toBe("failed");
+    const stuck = new FakeStore();
+    stuck.claimOk = "recent";
+    expect(await refreshForUndo(stuck, "KEY", fakeFetch(fixture("odds.json")), "u1", since, t0, noSleep)).toBe("failed");
   });
 });

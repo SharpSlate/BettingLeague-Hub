@@ -211,6 +211,7 @@ export class DemoApi implements Api {
       name: "BALTIMORE DEGENERATES",
       openWeek: { week: OPEN_WEEK, label: `Week ${OPEN_WEEK}`, startsAt: new Date(now - 2 * D).toISOString(), endsAt: new Date(now + 5 * D).toISOString(), status: "open", ruleSetVersion: this.s.rules[0]!.version },
       timezone: "America/New_York", pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
+      refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
       books: ["draftkings", "fanduel"], lastPullAt: new Date(this.s.lastPullAt).toISOString(), creditsRemaining: this.s.credits,
     };
   }

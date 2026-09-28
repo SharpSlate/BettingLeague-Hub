@@ -357,10 +357,15 @@ end $$;
 -- bets in all get at most bet_refresh_daily_cap a day. So neither a burst of bets nor a
 -- script of slips refused afterwards can run the Odds API credits down. Returns
 -- 'claimed' to the bet that should pull; otherwise 'recent' (a refresh just ran or is
--- running) or 'limit' (a member's or the day's limit is used up). An undo (p_undo)
--- always gets its own pull, within the daily limits: it's checked against lines fetched
--- after it was asked for (see undo_slip_internal), so it can't share a refresh that
--- started earlier, and the bet it takes back usually used the member's a moment ago.
+-- running) or 'limit' (a member's or the day's limit is used up).
+--
+-- An undo (p_undo) is checked against lines fetched after it was asked for (see
+-- undo_slip_internal), so it can't lean on a bet's refresh that started earlier. Undos
+-- have limits of their own (undo_refresh_member_daily_cap, undo_refresh_daily_cap)
+-- and never count toward the bets' limits or gaps, so undoing can't use up the
+-- refreshes a member's bets rely on. A member's undos pull at most once every 10
+-- seconds: one arriving sooner gets 'recent' and waits for that pull (refreshForUndo),
+-- so a burst of undo requests costs one or two pulls, not one each.
 create or replace function public.claim_bet_refresh_internal(p_min_seconds int, p_user uuid default null, p_undo boolean default false) returns text
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -369,18 +374,38 @@ begin
   perform pg_advisory_xact_lock(hashtext('bet_refresh'));
   v_now := clock_timestamp();
   select * into v_set from public.league_settings;
-  if not p_undo and v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return 'recent'; end if;
+  if p_undo then
+    if exists (select 1 from public.bet_refreshes where for_undo and user_id is not distinct from p_user and at > v_now - interval '10 seconds') then
+      return 'recent';
+    end if;
+    if (select count(*) from public.bet_refreshes where for_undo and user_id is not distinct from p_user and at > v_now - interval '24 hours') >= v_set.undo_refresh_member_daily_cap
+       or (select count(*) from public.bet_refreshes where for_undo and at > v_now - interval '24 hours') >= v_set.undo_refresh_daily_cap then
+      return 'limit';
+    end if;
+    insert into public.bet_refreshes (user_id, at, for_undo) values (p_user, v_now, true);
+    return 'claimed';
+  end if;
+  if v_set.bet_refresh_claimed_at >= v_now - make_interval(secs => greatest(coalesce(p_min_seconds, 120), 30)) then return 'recent'; end if;
   if p_user is not null and (
-       (not p_undo and exists (select 1 from public.bet_refreshes where user_id = p_user and at > v_now - make_interval(mins => v_set.bet_refresh_member_minutes)))
-    or (select count(*) from public.bet_refreshes where user_id = p_user and at > v_now - interval '24 hours') >= v_set.bet_refresh_member_daily_cap
+       exists (select 1 from public.bet_refreshes where not for_undo and user_id = p_user and at > v_now - make_interval(mins => v_set.bet_refresh_member_minutes))
+    or (select count(*) from public.bet_refreshes where not for_undo and user_id = p_user and at > v_now - interval '24 hours') >= v_set.bet_refresh_member_daily_cap
   ) then
     return 'limit';
   end if;
-  if (select count(*) from public.bet_refreshes where at > v_now - interval '24 hours') >= v_set.bet_refresh_daily_cap then return 'limit'; end if;
+  if (select count(*) from public.bet_refreshes where not for_undo and at > v_now - interval '24 hours') >= v_set.bet_refresh_daily_cap then return 'limit'; end if;
   update public.league_settings set bet_refresh_claimed_at = v_now;
   insert into public.bet_refreshes (user_id, at) values (p_user, v_now);
   return 'claimed';
 end $$;
+
+-- Whether the lines on the board came from a pull whose request went out at or after
+-- p_since, so an undo asked for then can be checked against them without another pull.
+-- (undo_slip_internal checks the same thing for itself.)
+create or replace function public.lines_fetched_since_internal(p_since timestamptz) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select coalesce((select lp.fetched_after from public.line_pulls lp where lp.kind = 'lines' and lp.ok order by lp.at desc limit 1) >= p_since, false)
+$$;
 
 -- How many games need scores: started in the last 3 days and not final or void. A game
 -- counts from its kickoff or from the feed's own start time, so one the feed shows under

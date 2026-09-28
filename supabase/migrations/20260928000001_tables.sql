@@ -31,7 +31,12 @@ create table public.league_settings (
   -- at most this many a day; past either, bets use the scheduled pulls' lines.
   bet_refresh_member_minutes int not null default 5,
   bet_refresh_member_daily_cap int not null default 20,
-  bet_refresh_daily_cap int not null default 200
+  bet_refresh_daily_cap int not null default 200,
+  -- Every undo pulls fresh lines (see undo_slip_internal), within limits of its own so
+  -- undos can't use up the refreshes bets rely on: a member's undos at most this many
+  -- pulls a day, and undos in all at most this many.
+  undo_refresh_member_daily_cap int not null default 10,
+  undo_refresh_daily_cap int not null default 100
 );
 
 create table public.profiles (
@@ -148,11 +153,12 @@ create table public.book_lines (
   check ((market = 'total') = (side in ('over', 'under')))
 );
 
--- Line refreshes that bets triggered, for the per-member and daily limits.
+-- Line refreshes that bets (and undos) triggered, for the per-member and daily limits.
 create table public.bet_refreshes (
   id bigint generated always as identity primary key,
   user_id uuid references public.profiles (id) on delete set null,
-  at timestamptz not null default now()
+  at timestamptz not null default now(),
+  for_undo boolean not null default false
 );
 create index on public.bet_refreshes (at desc);
 create index on public.bet_refreshes (user_id, at desc);

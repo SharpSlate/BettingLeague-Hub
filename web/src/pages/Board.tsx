@@ -7,10 +7,11 @@ import { ago, day } from "../lib/format.ts";
 import { useLoad, useNow } from "../lib/hooks.ts";
 import { useSlip } from "../lib/slip.tsx";
 import type { GameView } from "../lib/types.ts";
+import { duration } from "../lib/rules-text.ts";
 import { afterUndo } from "../lib/undo.ts";
 
 /** The toast after placing: the bets that can still be undone, and what an undo did. */
-type Toast = PlacedResult & { until: number; note?: string };
+type Toast = PlacedResult & { until: number; note?: string; final?: string };
 
 export function Board() {
   const api = useApi();
@@ -22,7 +23,8 @@ export function Board() {
   const entries = useLoad(() => api.myEntries(), []);
   const rules = useLoad(() => api.ruleVersions(), []);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [undoing, setUndoing] = useState(false);
+  // The toast whose Undo is running, so a newer toast's button isn't shown as busy.
+  const [undoing, setUndoing] = useState<Toast | null>(null);
 
   const weekRules = rules.data?.find((r) => r.version === league.data?.openWeek?.ruleSetVersion)?.document;
   const byDay = useMemo(() => {
@@ -52,15 +54,15 @@ export function Board() {
   const undoAll = async () => {
     const shown = toast;
     if (!shown || undoing) return;
-    setUndoing(true);
+    setUndoing(shown);
     const next = await api.undoSlips(shown.ids).then(
       (results): Toast | null => {
-        const left = afterUndo(results, errorText);
-        return left && { ...shown, ids: left.retry, note: left.note };
+        const left = afterUndo(results, errorText, shown.final);
+        return left && { ...shown, ids: left.retry, note: left.note, final: left.final };
       },
       (e): Toast => ({ ...shown, note: errorText(e) }),
     );
-    setUndoing(false);
+    setUndoing(null);
     entries.reload();
     // A bet placed in the meantime has its own toast; leave that one be.
     setToast((cur) => (cur === shown ? next : cur));
@@ -75,7 +77,7 @@ export function Board() {
         title={lg?.openWeek ? `${lg.openWeek.label} board` : "Board"}
         sub={
           lg
-            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than 2 minutes old (up to a daily limit). All times Eastern.`
+            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than ${duration(lg.refreshOnBetSeconds)} old (once every ${lg.betRefreshMemberMinutes} minutes per member, up to a daily limit). All times Eastern.`
             : undefined
         }
       />
@@ -131,7 +133,7 @@ export function Board() {
           <span>
             {toast.note ?? (toast.failed ? `${toast.ids.length} of ${toast.total} bets placed` : toast.ids.length > 1 ? `${toast.ids.length} bets placed` : "Bet placed")}
           </span>
-          {toast.ids.length ? <button className="btn small" disabled={undoing} onClick={undoAll}>{undoing ? "Undoing…" : "Undo"}</button> : null}
+          {toast.ids.length ? <button className="btn small" disabled={undoing !== null} onClick={undoAll}>{undoing === toast ? "Undoing…" : "Undo"}</button> : null}
           <button className="btn small" aria-label="Dismiss" onClick={() => setToast(null)}>×</button>
         </div>
       ) : null}

@@ -140,7 +140,6 @@ export async function place(db: Db, a: PlaceArgs, c?: pg.PoolClient): Promise<st
   return (await db.q(service, sql, params))[0].id;
 }
 
-/** Undoes a bet for a member, as the place-slip Edge Function does after refreshing the lines. */
 /**
  * Undoes a bet the way the place-slip function does: every check but the lines, then
  * (where the lines are checked) lines fetched after that, then the undo. The tests set

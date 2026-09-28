@@ -91,6 +91,8 @@ export class SupabaseApi implements Api {
       pullEveryMinutes: s.pull_every_minutes,
       pullNearKickoffMinutes: s.pull_near_kickoff_minutes,
       nearKickoffHours: s.near_kickoff_hours,
+      refreshOnBetSeconds: s.refresh_on_bet_seconds,
+      betRefreshMemberMinutes: s.bet_refresh_member_minutes,
       books: s.books,
       lastPullAt: pull.data?.at ?? null,
       creditsRemaining: credits.data?.credits_remaining ?? null,
@@ -228,9 +230,15 @@ export class SupabaseApi implements Api {
   async undoSlips(slipIds: string[]): Promise<UndoResult[]> {
     // Through the bet service, which pulls fresh lines first (one pull for them all):
     // undo is refused once a line on a bet has moved.
-    const data = await this.invoke("place-slip", { action: "undo", slipIds });
-    return (data.results as any[]).map((r): UndoResult =>
-      r.undone ? { slipId: r.slipId, undone: true } : { slipId: r.slipId, undone: false, code: r.error, message: r.message });
+    // The service takes up to 100 at a time.
+    const out: UndoResult[] = [];
+    for (let i = 0; i < slipIds.length; i += 100) {
+      const data = await this.invoke("place-slip", { action: "undo", slipIds: slipIds.slice(i, i + 100) });
+      for (const r of data.results as any[]) {
+        out.push(r.undone ? { slipId: r.slipId, undone: true } : { slipId: r.slipId, undone: false, code: r.error, message: r.message });
+      }
+    }
+    return out;
   }
   async setDisplayName(name: string) {
     check(await this.db.rpc("set_display_name", { p_name: name }));
