@@ -19,13 +19,17 @@ function week(w: any): WeekInfo {
   return { week: w.week, label: w.label, startsAt: w.starts_at, endsAt: w.ends_at, status: w.status, ruleSetVersion: w.rule_set_version };
 }
 
+/** Betting on a game closes at its kickoff or at the feed's own start time, whichever comes first. */
+const locksAt = (g: { kickoff_at: string; feed_commence: string | null }) =>
+  g.feed_commence && Date.parse(g.feed_commence) < Date.parse(g.kickoff_at) ? g.feed_commence : g.kickoff_at;
+
 function leg(l: any, teams: Map<string, Team>): LegView {
   const g = l.games;
   return {
     legNo: l.leg_no, gameId: l.game_id, market: l.market, side: l.side, point: n(l.point), price: l.price,
     teasedPoint: n(l.teased_point), book: l.book, result: l.result,
     game: {
-      home: teams.get(g.home_team)!, away: teams.get(g.away_team)!, kickoffAt: g.kickoff_at, status: g.status,
+      home: teams.get(g.home_team)!, away: teams.get(g.away_team)!, kickoffAt: g.kickoff_at, locksAt: locksAt(g), status: g.status,
       homeScore: g.home_score, awayScore: g.away_score,
     },
   };
@@ -117,8 +121,7 @@ export class SupabaseApi implements Api {
       ? (check(await this.db.from("current_lines").select("*").in("game_id", games.map((g) => g.id))) as any[])
       : [];
     return games.map((g) => ({
-      id: g.id, week: g.week, kickoffAt: g.kickoff_at,
-      locksAt: g.feed_commence && Date.parse(g.feed_commence) < Date.parse(g.kickoff_at) ? g.feed_commence : g.kickoff_at,
+      id: g.id, week: g.week, kickoffAt: g.kickoff_at, locksAt: locksAt(g),
       home: byAbbr.get(g.home_team)!, away: byAbbr.get(g.away_team)!,
       status: g.status, homeScore: g.home_score, awayScore: g.away_score,
       lines: lines.filter((l) => l.game_id === g.id).map((l) => ({
@@ -142,7 +145,7 @@ export class SupabaseApi implements Api {
       .from("slips")
       .select(
         "id, entry_id, placed_by, week, type, teaser_points, stake_cents, leg_count, rule_set_version, status, payout_cents, placed_at, settled_at, " +
-        "entries(name), profiles!slips_placed_by_fkey(display_name), slip_legs(*, games(home_team, away_team, kickoff_at, status, home_score, away_score))",
+        "entries(name), profiles!slips_placed_by_fkey(display_name), slip_legs(*, games(home_team, away_team, kickoff_at, feed_commence, status, home_score, away_score))",
       )
       .neq("status", "undone")
       .order("placed_at", { ascending: false })

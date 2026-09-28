@@ -290,7 +290,7 @@ export class DemoApi implements Api {
           const g = this.game(l.gameId);
           return {
             ...l,
-            game: { home: team(g.home), away: team(g.away), kickoffAt: new Date(g.kickoffAt).toISOString(), status: g.status, homeScore: g.homeScore, awayScore: g.awayScore },
+            game: { home: team(g.home), away: team(g.away), kickoffAt: new Date(g.kickoffAt).toISOString(), locksAt: new Date(g.kickoffAt).toISOString(), status: g.status, homeScore: g.homeScore, awayScore: g.awayScore },
           };
         }),
       }));

@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
         const priorLegs = (await db.from("slip_legs").select("game_id, market, side").eq("slip_id", prior.id)).data ?? [];
         const have = new Set(priorLegs.map((l: any) => `${l.game_id}|${l.market}|${l.side}`));
         const want = new Set(input.legs.map((l) => `${l.gameId.toLowerCase()}|${l.market}|${l.side}`));
-        const same = prior.entry_id === input.entryId && prior.placed_by === user.id && prior.type === input.type
+        const same = prior.entry_id === input.entryId.toLowerCase() && prior.placed_by === user.id && prior.type === input.type
           && (prior.teaser_points === null ? null : Number(prior.teaser_points)) === (input.type === "teaser" ? input.teaserPoints : null)
           && Number(prior.stake_cents) === input.stakeCents && prior.leg_count === input.legs.length
           && want.size === have.size && [...want].every((k) => have.has(k));

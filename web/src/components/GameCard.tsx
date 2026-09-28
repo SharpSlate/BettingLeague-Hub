@@ -42,7 +42,10 @@ function PriceButton({ game, line, market, side, rules }: { game: GameView; line
 }
 
 export function GameCard({ game, now, rules }: { game: GameView; now: number; rules?: RuleSet }) {
-  const started = game.status !== "scheduled" || new Date(game.locksAt).getTime() <= now;
+  const started = game.status !== "scheduled" || new Date(game.kickoffAt).getTime() <= now;
+  // Betting can close before the kickoff here, when the odds feed shows the game starting;
+  // its picks still wait for the kickoff (or its first score).
+  const locked = started || new Date(game.locksAt).getTime() <= now;
   const line = (market: Market, side: Side) => game.lines.find((l) => l.market === market && l.side === side);
   const sources = [...new Set(game.lines.map((l) => l.source))];
   const asOf = game.lines.reduce<string | null>((a, l) => (!a || l.asOf > a ? l.asOf : a), null);
@@ -53,6 +56,7 @@ export function GameCard({ game, now, rules }: { game: GameView; now: number; ru
     : game.status === "postponed" ? <span className="chip">Postponed</span>
     : game.status === "void" ? <span className="chip void">Void</span>
     : started ? <span className="chip live">Started</span>
+    : locked ? <span className="chip">Closed</span>
     : null;
 
   const teamRow = (side: "away" | "home") => {
@@ -68,20 +72,24 @@ export function GameCard({ game, now, rules }: { game: GameView; now: number; ru
   };
 
   return (
-    <article className={`card game${started ? " locked" : ""}`} aria-label={`${game.away.name} at ${game.home.name}`}>
+    <article className={`card game${locked ? " locked" : ""}`} aria-label={`${game.away.name} at ${game.home.name}`}>
       <div className="game-top">
         <span className="num">
           {clock(game.kickoffAt)}
-          {!started && sources.length ? ` · ${sources.map(bookName).join(" / ")}` : ""}
-          {!started && asOf ? ` · ${ago(asOf, now)}` : ""}
+          {!locked && sources.length ? ` · ${sources.map(bookName).join(" / ")}` : ""}
+          {!locked && asOf ? ` · ${ago(asOf, now)}` : ""}
         </span>
         {status}
       </div>
-      {started ? (
+      {locked ? (
         <div className="game-final">
           {teamRow("away")}
           {teamRow("home")}
-          <div className="tiny muted">Locked at kickoff. Picks on this game are now visible in League Picks.</div>
+          <div className="tiny muted">
+            {started
+              ? "Locked at kickoff. Picks on this game are now visible in League Picks."
+              : "Betting has closed: the odds feed shows this game starting. Picks on it show at kickoff."}
+          </div>
         </div>
       ) : (
         <div className="game-grid">

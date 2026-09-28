@@ -95,6 +95,8 @@ export interface LegGame {
   home: Team;
   away: Team;
   kickoffAt: string;
+  /** When betting on it closed or closes: the kickoff, or the feed's own start time if that's earlier. */
+  locksAt: string;
   status: GameStatus;
   homeScore: number | null;
   awayScore: number | null;

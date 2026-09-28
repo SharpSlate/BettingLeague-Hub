@@ -266,16 +266,21 @@ begin
 
     select * into v_game from public.games where odds_api_id = ev ->> 'id' for update;
     if not found then
-      insert into public.games (odds_api_id, week, kickoff_at, home_team, away_team, feed_commence)
-      values (ev ->> 'id', v_week, v_kick, v_home, v_away, v_kick)
+      insert into public.games (odds_api_id, week, kickoff_at, home_team, away_team, feed_commence, feed_commence_firm)
+      values (ev ->> 'id', v_week, v_kick, v_home, v_away, v_kick, v_kick > v_at)
       returning * into v_game;
     else
-      -- The feed's own start time closes betting when it passes (see place_slip_internal),
-      -- so once it has passed for a game that hasn't started here, a later reading can't
-      -- move it on and reopen betting.
-      if v_game.feed_commence is distinct from v_kick
-         and not (v_game.status = 'scheduled' and v_game.feed_commence <= v_at) then
-        update public.games set feed_commence = v_kick where id = v_game.id;
+      -- The feed's own start time closes betting when it passes (see place_slip_internal
+      -- and games.feed_commence_firm). A firm time that has passed stays, so a later reading
+      -- can't reopen betting on a game that hasn't started here; a time first read after
+      -- it had passed is replaced by the next reading that disagrees, or made firm by the
+      -- next one that agrees.
+      if v_game.feed_commence is not distinct from v_kick then
+        if not v_game.feed_commence_firm then
+          update public.games set feed_commence_firm = true where id = v_game.id;
+        end if;
+      elsif not (v_game.status = 'scheduled' and v_game.feed_commence <= v_at and v_game.feed_commence_firm) then
+        update public.games set feed_commence = v_kick, feed_commence_firm = v_kick > v_at where id = v_game.id;
       end if;
       if v_game.status = 'scheduled' and v_game.kickoff_at > v_at and v_game.kickoff_at <> v_kick then
         -- A new start time moves the kickoff when two pulls in a row agree on it, so one
@@ -664,7 +669,8 @@ end $$;
 -- Returns false if the slip was already settled, or if the grade is stale: the job
 -- sends the versions (updated_at) of the games it graded from, and if an admin has
 -- changed one since (a corrected score, a void), the slip is left for the next run.
--- The games are locked before the slip, the same order the admin corrections use.
+-- The entry is locked first, then the games, then the slip, the order placing a bet
+-- uses. (Corrections lock a game, then its slips, and never wait on an entry.)
 -- Guards keep a bad grade from paying out more than the slip could ever win.
 -- p_leg_results: [{legNo, result}]; p_game_versions: [{gameId, version}]
 create or replace function public.settle_slip_internal(
@@ -675,6 +681,9 @@ as $$
 declare
   v public.slips%rowtype;
 begin
+  -- The entry first, as placing a bet does, so a minimum redone below reads the units
+  -- free after any bet being placed right now; then the games, then the slip.
+  perform 1 from public.entries e join public.slips s on s.entry_id = e.id where s.id = p_slip for no key update of e;
   perform 1 from public.games g where g.id in (select l.game_id from public.slip_legs l where l.slip_id = p_slip) order by g.id for share;
   if p_game_versions is not null and exists (
     select 1 from public.slip_legs l join public.games g on g.id = l.game_id
@@ -1447,7 +1456,8 @@ language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare v_actor uuid := app.require_admin(); v_reason text := app.require_reason(p_reason); v public.slips%rowtype; v_shown boolean;
 begin
-  -- The slip's games first, then the slip: the order settling and corrections use.
+  -- The entry, then the slip's games, then the slip: the order placing and settling use.
+  perform 1 from public.entries e join public.slips s on s.entry_id = e.id where s.id = p_slip for no key update of e;
   perform 1 from public.games g where g.id in (select l.game_id from public.slip_legs l where l.slip_id = p_slip) order by g.id for share;
   select * into v from public.slips where id = p_slip for update;
   if not found then raise exception 'not_found'; end if;
@@ -1494,7 +1504,6 @@ begin
              format('%s at %s should have started by now but has no score yet, so betting on it is closed. If it was postponed, mark it postponed; otherwise the score feed may be behind.', ta.short_name, th.short_name)
       from public.games g join public.teams th on th.abbr = g.home_team join public.teams ta on ta.abbr = g.away_team
       where g.status = 'scheduled' and least(g.kickoff_at, g.feed_commence) < now() - interval '1 hour'
-        and least(g.kickoff_at, g.feed_commence) > now() - interval '3 days'
       union all
       -- A postponed game the score pulls have stopped checking.
       select coalesce(g.rescheduled_at, g.kickoff_at) + interval '3 days', 'game', 'check',

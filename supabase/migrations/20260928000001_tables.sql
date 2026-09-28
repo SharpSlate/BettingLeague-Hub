@@ -112,9 +112,14 @@ create table public.games (
   -- The start time in the feed's latest reading, whatever the league's kickoff says.
   -- Betting on a game closes at its kickoff or at this time, whichever comes first, so
   -- neither a kickoff the feed hasn't confirmed yet nor an admin moving a kickoff later
-  -- can keep betting open on a game the feed shows under way. Once this time has passed
-  -- it stays, so the feed can't reopen betting either. (Picks still show at the kickoff.)
+  -- can keep betting open on a game the feed shows under way. (Picks still show at the
+  -- kickoff, or at the game's first score.)
   feed_commence timestamptz,
+  -- Whether feed_commence is firm: the feed reported it before it came, or two pulls in
+  -- a row agreed on it. A firm time that has passed stays, so the feed can't reopen
+  -- betting. A start first reported when it had already passed closes betting only until
+  -- a later reading disagrees, so one bad reading can't close a game for good.
+  feed_commence_firm boolean not null default true,
   final_at timestamptz,
   updated_at timestamptz not null default now(),
   check (home_team <> away_team),
