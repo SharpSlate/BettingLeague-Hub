@@ -58,7 +58,7 @@ beforeAll(async () => {
   gA = await gameId(db, "A");
   gB = await gameId(db, "B");
   gC = await gameId(db, "C");
-  await db.q(member(owner), "select public.admin_open_next_week('Start of the trial')");
+  await db.q(member(owner), "select public.admin_open_next_week(null, 'Start of the trial')");
 });
 afterAll(async () => db?.close());
 
@@ -215,7 +215,7 @@ describe("members can't go around the functions", () => {
 
   it("non-admins can't use admin functions", async () => {
     await fails(db.q(member(alice), "select public.admin_adjust_bank($1, 100000, 'give me units')", [aliceEntry]), "admin_only");
-    await fails(db.q(member(alice), "select public.admin_open_next_week(null)"), "admin_only");
+    await fails(db.q(member(alice), "select public.admin_open_next_week(null, null)"), "admin_only");
     await fails(db.q(member(alice), "select * from public.admin_list_users()"), "admin_only");
   });
 });
@@ -320,7 +320,7 @@ describe("settling", () => {
     expect(leg.result).toBe("won");
   });
 
-  it("an admin void takes back winnings and refunds the stake, and logs no picks", async () => {
+  it("an admin void takes back winnings and refunds the stake, and logs no picks or hidden stake", async () => {
     const [s] = await db.su("select id from public.slips where entry_id = $1 and status = 'won'", [sharedEntry]);
     const before = Number((await db.su("select app.available_cents($1) as a", [sharedEntry]))[0].a);
     await fails(db.q(member(owner), "select public.admin_void_slip($1, '')", [s.id]), "reason_required");
@@ -328,7 +328,8 @@ describe("settling", () => {
     const after = Number((await db.su("select app.available_cents($1) as a", [sharedEntry]))[0].a);
     expect(after - before).toBe(-19_091 + 10_000);
     const [log] = await db.q(member(bob), "select action, before, after from public.audit_log where action = 'bet_voided'");
-    expect(log.before).toMatchObject({ status: "won", stakeCents: 10_000 });
+    // The bet's game hasn't kicked off, so the log doesn't show its stake either.
+    expect(log.before).toEqual({ entryId: sharedEntry, status: "won" });
     expect(JSON.stringify(log)).not.toContain("spread");
   });
 });

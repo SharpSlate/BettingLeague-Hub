@@ -73,11 +73,17 @@ export class SupabaseStore implements Store {
     );
   }
 
+  async claimBetRefresh(minSeconds: number) {
+    return (await must<boolean>(this.db.rpc("claim_bet_refresh_internal", { p_min_seconds: minSeconds }), "claim refresh")) === true;
+  }
+
   async gamesAwaitingScores(now: Date) {
+    // A postponed game can still be played (and its bets still ride), so it keeps
+    // pulling scores for 3 days after its kickoff, like any other game.
     const { count, error } = await this.db.from("games").select("id", { count: "exact", head: true })
       .lte("kickoff_at", now.toISOString())
       .gt("kickoff_at", new Date(now.getTime() - 3 * 86_400_000).toISOString())
-      .in("status", ["scheduled", "live"]);
+      .in("status", ["scheduled", "live", "postponed"]);
     if (error) throw new Error(`games awaiting scores: ${error.message}`);
     return count ?? 0;
   }

@@ -326,6 +326,9 @@ h3 { font-size: 15px; font-weight: 700; }
 .toast > span { white-space: nowrap; }
 .toast .btn { min-height: 30px; background: transparent; color: inherit; border-color: color-mix(in srgb, var(--bg) 40%, transparent); }
 @media (min-width: 900px) { .toast { bottom: 24px; } }
+/* With the phone slip open (after a bet that didn't go in), the toast moves above it
+   so it doesn't cover the slip's buttons. */
+@media (max-width: 1099px) { .toast.over-sheet { top: calc(12px + env(safe-area-inset-top)); bottom: auto; } }
 
 /* ---------- bets ---------- */
 

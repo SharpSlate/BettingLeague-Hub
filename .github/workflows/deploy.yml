@@ -30,33 +30,40 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Only the non-secret settings are job-wide. Each secret goes to the steps that
+    # use it, so no other step (the CLI setup action included) ever sees it.
     env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SITE_URL: ${{ vars.SITE_URL }}
-      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-      CRON_SECRET: ${{ secrets.CRON_SECRET }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}
-      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
           version: 2.118.0
       - name: Check the required settings
+        env:
+          HAS_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+          HAS_SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD != '' }}
+          HAS_ODDS_API_KEY: ${{ secrets.ODDS_API_KEY != '' }}
+          HAS_CRON_SECRET: ${{ secrets.CRON_SECRET != '' }}
+          HAS_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY != '' }}
         run: |
           missing=""
-          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROJECT_REF SUPABASE_URL SITE_URL ODDS_API_KEY CRON_SECRET; do
+          for v in PROJECT_REF SUPABASE_URL SITE_URL; do
             [ -n "${!v}" ] || missing="$missing $v"
+          done
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD ODDS_API_KEY CRON_SECRET SUPABASE_ANON_KEY; do
+            h="HAS_$v"
+            [ "${!h}" = "true" ] || missing="$missing $v"
           done
           if [ -n "$missing" ]; then echo "::error::Missing settings:$missing (see SETUP.md)"; exit 1; fi
       - name: Leave off sign-in options that aren't set up yet
+        env:
+          HAS_SMTP: ${{ secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' }}
+          HAS_GOOGLE: ${{ secrets.GOOGLE_CLIENT_ID != '' && secrets.GOOGLE_CLIENT_SECRET != '' }}
         run: |
-          if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
+          if [ "$HAS_SMTP" != "true" ]; then
             echo "::warning::No league email yet: sign-in codes only reach the Supabase project's own members."
             python3 - <<'PY'
           import re
@@ -66,7 +73,7 @@ jobs:
           open(p, "w").write(s)
           PY
           fi
-          if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
+          if [ "$HAS_GOOGLE" != "true" ]; then
             echo "::warning::No Google sign-in client yet: the Google button won't work."
             python3 - <<'PY'
           import re
@@ -78,16 +85,37 @@ jobs:
           fi
           echo "SITE_ORIGIN=$(echo "$SITE_URL" | sed -E 's#^(https?://[^/]+).*#\1#')" >> "$GITHUB_ENV"
       - name: Link the project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      # db push also writes the Vault secrets the schedule reads (project_url and
+      # cron_secret, from config.toml's [db.vault]) before it applies migrations.
       - name: Apply database migrations (and Vault secrets for the schedule)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: supabase db push --password "$SUPABASE_DB_PASSWORD" --yes
       - name: Apply auth settings
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: supabase config push --project-ref "$PROJECT_REF" --yes
       - name: Set function secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           supabase secrets set --project-ref "$PROJECT_REF" \
             "ODDS_API_KEY=$ODDS_API_KEY" "CRON_SECRET=$CRON_SECRET" "SITE_ORIGIN=$SITE_ORIGIN"
       - name: Deploy Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase functions deploy --project-ref "$PROJECT_REF" --use-api
 
   pages:

@@ -155,6 +155,7 @@ function Entrants() {
 
 const ACTIONS: Record<string, string> = {
   week_opened: "opened the week",
+  week_closed: "closed the week",
   week_opened_note: "noted on opening the week",
   entry_added: "added an entry",
   manager_added: "added an entry manager",
@@ -168,15 +169,29 @@ const ACTIONS: Record<string, string> = {
   line_cleared: "cleared a line override",
   game_status_set: "changed a game's status",
   score_set: "entered a final score",
+  score_corrected: "corrected a final score",
   game_moved: "moved a game to another week",
   bet_voided: "voided a bet",
   rules_published: "published new rules",
   score_mismatch: "flagged a score mismatch",
 };
 
+const STATUS_WORD: Record<string, string> = { scheduled: "scheduled", postponed: "postponed", void: "void", live: "live", final: "final" };
+
 function detail(r: AuditRow): string {
   const a = r.after as Record<string, unknown> | null;
+  const b = r.before as Record<string, unknown> | null;
   if (!a) return "";
+  const regraded = typeof a.betsRegraded === "number" && a.betsRegraded > 0 ? `; ${a.betsRegraded} graded bet${a.betsRegraded === 1 ? "" : "s"} regraded` : "";
+  if (r.action === "game_status_set") {
+    const parts = [`${STATUS_WORD[String(b?.status)] ?? b?.status ?? "?"} → ${STATUS_WORD[String(a.status)] ?? a.status}`];
+    if (typeof a.kickoffAt === "string" && typeof b?.kickoffAt === "string" && Date.parse(a.kickoffAt) !== Date.parse(b.kickoffAt)) {
+      parts.push(`kickoff ${kickoff(b.kickoffAt)} → ${kickoff(a.kickoffAt)}`);
+    }
+    return parts.join(", ") + regraded;
+  }
+  if (r.action === "score_corrected" && b) return `${b.away}–${b.home} → ${a.away}–${a.home} (away–home)${regraded}`;
+  if (r.action === "week_closed") return `week ${a.closed}`;
   if (r.action === "bank_adjusted" && typeof a.amountCents === "number") return `${a.amountCents > 0 ? "+" : ""}${units(a.amountCents)} units`;
   if (r.action === "rules_published") return `version ${a.version}, from week ${a.effectiveWeek}`;
   if (r.action === "week_opened") return `week ${a.opened}`;

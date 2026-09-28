@@ -24,10 +24,12 @@ Deno.serve(async (req) => {
   let userId = (await db.rpc("user_id_by_email_internal", { p_email: email })).data as string | null;
   let created = false;
   if (!userId) {
+    // Display names are public, so a new member needs one; the email is never shown.
+    if (!displayName) return json(req, origins, 400, { error: "name_required", message: "Give the new member a display name." });
     const { data, error } = await db.auth.admin.createUser({
       email,
       email_confirm: true,
-      user_metadata: displayName ? { display_name: displayName } : {},
+      user_metadata: { display_name: displayName },
     });
     if (error || !data.user) return json(req, origins, 409, { error: "create_failed", message: error?.message });
     userId = data.user.id;
@@ -37,7 +39,7 @@ Deno.serve(async (req) => {
       action: "member_added",
       target_type: "profile",
       target_id: userId,
-      after: { displayName: displayName || null },
+      after: { displayName },
     });
   }
   if (entryId) {

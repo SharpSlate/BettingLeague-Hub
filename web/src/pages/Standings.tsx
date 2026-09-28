@@ -2,22 +2,31 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ErrorNote, Loading, PageHead, Segmented } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
-import { record, signedUnits, units } from "../lib/format.ts";
+import { easternDayStart, nextDay, record, signedUnits, units } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
 import type { StandingRow, WeekInfo } from "../lib/types.ts";
 
 type Range = "season" | "week" | "last" | "7d" | "custom";
 
+/**
+ * The period a view covers. "This week" and "Last week" go by the week a bet belongs
+ * to, so a Monday-night bet graded after midnight still counts in its own week, along
+ * with that week's minimum. Custom dates are Eastern calendar days.
+ */
 function rangeDates(range: Range, weeks: WeekInfo[] | undefined, custom: { from: string; to: string }) {
   const open = weeks?.find((w) => w.status === "open");
-  if (range === "week" && open) return { from: open.startsAt };
-  if (range === "last" && open) {
-    const prev = weeks!.filter((w) => w.week < open.week).at(-1);
-    return prev ? { from: prev.startsAt, to: prev.endsAt } : undefined;
+  const closed = (weeks ?? []).filter((w) => w.status === "closed" && (!open || w.week < open.week));
+  if (range === "week") {
+    const w = open ?? closed.at(-1);
+    return w ? { week: w.week } : undefined;
+  }
+  if (range === "last") {
+    const w = open ? closed.at(-1) : closed.at(-2);
+    return w ? { week: w.week } : undefined;
   }
   if (range === "7d") return { from: new Date(Date.now() - 7 * 86_400_000).toISOString() };
   if (range === "custom" && custom.from) {
-    return { from: new Date(`${custom.from}T00:00:00`).toISOString(), to: custom.to ? new Date(`${custom.to}T23:59:59`).toISOString() : undefined };
+    return { from: easternDayStart(custom.from), to: custom.to ? easternDayStart(nextDay(custom.to)) : undefined };
   }
   return undefined;
 }

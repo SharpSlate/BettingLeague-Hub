@@ -99,8 +99,8 @@ export class SupabaseApi implements Api {
     return this.teamCache;
   }
 
-  async standings(range?: { from?: string; to?: string }): Promise<StandingRow[]> {
-    const rows = check(await this.db.rpc("standings", { p_from: range?.from ?? null, p_to: range?.to ?? null }));
+  async standings(range?: { from?: string; to?: string; week?: number }): Promise<StandingRow[]> {
+    const rows = check(await this.db.rpc("standings", { p_from: range?.from ?? null, p_to: range?.to ?? null, p_week: range?.week ?? null }));
     return (rows as any[]).map((r) => ({
       entryId: r.entry_id, name: r.name, isMine: r.is_mine, bankCents: num(r.bank_cents), seasonNetCents: num(r.season_net_cents),
       seasonWinningsCents: num(r.season_winnings_cents), wins: r.wins, losses: r.losses, pushes: r.pushes, riskCents: num(r.risk_cents),
@@ -134,9 +134,14 @@ export class SupabaseApi implements Api {
   }
 
   async slips(q: { entryId?: string; mine?: boolean; week?: number; settled?: boolean; limit?: number }): Promise<SlipView[]> {
+    // Odds and payout aren't readable from the table (a parlay's odds would give away
+    // its hidden legs); slip_quotes returns them for the slips the viewer may see.
     let query = this.db
       .from("slips")
-      .select("*, entries(name), profiles!slips_placed_by_fkey(display_name), slip_legs(*, games(home_team, away_team, kickoff_at, status, home_score, away_score))")
+      .select(
+        "id, entry_id, placed_by, week, type, teaser_points, stake_cents, leg_count, rule_set_version, status, payout_cents, placed_at, settled_at, " +
+        "entries(name), profiles!slips_placed_by_fkey(display_name), slip_legs(*, games(home_team, away_team, kickoff_at, status, home_score, away_score))",
+      )
       .neq("status", "undone")
       .order("placed_at", { ascending: false })
       .limit(q.limit ?? 200);
@@ -150,10 +155,15 @@ export class SupabaseApi implements Api {
       query = query.in("entry_id", ids);
     }
     const [rows, teams] = [check(await query) as any[], new Map((await this.teams()).map((t) => [t.abbr, t]))];
+    const quotes = new Map<string, { a: number; p: number }>();
+    if (rows.length) {
+      const qs = check(await this.db.rpc("slip_quotes", { p_ids: rows.map((s) => s.id) })) as any[];
+      for (const x of qs) quotes.set(x.slip_id, { a: Number(x.quoted_american), p: Number(x.potential_payout_cents) });
+    }
     return rows.map((s) => ({
       id: s.id, entryId: s.entry_id, entryName: s.entries?.name ?? "", placedByName: s.profiles?.display_name ?? null,
-      week: s.week, type: s.type, teaserPoints: n(s.teaser_points), stakeCents: num(s.stake_cents), quotedAmerican: s.quoted_american,
-      potentialPayoutCents: num(s.potential_payout_cents), legCount: s.leg_count, ruleSetVersion: s.rule_set_version, status: s.status,
+      week: s.week, type: s.type, teaserPoints: n(s.teaser_points), stakeCents: num(s.stake_cents), quotedAmerican: quotes.get(s.id)?.a ?? null,
+      potentialPayoutCents: quotes.get(s.id)?.p ?? null, legCount: s.leg_count, ruleSetVersion: s.rule_set_version, status: s.status,
       payoutCents: n(s.payout_cents), placedAt: s.placed_at, settledAt: s.settled_at,
       legs: (s.slip_legs ?? []).map((l: any) => leg(l, teams)).sort((a: LegView, b: LegView) => a.legNo - b.legNo),
     }));
@@ -239,8 +249,8 @@ export class SupabaseApi implements Api {
   async adminAdjustBank(entryId: string, amountCents: number, reason: string) {
     check(await this.db.rpc("admin_adjust_bank", { p_entry: entryId, p_amount_cents: amountCents, p_reason: reason }));
   }
-  async adminOpenNextWeek(reason: string) {
-    return check(await this.db.rpc("admin_open_next_week", { p_reason: reason || null })) as number;
+  async adminOpenNextWeek(expectedOpenWeek: number | null, reason: string) {
+    return check(await this.db.rpc("admin_open_next_week", { p_expected_open: expectedOpenWeek, p_reason: reason || null })) as number | null;
   }
   async adminSetLine(gameId: string, market: string, a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string) {
     check(await this.db.rpc("admin_set_line", {

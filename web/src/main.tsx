@@ -7,12 +7,18 @@ import "./styles.css";
 
 applyTheme();
 
-makeApi().then((api) => {
-  createRoot(document.getElementById("root")!).render(
-    <StrictMode>
-      <ApiContext.Provider value={api}>
-        <App />
-      </ApiContext.Provider>
-    </StrictMode>,
-  );
-});
+const root = createRoot(document.getElementById("root")!);
+makeApi().then(
+  (api) => {
+    root.render(
+      <StrictMode>
+        <ApiContext.Provider value={api}>
+          <App />
+        </ApiContext.Provider>
+      </StrictMode>,
+    );
+  },
+  (e: unknown) => {
+    root.render(<div className="empty" role="alert">{e instanceof Error ? e.message : String(e)} Tell the commissioner.</div>);
+  },
+);

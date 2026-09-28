@@ -120,8 +120,9 @@ export interface SlipView {
   type: BetType;
   teaserPoints: number | null;
   stakeCents: number;
-  quotedAmerican: number;
-  potentialPayoutCents: number;
+  /** The slip's odds and payout. Null on another entry's parlay until every leg is revealed. */
+  quotedAmerican: number | null;
+  potentialPayoutCents: number | null;
   legCount: number;
   ruleSetVersion: number;
   status: SlipResult | "undone";
@@ -179,6 +180,8 @@ export interface PlacementRequest {
   teaserPoints: number | null;
   stakeCents: number;
   legs: Leg[];
+  /** A random id for this bet, reused on a retry so the bet can't be placed twice. */
+  clientRef: string;
 }
 
 export type PlaceResult =
@@ -213,7 +216,8 @@ export interface Api {
 
   league(): Promise<League>;
   teams(): Promise<Team[]>;
-  standings(range?: { from?: string; to?: string }): Promise<StandingRow[]>;
+  /** Season standings, or one week's (by week number), or bets settled between two times. */
+  standings(range?: { from?: string; to?: string; week?: number }): Promise<StandingRow[]>;
   games(week: number): Promise<GameView[]>;
   myEntries(): Promise<MyEntry[]>;
   slips(q: { entryId?: string; mine?: boolean; week?: number; settled?: boolean; limit?: number }): Promise<SlipView[]>;
@@ -234,7 +238,8 @@ export interface Api {
   adminSetAdmin(userId: string, isAdmin: boolean): Promise<void>;
   adminImportSplash(args: SplashImport): Promise<void>;
   adminAdjustBank(entryId: string, amountCents: number, reason: string): Promise<void>;
-  adminOpenNextWeek(reason: string): Promise<number>;
+  /** Closes the open week (the one the page shows) and opens the next. Null when no later week has games. */
+  adminOpenNextWeek(expectedOpenWeek: number | null, reason: string): Promise<number | null>;
   adminSetLine(gameId: string, market: Market, a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string): Promise<void>;
   adminClearLine(gameId: string, market: Market, reason: string): Promise<void>;
   adminSetGameStatus(gameId: string, status: "scheduled" | "postponed" | "void", kickoffAt: string | null, reason: string): Promise<void>;

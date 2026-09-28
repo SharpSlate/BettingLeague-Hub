@@ -148,4 +148,39 @@ describe("validateRuleSet", () => {
     expect(c).toContain("teaser_markets");
     expect(c).toContain("parlay_legs");
   });
+
+  const withTeaser = (t: Partial<RuleSet["betTypes"]["teaser"]>): RuleSet =>
+    ({ ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, teaser: { ...DAY_ONE_RULES.betTypes.teaser, ...t } } });
+  const withStake = (st: Partial<RuleSet["stake"]>): RuleSet => ({ ...DAY_ONE_RULES, stake: { ...DAY_ONE_RULES.stake, ...st } });
+
+  it("refuses leg limits that aren't whole numbers", () => {
+    const r: RuleSet = { ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, parlay: { ...DAY_ONE_RULES.betTypes.parlay, maxLegs: 10.5 } } };
+    expect(validateRuleSet(r).map((p) => p.code)).toContain("parlay_legs");
+    expect(validateRuleSet(withTeaser({ maxLegs: 9.5 })).map((p) => p.code)).toContain("teaser_legs");
+  });
+  it("refuses stake limits that aren't whole cents", () => {
+    for (const st of [{ incrementUnits: 0.001 }, { minUnits: 1.005 }, { maxUnits: 0 }, { minUnits: Number.NaN }]) {
+      expect(validateRuleSet(withStake(st)).map((p) => p.code)).toContain("stake");
+    }
+    expect(validateRuleSet(withStake({ minUnits: 2.5, incrementUnits: 0.5 }))).toEqual([]);
+  });
+  it("needs the 2-leg teaser row even when a new card needs 3 legs, since pushes cut cards down", () => {
+    const prices = structuredClone(DAY_ONE_RULES.betTypes.teaser.prices);
+    delete prices["6"]!["2"];
+    expect(validateRuleSet(withTeaser({ minLegs: 3, prices })).map((p) => p.message)).toContain("The teaser table needs a valid price for 2 legs at 6 points.");
+    expect(validateRuleSet(withTeaser({ minLegs: 3 }))).toEqual([]);
+  });
+  it("needs each teaser row to pay more than the row above it", () => {
+    const prices = structuredClone(DAY_ONE_RULES.betTypes.teaser.prices);
+    prices["6"]!["4"] = 170; // below the 3-leg +180
+    expect(validateRuleSet(withTeaser({ prices })).map((p) => p.message)).toContain("At 6 points, 4 legs must pay more than 3 legs.");
+  });
+});
+
+describe("validateSlip: payout size", () => {
+  it("refuses a payout too large to count exactly", () => {
+    const tenLongShots = games(10, (g) => ml("away", 1000, g));
+    expect(codes(parlay(tenLongShots, 25_000_000))).toEqual(["payout_too_large"]);
+    expect(codes(parlay(tenLongShots, 100))).toEqual([]);
+  });
 });

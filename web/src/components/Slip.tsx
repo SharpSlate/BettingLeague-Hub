@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type Problem, type RuleSet, type SlipInput } from "@rules";
+import { useMemo } from "react";
+import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
 import { clock, odds, point, toCents, units } from "../lib/format.ts";
 import { pushRuleText } from "../lib/rules-text.ts";
@@ -18,20 +18,17 @@ function teasedLabel(p: Pick, pts: number): string {
   return `${pickText(p, teasedPoint(legOf(p), pts))} (from ${p.market === "total" ? p.point : point(p.point)})`;
 }
 
-interface Moved { key: string; label: string; from: string; to: string; point: number | null; price: number }
+/** What a submit did: which bets went in, out of how many, and whether one failed (its reason stays on the slip). */
+export interface PlacedResult { ids: string[]; total: number; failed: boolean }
 
 export function SlipBody({ rules, entries, onPlaced }: {
   rules: RuleSet | undefined;
   entries: MyEntry[];
-  onPlaced: (slipIds: string[]) => void;
+  onPlaced: (r: PlacedResult) => void;
 }) {
   const api = useApi();
   const slip = useSlip();
-  const [busy, setBusy] = useState(false);
-  const [attempted, setAttempted] = useState(false);
-  const [serverProblems, setServerProblems] = useState<Problem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [moved, setMoved] = useState<Moved[]>([]);
+  const { busy, attempted, serverProblems, error, moved } = slip.status;
 
   const entry = entries.find((e) => e.entryId === slip.entryId) ?? entries[0];
   const mode = slip.mode;
@@ -81,24 +78,26 @@ export function SlipBody({ rules, entries, onPlaced }: {
   const canSubmit = !busy && allProblems.length === 0 && plan.stake > 0;
 
   async function submit() {
-    setAttempted(true);
-    setError(null);
-    setServerProblems([]);
-    setMoved([]);
-    if (!plan || allProblems.length || !entry) return;
-    setBusy(true);
+    slip.setStatus({ attempted: true, error: null, serverProblems: [], moved: [] });
+    if (!plan || allProblems.length || !entry || busy) return;
+    slip.setStatus({ busy: true });
     const placed: string[] = [];
+    let failed = false;
     try {
       for (const item of plan.items) {
-        const r = await api.placeSlip({ entryId: entry.entryId, type: item.input.type, teaserPoints: item.input.teaserPoints ?? null, stakeCents: item.input.stakeCents, legs: item.input.legs });
+        const req = { entryId: entry.entryId, type: item.input.type, teaserPoints: item.input.teaserPoints ?? null, stakeCents: item.input.stakeCents, legs: item.input.legs };
+        const clientRef = slip.clientRef(item.key, JSON.stringify(req));
+        const r = await api.placeSlip({ ...req, clientRef });
         if (r.ok) {
           placed.push(r.slipId);
+          slip.forgetRef(item.key);
           if (mode === "straight") slip.remove(item.key);
           continue;
         }
+        failed = true;
         if (r.kind === "moved") {
           const keys = mode === "straight" ? [item.key] : picks.map((p) => p.key);
-          setMoved(r.lines.map((m) => {
+          slip.setStatus({ moved: r.lines.map((m) => {
             const p = picks.find((x) => x.key === keys[mode === "straight" ? 0 : m.leg])!;
             return {
               key: p.key,
@@ -108,38 +107,43 @@ export function SlipBody({ rules, entries, onPlaced }: {
               point: m.point,
               price: m.price,
             };
-          }));
+          }) });
         } else if (r.kind === "invalid") {
-          setServerProblems(r.problems);
+          slip.setStatus({ serverProblems: r.problems });
         } else {
-          setError(r.message);
+          slip.setStatus({ error: r.message });
         }
         break;
       }
+    } catch (e) {
+      failed = true;
+      slip.setStatus({ error: e instanceof Error ? e.message : String(e) });
     } finally {
-      setBusy(false);
+      slip.setStatus({ busy: false });
     }
     if (placed.length) {
-      if (mode !== "straight" || placed.length === plan.items.length) slip.clear();
-      setAttempted(false);
-      onPlaced(placed);
+      if (!failed) {
+        slip.clear();
+        slip.setStatus({ attempted: false });
+      }
+      onPlaced({ ids: placed, total: plan.items.length, failed });
     }
   }
 
   const acceptMoved = () => {
     for (const m of moved) slip.updateLine(m.key, m.point, m.price);
-    setMoved([]);
+    slip.setStatus({ moved: [] });
   };
 
   const minPct = entry.requiredCents ? Math.min(100, Math.round((entry.wageredCents / entry.requiredCents) * 100)) : 100;
-  const setMode = (m: BetType) => { slip.setMode(m); setAttempted(false); setServerProblems([]); setMoved([]); };
+  const setMode = (m: BetType) => { slip.setMode(m); slip.setStatus({ attempted: false, serverProblems: [], moved: [] }); };
 
   return (
     <div className="stack">
       {entries.length > 1 ? (
         <label className="field">
           <span>Betting for</span>
-          <select className="input" value={entry.entryId} onChange={(e) => slip.setEntry(e.target.value)}>
+          <select className="input" value={entry.entryId} disabled={busy} onChange={(e) => slip.setEntry(e.target.value)}>
             {entries.map((e) => <option key={e.entryId} value={e.entryId}>{e.name} · {units(e.availableCents)} available</option>)}
           </select>
         </label>
@@ -161,6 +165,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         full
         label="Bet type"
         value={mode}
+        disabled={busy}
         onChange={setMode}
         options={[
           { value: "straight", label: "Straight" },
@@ -173,6 +178,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
           full
           label="Teaser points"
           value={slip.teaserPoints}
+          disabled={busy}
           onChange={(v) => slip.setTeaserPoints(v)}
           options={rules.betTypes.teaser.points.map((p) => ({ value: p, label: `${p} pts` }))}
         />
@@ -187,11 +193,11 @@ export function SlipBody({ rules, entries, onPlaced }: {
               </div>
               <div className="tiny muted">{matchupText(p)} · {clock(p.kickoffAt)}</div>
             </div>
-            <button className="x" aria-label={`Remove ${pickText(p)}`} onClick={() => slip.remove(p.key)}>×</button>
+            <button className="x" aria-label={`Remove ${pickText(p)}`} disabled={busy} onClick={() => slip.remove(p.key)}>×</button>
             {mode === "straight" ? (
               <label className="field" style={{ gridColumn: "1 / -1", marginTop: 6 }}>
                 <span className="sr-only">Stake for {pickText(p)}</span>
-                <input className="input num" inputMode="decimal" placeholder="Stake (units)" value={slip.stakes[p.key] ?? ""} onChange={(e) => slip.setStake(p.key, e.target.value)} />
+                <input className="input num" inputMode="decimal" placeholder="Stake (units)" disabled={busy} value={slip.stakes[p.key] ?? ""} onChange={(e) => slip.setStake(p.key, e.target.value)} />
               </label>
             ) : null}
             {legProblem(i).filter((x) => x.code !== "stake" || attempted).map((x) => <div className="bad" key={x.code}>{x.message}</div>)}
@@ -202,7 +208,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
       {mode !== "straight" ? (
         <label className="field">
           <span>Stake (units)</span>
-          <input className="input num" inputMode="decimal" placeholder="0" value={slip.stakes[COMBO] ?? ""} onChange={(e) => slip.setStake(COMBO, e.target.value)} />
+          <input className="input num" inputMode="decimal" placeholder="0" disabled={busy} value={slip.stakes[COMBO] ?? ""} onChange={(e) => slip.setStake(COMBO, e.target.value)} />
         </label>
       ) : null}
 
@@ -225,7 +231,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
           <div className="stack-sm">
             <b>A line moved.</b>
             {moved.map((m) => <span key={m.key}>{m.label}: {m.from} → <b>{m.to}</b></span>)}
-            <div><button className="btn small primary" onClick={acceptMoved}>Accept the new line{moved.length > 1 ? "s" : ""}</button></div>
+            <div><button className="btn small primary" disabled={busy} onClick={acceptMoved}>Accept the new line{moved.length > 1 ? "s" : ""}</button></div>
           </div>
         </div>
       ) : null}

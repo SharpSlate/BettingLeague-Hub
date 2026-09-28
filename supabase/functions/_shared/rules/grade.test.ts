@@ -179,3 +179,14 @@ describe("grading uses the rule set the slip was placed under", () => {
     expect(gradeSlip(t3, results("won", "won", "won"), v2).payoutCents).toBe(26_000);
   });
 });
+
+describe("gradeSlip: a teaser cut down by pushes", () => {
+  const threeLegMinimum: RuleSet = { ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, teaser: { ...DAY_ONE_RULES.betTypes.teaser, minLegs: 3 } } };
+  const card: GradableSlip = { type: "teaser", stakeCents: 10_000, teaserPoints: 6, legs: [spread("home", -3, "a"), spread("home", -3, "b"), spread("home", -3, "c")] };
+  it("pays the 2-leg price even when new cards need 3 legs", () => {
+    // 100 units at -110 = 100 x 21/11 = 190.909... -> 19,091 cents, not the full 3-leg +180 (28,000).
+    expect(gradeSlip(card, ["won", "push", "won"], threeLegMinimum)).toEqual({ result: "won", payoutCents: 19_091 });
+    expect(gradeSlip(card, ["won", "push", "push"], threeLegMinimum)).toEqual({ result: "won", payoutCents: 19_091 });
+    expect(gradeSlip(card, ["won", "won", "won"], threeLegMinimum)).toEqual({ result: "won", payoutCents: 28_000 });
+  });
+});

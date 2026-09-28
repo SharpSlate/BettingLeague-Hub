@@ -44,8 +44,10 @@ function Action({ title, children, onSubmit, submit = "Save", note }: {
 const Field = ({ label, children }: { label: string; children: ReactNode }) => <label className="field"><span>{label}</span>{children}</label>;
 
 function cents(text: string, allowNegative = false): number {
-  const neg = allowNegative && text.trim().startsWith("-");
-  const c = toCents(text.replace(/^[-+]/, ""));
+  const t = text.trim().replace(/^[\u2212\u2013]/, "-");
+  const neg = t.startsWith("-");
+  if (neg && !allowNegative) throw new Error("This amount can't be negative.");
+  const c = toCents(t.replace(/^[-+]/, ""));
   if (c === null) throw new Error("Enter an amount in units, e.g. 1500 or 1500.25.");
   return neg ? -c : c;
 }
@@ -101,21 +103,27 @@ function Status({ reload }: { reload: () => void }) {
         <span />
       </Action>
       <Action title="Scores and grading" submit="Pull scores and grade" onSubmit={async () => api.adminRunJob("pull-scores")}
-        note="Runs every 10 minutes on its own. It only calls the Odds API while a game is in progress.">
+        note="Runs every 10 minutes on its own, and only calls the Odds API while a game is on. A game goes final when two pulls in a row report the same final score.">
         <span />
       </Action>
-      <Action title="Open the next week" submit={armed ? `Yes, close ${lg?.openWeek?.label ?? "this week"} and open the next` : "Open next week"}
-        note="The next week opens by itself once every game of this week is final and graded. Use this only around a postponed game. Any shortfall on the 30% minimum is deducted when the week closes."
+      <Action title={lg?.openWeek ? "Open the next week" : "Open a week"}
+        submit={armed ? (lg?.openWeek ? `Yes, close ${lg.openWeek.label} and open the next` : "Yes, open the next week") : lg?.openWeek ? "Open next week" : "Open the next week"}
+        note={lg?.openWeek
+          ? "The next week opens by itself once every game of this week is final and graded. Use this around a postponed game, or to close the season's last week. Any shortfall on the 30% minimum is deducted when the week closes. A week can't be closed before any of its games has kicked off."
+          : "No week is open. This opens the next week that has games on the board."}
         onSubmit={async () => {
           if (!armed) {
             setArmed(true);
             return "Click the button again to confirm.";
           }
           setArmed(false);
-          const w = await api.adminOpenNextWeek(reason);
+          const closing = lg?.openWeek ?? null;
+          const w = await api.adminOpenNextWeek(closing?.week ?? null, reason);
           league.reload();
           reload();
-          return `Week ${w} is open.`;
+          return w === null
+            ? `${closing?.label ?? "The week"} is closed. No later week has games on the board yet; once it does, open it here.`
+            : `Week ${w} is open.`;
         }}>
         <Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. BUF–MIA postponed to Tuesday" /></Field>
       </Action>
@@ -134,9 +142,9 @@ function Members() {
   return (
     <div className="grid-2">
       <Action title="Add a member" submit="Add member" note="Sign-ups are closed, so this is how people get in. They then sign in with their email or Google."
-        onSubmit={async () => { await api.adminAddMember(f.email, f.name, f.entry || null); users.reload(); setF({ email: "", name: "", entry: "" }); return "Added. They can sign in now."; }}>
+        onSubmit={async () => { await api.adminAddMember(f.email, f.name.trim(), f.entry || null); users.reload(); setF({ email: "", name: "", entry: "" }); return "Added. They can sign in now."; }}>
         <Field label="Email"><input className="input" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
-        <Field label="Display name"><input className="input" maxLength={40} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+        <Field label="Display name (everyone sees it)"><input className="input" required maxLength={40} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Manages entry (optional)">
           <select className="input" value={f.entry} onChange={(e) => setF({ ...f, entry: e.target.value })}>
             <option value="">None yet</option>
@@ -296,7 +304,7 @@ function Games({ week }: { week: number | null }) {
             <Field label="Reason"><input className="input" required minLength={3} value={line.reason} onChange={(e) => setLine({ ...line, reason: e.target.value })} /></Field>
             <button type="button" className="btn small" onClick={async () => { await api.adminClearLine(g.id, line.market, line.reason || "Back to the feed's line"); games.reload(); }}>Clear override (use the feed)</button>
           </Action>
-          <Action title="Game status" submit="Save status" note="Postponing blocks the automatic week change. Voiding grades every leg on the game as void."
+          <Action title="Game status" submit="Save status" note="Postponing closes betting on the game and holds up the automatic week change; its bets ride until it's played or voided. Voiding grades every leg on the game as void (and regrades bets already graded). Betting can only reopen, and a kickoff only move, while the game's kickoff is still ahead."
             onSubmit={async () => { await api.adminSetGameStatus(g.id, status.status as "scheduled" | "postponed" | "void", status.kickoff ? new Date(status.kickoff).toISOString() : null, status.reason); games.reload(); }}>
             <Field label="Status">
               <select className="input" value={status.status} onChange={(e) => setStatus({ ...status, status: e.target.value })}>
@@ -306,8 +314,20 @@ function Games({ week }: { week: number | null }) {
             <Field label="New kickoff (optional, your local time)"><input className="input" type="datetime-local" value={status.kickoff} onChange={(e) => setStatus({ ...status, kickoff: e.target.value })} /></Field>
             <Field label="Reason"><input className="input" required minLength={3} value={status.reason} onChange={(e) => setStatus({ ...status, reason: e.target.value })} /></Field>
           </Action>
-          <Action title="Enter a final score" submit="Save final score" note="Only if the score feed fails. Not allowed once bets on the game are graded."
-            onSubmit={async () => { await api.adminSetFinalScore(g.id, Number(score.home), Number(score.away), score.reason); games.reload(); return "Saved. Bets on this game will be graded on the next run."; }}>
+          <Action title={g.status === "final" ? "Correct the final score" : "Enter a final score"} submit="Save final score"
+            note={g.status === "final" || g.status === "void"
+              ? "Correcting a score takes back what its graded bets paid and grades them again on the next run (within 10 minutes). Bets an admin voided stay void."
+              : "For when the score feed fails. Bets on this game are graded on the next run (within 10 minutes)."}
+            onSubmit={async () => {
+              const home = Number(score.home);
+              const away = Number(score.away);
+              if (!Number.isInteger(home) || !Number.isInteger(away) || home < 0 || away < 0 || score.home.trim() === "" || score.away.trim() === "") {
+                throw new Error("Scores are whole numbers, 0 or more.");
+              }
+              await api.adminSetFinalScore(g.id, home, away, score.reason);
+              games.reload();
+              return "Saved. Bets on this game will be graded on the next run.";
+            }}>
             <div className="row"><Field label={`${g.away.shortName} (away)`}><input className="input num" required value={score.away} onChange={(e) => setScore({ ...score, away: e.target.value })} /></Field><Field label={`${g.home.shortName} (home)`}><input className="input num" required value={score.home} onChange={(e) => setScore({ ...score, home: e.target.value })} /></Field></div>
             <Field label="Reason"><input className="input" required minLength={3} value={score.reason} onChange={(e) => setScore({ ...score, reason: e.target.value })} /></Field>
           </Action>

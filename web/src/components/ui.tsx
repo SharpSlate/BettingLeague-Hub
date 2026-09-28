@@ -1,16 +1,17 @@
 import type { ReactNode } from "react";
 
-export function Segmented<T extends string | number>({ value, options, onChange, full, label }: {
+export function Segmented<T extends string | number>({ value, options, onChange, full, label, disabled }: {
   value: T;
   options: { value: T; label: ReactNode }[];
   onChange: (v: T) => void;
   full?: boolean;
   label?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className={`seg${full ? " full" : ""}`} role="radiogroup" aria-label={label}>
       {options.map((o) => (
-        <button key={String(o.value)} type="button" role="radio" aria-checked={o.value === value} className={o.value === value ? "on" : ""} onClick={() => onChange(o.value)}>
+        <button key={String(o.value)} type="button" role="radio" aria-checked={o.value === value} className={o.value === value ? "on" : ""} disabled={disabled} onClick={() => onChange(o.value)}>
           {o.label}
         </button>
       ))}
@@ -65,6 +66,21 @@ export function errorText(e: unknown): string {
     spread_points_must_mirror: "The two spread numbers must mirror each other (e.g. −3 and +3).",
     total_points_must_match: "Over and under need the same total.",
     last_admin: "The league needs at least one admin.",
+    week_changed: "The open week changed since this page loaded. Reload and check before trying again.",
+    week_not_started: "No game this week has kicked off yet, so it can't be closed early.",
+    no_week_to_open: "No upcoming week has games on the board yet.",
+    week_closed: "That bet's week has closed, so it can't be undone.",
+    kickoff_in_past: "A kickoff can't be set in the past.",
+    kickoff_passed: "This game's kickoff has passed, so its kickoff can't be changed.",
+    game_void: "That game was voided. Enter its final score to bring its bets back.",
+    game_final: "That game is final. Correct its score or void it instead.",
+    game_not_started: "That game hasn't kicked off yet.",
+    no_change: "That's already the final score.",
+    bad_score: "Scores are whole numbers, 0 or more.",
+    bad_price: "Prices are American odds from 100 to 100000, plus or minus.",
+    bad_point: "Lines are whole or half points.",
+    week_already_open: "Only games in a week that hasn't opened yet can be moved.",
+    effective_week_before_scheduled: "A rules change is already scheduled for a later week. Start this one from that week or later.",
   };
   return map[m] ?? m;
 }

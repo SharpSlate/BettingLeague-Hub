@@ -72,7 +72,10 @@ export function gradeSlip(slip: GradableSlip, results: LegResult[], rules: RuleS
   if (pushes > 0 && t.pushRule === "lose") return lost;
   if (pushes > 0 && t.pushRule === "refund") return refund("push");
   if (winners.length === 0) return refund(allVoid ? "void" : "push");
-  const legsPriced = winners.length === slip.legs.length ? slip.legs.length : Math.max(t.minLegs, winners.length);
+  // A card cut down by pushes or voids pays the table price for the legs left, and a
+  // single leg left gets the 2-leg price. The floor is 2 legs, not the minimum a new
+  // card needs: pricing at the minimum would pay a cut-down card as if nothing pushed.
+  const legsPriced = winners.length === slip.legs.length ? slip.legs.length : Math.max(2, winners.length);
   const price = teaserPrice(rules, points, legsPriced);
   if (price === null) throw new Error(`no teaser price for ${legsPriced} legs at ${points} points`);
   return { result: "won", payoutCents: payoutCents(stake, americanToDecimal(price)) };

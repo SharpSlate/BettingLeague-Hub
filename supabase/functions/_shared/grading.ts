@@ -32,13 +32,29 @@ export function legResult(leg: Leg, game: GameResult | undefined, teaserPoints: 
   return gradeLeg(leg, { homeScore: game.homeScore, awayScore: game.awayScore }, teaserPoints);
 }
 
-/** The settlements that can be made now. Slips still waiting on a game are left out. */
-export function gradePending(slips: PendingSlip[], games: Map<string, GameResult>): Settlement[] {
+/**
+ * The settlements that can be made now. Slips still waiting on a game are left out,
+ * and so is a slip that can't be graded (reported through onError), so one bad slip
+ * doesn't stop the rest.
+ */
+export function gradePending(
+  slips: PendingSlip[],
+  games: Map<string, GameResult>,
+  onError: (slipId: string, e: unknown) => void = (_id, e) => {
+    throw e;
+  },
+): Settlement[] {
   const out: Settlement[] = [];
   for (const slip of slips) {
     const teaser = slip.type === "teaser" ? slip.teaserPoints : null;
     const results = slip.legs.map((leg) => legResult(leg, games.get(leg.gameId), teaser));
-    const grade = gradeSlip(slip, results, slip.rules);
+    let grade;
+    try {
+      grade = gradeSlip(slip, results, slip.rules);
+    } catch (e) {
+      onError(slip.id, e);
+      continue;
+    }
     if (grade.result === "pending") continue;
     out.push({
       slipId: slip.id,

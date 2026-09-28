@@ -1,4 +1,4 @@
-import type { Market, Side } from "@rules";
+import { effectivePrice, type Market, type RuleSet, type Side } from "@rules";
 import { ago, clock, odds, pickLabel, point } from "../lib/format.ts";
 import { pickKey, useSlip } from "../lib/slip.tsx";
 import type { GameView, LineView } from "../lib/types.ts";
@@ -9,25 +9,28 @@ export function bookName(source: string): string {
   return BOOK[source] ?? source;
 }
 
-function PriceButton({ game, line, market, side }: { game: GameView; line: LineView | undefined; market: Market; side: Side }) {
+function PriceButton({ game, line, market, side, rules }: { game: GameView; line: LineView | undefined; market: Market; side: Side; rules?: RuleSet }) {
   const slip = useSlip();
   if (!line) {
     return <button type="button" className="price" disabled aria-label="Not offered"><span className="p2">—</span></button>;
   }
   const key = pickKey(game.id, market, side);
   const on = slip.has(key);
-  const top = market === "moneyline" ? odds(line.price) : market === "total" ? `${side === "over" ? "O" : "U"} ${line.point}` : point(line.point ?? 0);
-  const bottom = market === "moneyline" ? "" : odds(line.price);
+  // Under flat pricing, spreads and totals pay the league's flat price, not the book's.
+  const price = rules ? effectivePrice(market, line.price, rules) : line.price;
+  const top = market === "moneyline" ? odds(price) : market === "total" ? `${side === "over" ? "O" : "U"} ${line.point}` : point(line.point ?? 0);
+  const bottom = market === "moneyline" ? "" : odds(price);
   const label = pickLabel(game, market, side, line.point);
   return (
     <button
       type="button"
       className={`price${on ? " on" : ""}`}
       aria-pressed={on}
-      aria-label={`${label} ${odds(line.price)}`}
+      aria-label={`${label} ${odds(price)}`}
+      disabled={slip.status.busy}
       onClick={() =>
         slip.toggle({
-          key, gameId: game.id, market, side, point: line.point, price: line.price,
+          key, gameId: game.id, market, side, point: line.point, price,
           home: game.home.shortName, away: game.away.shortName, kickoffAt: game.kickoffAt,
         })
       }
@@ -38,7 +41,7 @@ function PriceButton({ game, line, market, side }: { game: GameView; line: LineV
   );
 }
 
-export function GameCard({ game, now }: { game: GameView; now: number }) {
+export function GameCard({ game, now, rules }: { game: GameView; now: number; rules?: RuleSet }) {
   const started = game.status !== "scheduled" || new Date(game.kickoffAt).getTime() <= now;
   const line = (market: Market, side: Side) => game.lines.find((l) => l.market === market && l.side === side);
   const sources = [...new Set(game.lines.map((l) => l.source))];
@@ -87,13 +90,13 @@ export function GameCard({ game, now }: { game: GameView; now: number }) {
           <span className="colhead">Total</span>
           <span className="colhead">Money</span>
           {teamRow("away")}
-          <PriceButton game={game} line={line("spread", "away")} market="spread" side="away" />
-          <PriceButton game={game} line={line("total", "over")} market="total" side="over" />
-          <PriceButton game={game} line={line("moneyline", "away")} market="moneyline" side="away" />
+          <PriceButton game={game} rules={rules} line={line("spread", "away")} market="spread" side="away" />
+          <PriceButton game={game} rules={rules} line={line("total", "over")} market="total" side="over" />
+          <PriceButton game={game} rules={rules} line={line("moneyline", "away")} market="moneyline" side="away" />
           {teamRow("home")}
-          <PriceButton game={game} line={line("spread", "home")} market="spread" side="home" />
-          <PriceButton game={game} line={line("total", "under")} market="total" side="under" />
-          <PriceButton game={game} line={line("moneyline", "home")} market="moneyline" side="home" />
+          <PriceButton game={game} rules={rules} line={line("spread", "home")} market="spread" side="home" />
+          <PriceButton game={game} rules={rules} line={line("total", "under")} market="total" side="under" />
+          <PriceButton game={game} rules={rules} line={line("moneyline", "home")} market="moneyline" side="home" />
         </div>
       )}
     </article>

@@ -57,7 +57,7 @@ export function Picks() {
     for (const s of slips.data ?? []) {
       const first = s.legs[0];
       const what = first ? `${legLabel(first.game, first)}${s.legCount > 1 ? ` + ${s.legCount - 1} more` : ""}` : "a pick";
-      items.push({ key: `p${s.id}`, at: s.placedAt, text: <><b>{s.entryName}</b> staked {units(s.stakeCents)} on {what} <span className="muted">({betTypeName[s.type].toLowerCase()}{s.type !== "straight" ? ` ${odds(s.quotedAmerican)}` : ""})</span></> });
+      items.push({ key: `p${s.id}`, at: s.placedAt, text: <><b>{s.entryName}</b> staked {units(s.stakeCents)} on {what} <span className="muted">({betTypeName[s.type].toLowerCase()}{s.type !== "straight" && s.quotedAmerican !== null ? ` ${odds(s.quotedAmerican)}` : ""})</span></> });
       if (s.settledAt && s.status !== "pending") {
         items.push({ key: `s${s.id}`, at: s.settledAt, text: <><b>{s.entryName}</b>'s {betTypeName[s.type].toLowerCase()} on {what}: <StatusChip status={s.status} />{s.status === "won" ? <> paid <b className="num">{units(s.payoutCents)}</b></> : null}</> });
       }

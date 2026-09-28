@@ -86,6 +86,23 @@ export function record(w: number, l: number, p: number): string {
   return p ? `${w}-${l}-${p}` : `${w}-${l}`;
 }
 
+/** When a calendar day ("2026-10-04") starts in Eastern time, as an ISO instant. */
+export function easternDayStart(date: string): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const hour = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "2-digit", hourCycle: "h23" });
+  for (const offset of [4, 5]) {
+    const t = Date.UTC(y, m - 1, d, offset);
+    if (Number(hour.format(t)) === 0) return new Date(t).toISOString();
+  }
+  return new Date(Date.UTC(y, m - 1, d, 5)).toISOString();
+}
+
+/** The calendar day after the given one. */
+export function nextDay(date: string): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
 export function toCents(unitsText: string): number | null {
   const t = unitsText.replace(/[,\s]/g, "");
   if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;

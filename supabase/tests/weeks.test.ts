@@ -55,7 +55,7 @@ describe("starting the season", () => {
   });
 
   it("an admin opens it", async () => {
-    const [r] = await db.q(member(owner), "select public.admin_open_next_week('Trial') as w");
+    const [r] = await db.q(member(owner), "select public.admin_open_next_week(null, 'Trial') as w");
     expect(r.w).toBe(4);
   });
 });
@@ -102,10 +102,14 @@ describe("closing a week", () => {
     await db.su("update public.games set kickoff_at = now() - interval '4 hours' where id in ($1, $2)", [gA, gB]);
     await scores([{ id: "A", completed: false, homeScore: 7, awayScore: 3 }]);
     expect((await db.su("select status from public.games where id = $1", [gA]))[0].status).toBe("live");
-    await scores([
+    const finals = [
       { id: "A", completed: true, homeScore: 27, awayScore: 24 },
       { id: "B", completed: true, homeScore: 20, awayScore: 17 },
-    ]);
+    ];
+    await scores(finals);
+    // One reading isn't enough: a game goes final when the next pull reports the same score.
+    expect((await db.su("select status, home_score from public.games where id = $1", [gA]))[0]).toEqual({ status: "live", home_score: 27 });
+    await scores(finals);
     expect((await db.su("select status, home_score from public.games where id = $1", [gA]))[0]).toEqual({ status: "final", home_score: 27 });
     await scores([{ id: "A", completed: true, homeScore: 28, awayScore: 24 }]);
     await scores([{ id: "A", completed: true, homeScore: 28, awayScore: 24 }]);
@@ -168,7 +172,7 @@ describe("postponed games", () => {
     await db.su("update public.games set kickoff_at = now() - interval '4 hours' where id = $1", [n]);
     await db.q(member(owner), "select public.admin_set_game_status($1, 'postponed', null, 'Weather: moved to Tuesday')", [n]);
     expect((await db.q(service, "select public.advance_week_internal() as w"))[0].w).toBeNull();
-    const [r] = await db.q(member(owner), "select public.admin_open_next_week('Opening week 6 around the postponed game') as w");
+    const [r] = await db.q(member(owner), "select public.admin_open_next_week(5, 'Opening week 6 around the postponed game') as w");
     expect(r.w).toBe(6);
     expect((await db.su("select rule_set_version from public.weeks where week = 6"))[0].rule_set_version).toBe(2);
   });

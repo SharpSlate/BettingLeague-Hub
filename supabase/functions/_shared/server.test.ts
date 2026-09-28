@@ -213,11 +213,17 @@ class FakeStore implements Store {
   gameMap = new Map<string, GameResult>();
   settled: string[] = [];
   advanceTo: number | null = null;
+  advanced = 0;
+  claimOk = true;
+  failIngest = false;
+  failSettle = new Set<string>();
+  costs: { error: string; cost: number | null; remaining: number | null }[] = [];
 
   async settings() { return this.settingsValue; }
   async lastCredits() { return this.credits; }
   async lastGoodLinesPull() { return null; }
   async ingestLines(trigger: string, events: NormalizedEvent[], _cost: number | null, remaining: number | null) {
+    if (this.failIngest) throw new Error("connection reset");
     this.lines = events;
     this.pulls.push({ kind: "lines", trigger, ok: true, error: "" });
     if (remaining !== null) this.credits = { remaining, at: new Date() };
@@ -228,12 +234,20 @@ class FakeStore implements Store {
     this.pulls.push({ kind: "scores", trigger, ok: true, error: "" });
     return scores.length;
   }
-  async recordPull(kind: string, trigger: string, ok: boolean, error: string) { this.pulls.push({ kind, trigger, ok, error }); }
+  async recordPull(kind: string, trigger: string, ok: boolean, error: string, cost: number | null, remaining: number | null) {
+    this.pulls.push({ kind, trigger, ok, error });
+    this.costs.push({ error, cost, remaining });
+  }
+  async claimBetRefresh() { return this.claimOk; }
   async gamesAwaitingScores() { return this.awaiting; }
   async pendingSlips() { return this.pending; }
   async games(ids: string[]) { return new Map([...this.gameMap].filter(([k]) => ids.includes(k))); }
-  async settle(s: { slipId: string }) { this.settled.push(s.slipId); return true; }
-  async advanceWeek() { return this.advanceTo; }
+  async settle(s: { slipId: string }) {
+    if (this.failSettle.has(s.slipId)) throw new Error("settle: bad_payout");
+    this.settled.push(s.slipId);
+    return true;
+  }
+  async advanceWeek() { this.advanced++; return this.advanceTo; }
 }
 
 function fakeFetch(body: unknown, status = 200, headers: Record<string, string> = { "x-requests-remaining": "90000", "x-requests-last": "3" }) {
@@ -280,12 +294,99 @@ describe("pullLines", () => {
   });
 });
 
+describe("pullLines under stress", () => {
+  const inWindow = new Date("2026-10-01T16:00:00Z");
+  it("lets only one bet at a time pull; the rest don't call the API", async () => {
+    const store = new FakeStore();
+    store.claimOk = false;
+    const f = fakeFetch(fixture("odds.json"));
+    expect(await pullLines(store, "KEY", f, "bet", inWindow)).toMatchObject({ status: "skipped" });
+    expect(f.calls).toHaveLength(0);
+  });
+  it("never stores the API key from a network error", async () => {
+    const store = new FakeStore();
+    const f = async (url: string) => {
+      throw new TypeError(`error sending request for url (${url}): connection refused`);
+    };
+    expect(await pullLines(store, "SECRETKEY123", f, "schedule", inWindow)).toEqual({ status: "failed", reason: "network error" });
+    expect(store.pulls).toHaveLength(1);
+    expect(store.pulls[0]!.error).not.toContain("SECRETKEY123");
+    expect(store.pulls[0]!.error).toContain("network error");
+  });
+  it("records a paid pull that couldn't be stored, with its cost, so the credit floor counts it", async () => {
+    const store = new FakeStore();
+    store.failIngest = true;
+    const f = fakeFetch(fixture("odds.json"), 200, { "x-requests-remaining": "4800", "x-requests-last": "3" });
+    expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toMatchObject({ status: "failed", remaining: 4800 });
+    expect(store.costs).toEqual([{ error: "couldn't store the pull (Error: connection reset)", cost: 3, remaining: 4800 }]);
+  });
+  it("skips malformed events and books instead of failing the pull", () => {
+    const events = [
+      { id: "x", commence_time: "2026-10-04T17:00:00Z", home_team: "Kansas City Chiefs", away_team: "Buffalo Bills", bookmakers: [{ key: "draftkings" }] },
+      { id: "y", home_team: "A", away_team: "B" },
+      null,
+    ];
+    expect(normalizeOdds(events)).toEqual([
+      { id: "x", commenceTime: "2026-10-04T17:00:00Z", homeTeam: "Kansas City Chiefs", awayTeam: "Buffalo Bills", books: [{ book: "draftkings", outcomes: [] }] },
+    ]);
+    expect(normalizeOdds({ message: "not a list" })).toEqual([]);
+  });
+});
+
+describe("normalizeScores", () => {
+  const ev = (home: unknown, away: unknown) => ({
+    id: "g", commence_time: "", completed: true, home_team: "H", away_team: "A",
+    scores: [{ name: "H", score: home }, { name: "A", score: away }],
+  });
+  it("reads scores sent as text or numbers", () => {
+    expect(normalizeScores([ev("24", 17)])).toEqual([{ id: "g", completed: true, homeScore: 24, awayScore: 17 }]);
+  });
+  it("skips blank, missing or odd scores instead of reading them as 0", () => {
+    for (const bad of ["", " ", null, undefined, "12.5", "-3", "abc", 1.5]) {
+      expect(normalizeScores([ev(bad, "17")])).toEqual([]);
+    }
+  });
+});
+
 describe("runScores", () => {
+  it("settles the other bets and still advances the week when one bet can't be settled", async () => {
+    const store = new FakeStore();
+    const slip = (id: string) => ({
+      id, type: "straight" as const, stakeCents: 10_000, teaserPoints: null, rules: DAY_ONE_RULES,
+      legs: [{ legNo: 1, gameId: "a", market: "total" as const, side: "under" as const, point: 47.5, price: -110 }],
+    });
+    store.pending = [slip("bad"), slip("good")];
+    store.failSettle.add("bad");
+    store.gameMap.set("a", final("a", 27, 20));
+    store.advanceTo = 6;
+    const r = await runScores(store, "KEY", fakeFetch([]), "schedule");
+    expect(store.settled).toEqual(["good"]);
+    expect(r.errors).toEqual(["bad: Error: settle: bad_payout"]);
+    expect(r.advancedTo).toBe(6);
+  });
+  it("reports a bet that can't be graded and grades the rest", async () => {
+    const store = new FakeStore();
+    const noTable = { ...DAY_ONE_RULES, betTypes: { ...DAY_ONE_RULES.betTypes, teaser: { ...DAY_ONE_RULES.betTypes.teaser, prices: {} } } };
+    store.pending = [
+      { id: "t", type: "teaser", stakeCents: 10_000, teaserPoints: 6, rules: noTable, legs: [
+        { legNo: 1, gameId: "a", market: "total", side: "under", point: 47.5, price: -110 },
+        { legNo: 2, gameId: "a", market: "spread", side: "home", point: -3, price: -110 },
+      ] },
+      { id: "s", type: "straight", stakeCents: 10_000, teaserPoints: null, rules: DAY_ONE_RULES, legs: [{ legNo: 1, gameId: "a", market: "total", side: "under", point: 47.5, price: -110 }] },
+    ];
+    store.gameMap.set("a", final("a", 27, 20));
+    const r = await runScores(store, "KEY", fakeFetch([]), "schedule");
+    expect(store.settled).toEqual(["s"]);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toContain("t: Error: no teaser price");
+    expect(store.advanced).toBe(1);
+  });
+
   it("doesn't call the API when no game needs scores, but still grades and advances", async () => {
     const store = new FakeStore();
     store.advanceTo = 6;
     const f = fakeFetch(fixture("scores.json"));
-    expect(await runScores(store, "KEY", f, "schedule")).toEqual({ scores: { status: "skipped", reason: "no games waiting on scores" }, settled: 0, advancedTo: 6 });
+    expect(await runScores(store, "KEY", f, "schedule")).toEqual({ scores: { status: "skipped", reason: "no games waiting on scores" }, settled: 0, advancedTo: 6, errors: [] });
     expect(f.calls).toHaveLength(0);
   });
   it("pulls scores while games are on, then grades what's final", async () => {

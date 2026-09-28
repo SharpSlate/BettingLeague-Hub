@@ -15,11 +15,42 @@ function flatten(o: unknown, prefix = "", out: Record<string, string> = {}): Rec
   return out;
 }
 
-function Num({ label, value, onChange, step = 1 }: { label: string; value: number; onChange: (n: number) => void; step?: number }) {
+/**
+ * Reads a number as typed: a minus sign may be a hyphen or a typographic minus (as
+ * the Rules page shows prices), and anything that isn't a plain number is NaN, so the
+ * rules check flags it instead of the sign being silently dropped.
+ */
+export function parseNumber(text: string): number {
+  const t = text.trim().replace(/^[\u2212\u2013]/, "-").replace(/,/g, "");
+  return /^[-+]?(\d+(\.\d*)?|\.\d+)$/.test(t) ? Number(t) : NaN;
+}
+
+/** A number field that keeps what's typed (e.g. a lone minus sign) while the value is incomplete. */
+function NumInput({ value, onChange, label, className = "input num", style }: {
+  value: number | null | undefined;
+  onChange: (n: number) => void;
+  label?: string;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  // (Copies of the rules go through JSON, which turns NaN into null, so null counts as unreadable too.)
+  const unreadable = value === undefined || value === null || Number.isNaN(value);
+  const shown = unreadable || !Number.isFinite(value) ? "" : String(value);
+  const [text, setText] = useState(shown);
+  // Follow the value when it changes from outside (e.g. a reset); keep the typed text otherwise.
+  const current = parseNumber(text);
+  const display = (Number.isNaN(current) ? unreadable : current === value) ? text : shown;
+  return (
+    <input className={className} style={style} inputMode="decimal" aria-label={label} value={display}
+      onChange={(e) => { setText(e.target.value); onChange(parseNumber(e.target.value)); }} />
+  );
+}
+
+function Num({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input className="input num" type="number" step={step} value={Number.isFinite(value) ? value : ""} onChange={(e) => onChange(e.target.value === "" ? NaN : Number(e.target.value))} />
+      <NumInput value={value} onChange={onChange} />
     </label>
   );
 }
@@ -49,7 +80,8 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
   const api = useApi();
   const [doc, setDoc] = useState<RuleSet>(() => clone(current.document));
   const [pointsText, setPointsText] = useState(current.document.betTypes.teaser.points.join(", "));
-  const [week, setWeek] = useState<number>((openWeek ?? current.effectiveWeek) + 1);
+  // A new version starts after the open week, and no earlier than the version it replaces.
+  const [week, setWeek] = useState<number>(Math.max((openWeek ?? 0) + 1, current.effectiveWeek));
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -64,8 +96,10 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
     const b = flatten(doc);
     return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]);
   }, [current.document, doc]);
+  // The table runs from 2 legs even when new cards need more: a card cut down by
+  // pushes or voids is priced on the legs left, down to 2.
   const legRange = Number.isInteger(t.minLegs) && Number.isInteger(t.maxLegs) && t.maxLegs >= t.minLegs && t.maxLegs <= 20
-    ? Array.from({ length: t.maxLegs - t.minLegs + 1 }, (_, i) => t.minLegs + i) : [];
+    ? Array.from({ length: t.maxLegs - 1 }, (_, i) => 2 + i) : [];
 
   const setPoints = (text: string) => {
     setPointsText(text);
@@ -114,13 +148,12 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
                   <td>{n}</td>
                   {t.points.map((p) => (
                     <td key={p}>
-                      <input className="input num" style={{ minWidth: 84, textAlign: "center" }} inputMode="numeric" aria-label={`${n} legs at ${p} points`}
-                        value={t.prices[String(p)]?.[String(n)] ?? ""}
-                        onChange={(e) => edit((d) => {
+                      <NumInput style={{ minWidth: 84, textAlign: "center" }} label={`${n} legs at ${p} points`}
+                        value={t.prices[String(p)]?.[String(n)]}
+                        onChange={(v) => edit((d) => {
                           const row = (d.betTypes.teaser.prices[String(p)] ??= {});
-                          const v = e.target.value.replace(/[^\d+-]/g, "");
-                          if (v === "" || v === "-" || v === "+") delete row[String(n)];
-                          else row[String(n)] = Number(v);
+                          // An unreadable price is kept as NaN so the rules check flags the cell.
+                          row[String(n)] = v;
                         })} />
                     </td>
                   ))}
@@ -198,10 +231,11 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
         {changes.length ? <div className="small muted">Changes: {changes.join(", ")}</div> : <div className="small muted">No changes yet.</div>}
         {problems.map((p, i) => <div className="problem" key={i}>{p.message}</div>)}
         {openWeek !== null && week <= openWeek ? <div className="problem">Rules can only change from a week that hasn't opened yet (after week {openWeek}).</div> : null}
+        {week < current.effectiveWeek ? <div className="problem">Version {current.version} is scheduled from week {current.effectiveWeek}, so this one can start no earlier than that.</div> : null}
         {msg ? <div className={`banner ${msg.ok ? "" : "bad"}`}>{msg.text}</div> : null}
         <button
           className="btn primary"
-          disabled={busy || !changes.length || problems.length > 0 || (openWeek !== null && week <= openWeek) || note.trim().length < 3}
+          disabled={busy || !changes.length || problems.length > 0 || (openWeek !== null && week <= openWeek) || week < current.effectiveWeek || !Number.isInteger(week) || note.trim().length < 3}
           onClick={async () => {
             setBusy(true);
             setMsg(null);

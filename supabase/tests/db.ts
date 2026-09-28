@@ -119,10 +119,11 @@ export interface PlaceArgs {
   potentialPayoutCents?: number;
   ruleSetVersion?: number;
   legs: { gameId: string; market: string; side: string; point: number | null; price: number }[];
+  clientRef?: string;
 }
 
 export async function place(db: Db, a: PlaceArgs, c?: pg.PoolClient): Promise<string> {
-  const sql = "select public.place_slip_internal($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb) as id";
+  const sql = "select public.place_slip_internal($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::uuid) as id";
   const params = [
     a.entry,
     a.user,
@@ -133,6 +134,7 @@ export async function place(db: Db, a: PlaceArgs, c?: pg.PoolClient): Promise<st
     a.potentialPayoutCents ?? a.stakeCents * 3,
     a.ruleSetVersion ?? 1,
     JSON.stringify(a.legs),
+    a.clientRef ?? null,
   ];
   if (c) return (await c.query(sql, params)).rows[0].id;
   return (await db.q(service, sql, params))[0].id;

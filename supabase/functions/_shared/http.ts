@@ -61,6 +61,7 @@ const FRIENDLY: Record<string, string> = {
   line_unavailable: "A line is off the board right now.",
   lines_stale: "The lines couldn't be refreshed. Try again in a minute.",
   line_moved: "A line moved. Check the new number.",
+  client_ref_conflict: "That bet couldn't be matched to your slip. Reload and try again.",
 };
 
 export function friendlyMessage(code: string): string {

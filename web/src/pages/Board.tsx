@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { GameCard } from "../components/GameCard.tsx";
-import { SlipBody } from "../components/Slip.tsx";
+import { SlipBody, type PlacedResult } from "../components/Slip.tsx";
 import { Empty, ErrorNote, Loading, PageHead } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
 import { ago, day } from "../lib/format.ts";
@@ -17,7 +17,7 @@ export function Board() {
   const games = useLoad(() => (week ? api.games(week) : Promise.resolve([] as GameView[])), [week], 60_000);
   const entries = useLoad(() => api.myEntries(), []);
   const rules = useLoad(() => api.ruleVersions(), []);
-  const [toast, setToast] = useState<{ ids: string[]; until: number } | null>(null);
+  const [toast, setToast] = useState<(PlacedResult & { until: number }) | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
 
   const weekRules = rules.data?.find((r) => r.version === league.data?.openWeek?.ruleSetVersion)?.document;
@@ -36,11 +36,12 @@ export function Board() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const onPlaced = (ids: string[]) => {
+  const onPlaced = (r: PlacedResult) => {
     entries.reload();
-    slip.setOpen(false);
+    // If a bet didn't go in, keep the slip open: the reason is shown on it.
+    if (!r.failed) slip.setOpen(false);
     setUndoError(null);
-    setToast({ ids, until: Date.now() + (weekRules?.undoMinutes ?? 5) * 60_000 });
+    setToast({ ...r, until: Date.now() + (weekRules?.undoMinutes ?? 5) * 60_000 });
   };
   const undoAll = async () => {
     if (!toast) return;
@@ -76,7 +77,7 @@ export function Board() {
               <section key={d}>
                 <h2 className="day-label">{d}</h2>
                 <div className="games">
-                  {gs.map((g) => <GameCard key={g.id} game={g} now={now} />)}
+                  {gs.map((g) => <GameCard key={g.id} game={g} now={now} rules={weekRules} />)}
                 </div>
               </section>
             ))}
@@ -84,7 +85,7 @@ export function Board() {
           <aside className="slip-panel card pad" aria-label="Bet slip">
             <div className="row spread" style={{ marginBottom: 10 }}>
               <h2>Bet slip</h2>
-              {slip.picks.length ? <button className="btn link small" onClick={() => slip.clear()}>Clear</button> : null}
+              {slip.picks.length ? <button className="btn link small" disabled={slip.status.busy} onClick={() => slip.clear()}>Clear</button> : null}
             </div>
             {body}
           </aside>
@@ -104,7 +105,7 @@ export function Board() {
             <div className="row spread" style={{ marginBottom: 10 }}>
               <h2>Bet slip</h2>
               <div className="row">
-                {slip.picks.length ? <button className="btn link small" onClick={() => slip.clear()}>Clear</button> : null}
+                {slip.picks.length ? <button className="btn link small" disabled={slip.status.busy} onClick={() => slip.clear()}>Clear</button> : null}
                 <button className="btn small" onClick={() => slip.setOpen(false)}>Close</button>
               </div>
             </div>
@@ -114,8 +115,11 @@ export function Board() {
       ) : null}
 
       {toast ? (
-        <div className="toast" role="status">
-          <span>{toast.ids.length > 1 ? `${toast.ids.length} bets placed` : "Bet placed"}{undoError ? ` · ${undoError}` : ""}</span>
+        <div className={`toast${slip.open ? " over-sheet" : ""}`} role="status">
+          <span>
+            {toast.failed ? `${toast.ids.length} of ${toast.total} bets placed` : toast.ids.length > 1 ? `${toast.ids.length} bets placed` : "Bet placed"}
+            {undoError ? ` · ${undoError}` : ""}
+          </span>
           <button className="btn small" onClick={undoAll}>Undo</button>
           <button className="btn small" aria-label="Dismiss" onClick={() => setToast(null)}>×</button>
         </div>

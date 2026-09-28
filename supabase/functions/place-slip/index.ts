@@ -1,9 +1,13 @@
 // Places a bet slip for the signed-in member.
 //
-// 1. Refreshes the lines first if the last good pull is more than 2 minutes old.
-// 2. Checks the slip with the shared rules code and against the current lines.
-//    If a number moved, answers 409 with the new numbers for the member to accept.
-// 3. Hands it to place_slip_internal, which re-checks the invariants and records it.
+// 1. If this is a retry of a bet already placed (same client ref), returns that bet.
+// 2. Checks the slip with the shared rules code, and the entry, week and games,
+//    before anything costs credits: a slip that fails here never pulls lines.
+// 3. Refreshes the lines if the last good pull is more than 2 minutes old. Bets share
+//    one refresh at a time, so they can't run the Odds API credits down.
+// 4. Checks each leg against the current lines. If a number moved, answers 409 with
+//    the new numbers for the member to accept.
+// 5. Hands it to place_slip_internal, which re-checks the invariants and records it.
 import { currentUser, env, serviceClient, siteOrigins } from "../_shared/env.ts";
 import { dbErrorCode, friendlyMessage, json, preflight } from "../_shared/http.ts";
 import { pullLines } from "../_shared/jobs.ts";
@@ -15,8 +19,9 @@ import { SupabaseStore } from "../_shared/supabase-store.ts";
 const TYPES: BetType[] = ["straight", "parlay", "teaser"];
 const MARKETS = ["spread", "total", "moneyline"];
 const SIDES = ["home", "away", "over", "under"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function parse(body: unknown): PlacementInput | null {
+function parse(body: unknown): (PlacementInput & { clientRef: string | null }) | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as Record<string, unknown>;
   if (typeof b.entryId !== "string" || !TYPES.includes(b.type as BetType)) return null;
@@ -29,7 +34,9 @@ function parse(body: unknown): PlacementInput | null {
     legs.push({ gameId: l.gameId, market: l.market as Leg["market"], side: l.side as Leg["side"], point: l.point as number | null, price: l.price });
   }
   const teaserPoints = typeof b.teaserPoints === "number" ? b.teaserPoints : null;
-  return { entryId: b.entryId, type: b.type as BetType, teaserPoints, stakeCents: b.stakeCents as number, legs };
+  if (b.clientRef !== undefined && b.clientRef !== null && !(typeof b.clientRef === "string" && UUID.test(b.clientRef))) return null;
+  const clientRef = typeof b.clientRef === "string" ? b.clientRef.toLowerCase() : null;
+  return { entryId: b.entryId, type: b.type as BetType, teaserPoints, stakeCents: b.stakeCents as number, legs, clientRef };
 }
 
 Deno.serve(async (req) => {
@@ -46,9 +53,15 @@ Deno.serve(async (req) => {
   const db = serviceClient();
   const store = new SupabaseStore(db);
   try {
-    const settings = await store.settings();
-    if (isStale(await store.lastGoodLinesPull(), new Date(), settings.refreshOnBetSeconds)) {
-      await pullLines(store, env("ODDS_API_KEY"), fetch, "bet");
+    if (input.clientRef) {
+      const prior = (await db.from("slips").select("id, entry_id, placed_by, quoted_american, potential_payout_cents")
+        .eq("client_ref", input.clientRef).maybeSingle()).data;
+      if (prior) {
+        if (prior.entry_id !== input.entryId || prior.placed_by !== user.id) {
+          return json(req, origins, 409, { error: "client_ref_conflict", message: friendlyMessage("client_ref_conflict") });
+        }
+        return json(req, origins, 200, { slipId: prior.id, american: Number(prior.quoted_american), payoutCents: Number(prior.potential_payout_cents) });
+      }
     }
 
     const week = (await db.from("weeks").select("week, rule_set_version").eq("status", "open").maybeSingle()).data;
@@ -63,14 +76,24 @@ Deno.serve(async (req) => {
     const games = new Map<string, GameInfo>(
       gameRows.map((g: any) => [g.id, { id: g.id, kickoffAt: new Date(g.kickoff_at), status: g.status, week: g.week }]),
     );
-    const lineRows = (await db.from("current_lines").select("game_id, market, side, point, price, source").in("game_id", gameIds)).data ?? [];
-    const lines: CurrentLine[] = lineRows.map((l: any) => ({
-      gameId: l.game_id, market: l.market, side: l.side, point: l.point === null ? null : Number(l.point), price: l.price, source: l.source,
-    }));
+    const loadLines = async (): Promise<CurrentLine[]> =>
+      ((await db.from("current_lines").select("game_id, market, side, point, price, source").in("game_id", gameIds)).data ?? []).map((l: any) => ({
+        gameId: l.game_id, market: l.market, side: l.side, point: l.point === null ? null : Number(l.point), price: l.price, source: l.source,
+      }));
+    const ctx = { availableCents: Number(bal.available_cents), bankCents: Number(bal.bank_cents) };
 
-    const check = checkPlacement(
-      input, rules, { availableCents: Number(bal.available_cents), bankCents: Number(bal.bank_cents) }, week.week, games, lines, new Date(),
-    );
+    let lines = await loadLines();
+    let check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date());
+    // A slip that breaks a rule or is on a game that has started fails without a pull.
+    if (!check.ok && check.kind === "invalid" && check.problems.some((p) => p.code !== "line_unavailable")) {
+      return json(req, origins, 422, { error: "invalid", problems: check.problems });
+    }
+    const settings = await store.settings();
+    if (isStale(await store.lastGoodLinesPull(), new Date(), settings.refreshOnBetSeconds)) {
+      await pullLines(store, env("ODDS_API_KEY"), fetch, "bet");
+      lines = await loadLines();
+      check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date());
+    }
     if (!check.ok) {
       return check.kind === "moved"
         ? json(req, origins, 409, { error: "line_moved", message: friendlyMessage("line_moved"), lines: check.lines })
@@ -87,6 +110,7 @@ Deno.serve(async (req) => {
       p_potential_payout_cents: check.quote.payoutCents,
       p_rule_set_version: week.rule_set_version,
       p_legs: input.legs,
+      p_client_ref: input.clientRef,
     });
     if (error) {
       const code = dbErrorCode(error.message);

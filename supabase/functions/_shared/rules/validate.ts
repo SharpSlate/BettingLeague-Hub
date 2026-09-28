@@ -1,5 +1,5 @@
 import { isValidAmerican } from "./odds.ts";
-import { teaserPrice } from "./price.ts";
+import { quoteSlip, teaserPrice } from "./price.ts";
 import type { Leg, Market, Problem, RuleSet, SameGameRules, Side, SlipInput } from "./types.ts";
 
 const SIDES: Record<Market, Side[]> = {
@@ -60,6 +60,14 @@ export function validateSlip(slip: SlipInput, rules: RuleSet, ctx: ValidationCon
     add("teaser_points", "Only teasers take teaser points.");
   }
   checkStake(slip.stakeCents, rules, ctx, add);
+  if (!problems.length) {
+    try {
+      quoteSlip(slip, rules);
+    } catch (e) {
+      if (!(e instanceof RangeError)) throw e;
+      add("payout_too_large", "That payout is too large for the site to handle. Lower the stake.");
+    }
+  }
   return problems;
 }
 

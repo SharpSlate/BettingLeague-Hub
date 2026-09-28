@@ -23,13 +23,15 @@ export function BetCard({ slip, showEntry = true, undoMinutes = 0, onUndo, onVoi
   const canUndo = onUndo && slip.status === "pending" && undoLeft > 0 && (!slip.legs.length || firstKick > now);
   const title = slip.type === "teaser" ? `${slip.legCount}-leg ${slip.teaserPoints}-pt teaser` : slip.type === "parlay" ? `${slip.legCount}-leg parlay` : betTypeName.straight;
   const pays = slip.status === "pending" ? slip.potentialPayoutCents : slip.payoutCents ?? 0;
+  // Another entry's parlay shows its odds and payout only once every leg is revealed.
+  const priced = slip.quotedAmerican !== null;
 
   return (
     <article className="card bet">
       <div className="bet-top">
         <div className="row wrap">
           <b>{title}</b>
-          {slip.type !== "straight" ? <span className="chip num">{odds(slip.quotedAmerican)}</span> : null}
+          {slip.type !== "straight" && slip.quotedAmerican !== null ? <span className="chip num">{odds(slip.quotedAmerican)}</span> : null}
           {showEntry ? <span className="chip">{slip.entryName}</span> : null}
         </div>
         <StatusChip status={slip.status} />
@@ -54,7 +56,8 @@ export function BetCard({ slip, showEntry = true, undoMinutes = 0, onUndo, onVoi
       </div>
       <div className="bet-foot">
         <span>
-          Stake <b className="num">{units(slip.stakeCents)}</b> · {slip.status === "pending" ? "Pays" : "Paid"} <b className="num">{units(pays)}</b>
+          Stake <b className="num">{units(slip.stakeCents)}</b> · {slip.status === "pending" ? "Pays" : "Paid"}{" "}
+          {pays === null || (!priced && slip.status === "pending") ? <span className="muted">after the last kickoff</span> : <b className="num">{units(pays)}</b>}
         </span>
         <span>{kickoff(slip.placedAt)}{slip.placedByName ? ` · ${slip.placedByName}` : ""}</span>
       </div>

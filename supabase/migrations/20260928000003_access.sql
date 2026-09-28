@@ -31,6 +31,17 @@ revoke all on all tables in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;
 grant select on all tables in schema public to authenticated;
 
+-- Column limits. A slip's combined odds and payout come through public.slip_quotes,
+-- which holds them back until every leg is revealed (a parlay's odds would give away
+-- its hidden legs). A pull's error text stays with the admins' dashboard, since a
+-- network error can quote the request, key and all.
+revoke select on public.slips from authenticated;
+grant select (id, entry_id, placed_by, week, type, teaser_points, stake_cents, leg_count, rule_set_version,
+              status, payout_cents, placed_at, settled_at, undone_at, void_reason)
+  on public.slips to authenticated;
+revoke select on public.line_pulls from authenticated;
+grant select (id, at, kind, trigger, ok, events, credits_used, credits_remaining) on public.line_pulls to authenticated;
+
 -- League-wide information every member can read.
 create policy members_read on public.league_settings for select to authenticated using (true);
 create policy members_read on public.profiles for select to authenticated using (true);
@@ -56,7 +67,7 @@ create policy legs_read on public.slip_legs for select to authenticated
   using (app.can_see_leg(slip_id, game_id));
 -- Ledger rows tied to a hidden bet (its stake, an undo) stay hidden with it.
 create policy ledger_read on public.ledger for select to authenticated
-  using (app.manages(entry_id) or slip_id is null or app.can_see_slip(slip_id));
+  using (slip_id is null or app.can_see_slip(slip_id));
 
 grant select on public.current_lines to authenticated;
 
@@ -74,11 +85,12 @@ grant execute on function app.can_see_leg(uuid, uuid) to authenticated;
 grant execute on function public.undo_slip(uuid) to authenticated;
 grant execute on function public.set_display_name(text) to authenticated;
 grant execute on function public.my_entries() to authenticated;
-grant execute on function public.standings(timestamptz, timestamptz) to authenticated;
+grant execute on function public.standings(timestamptz, timestamptz, int) to authenticated;
 grant execute on function public.hidden_activity(int) to authenticated;
+grant execute on function public.slip_quotes(uuid[]) to authenticated;
 
 -- Admin functions (each checks the caller is an admin).
-grant execute on function public.admin_open_next_week(text) to authenticated;
+grant execute on function public.admin_open_next_week(int, text) to authenticated;
 grant execute on function public.admin_add_entry(text, bigint) to authenticated;
 grant execute on function public.admin_import_splash(uuid, bigint, bigint, int, int, int, bigint, bigint, bigint, text) to authenticated;
 grant execute on function public.admin_adjust_bank(uuid, bigint, text) to authenticated;

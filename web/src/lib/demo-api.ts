@@ -24,10 +24,11 @@ interface DSlip {
   id: string; entryId: string; placedBy: string; week: number; type: BetType;
   teaserPoints: number | null; stakeCents: number; quotedAmerican: number; potentialPayoutCents: number;
   status: SlipView["status"]; payoutCents: number | null; placedAt: number; settledAt: number | null; legs: DLeg[];
+  voidedByAdmin?: boolean;
 }
 interface DEntry {
   id: string; name: string; startingBankCents: number; managers: string[];
-  ledger: { amount: number; kind: string; at: number; note: string }[];
+  ledger: { amount: number; kind: string; at: number; note: string; week?: number }[];
   baseline: { wins: number; losses: number; pushes: number; risk: number; ret: number; winnings: number };
 }
 interface DUser { id: string; displayName: string; email: string; isAdmin: boolean }
@@ -132,6 +133,9 @@ function seed(now: number) {
     // Live now, so revealed.
     slip("e-canton", "u-mo", OPEN_WEEK, "straight", 400_000, [leg("g-live", "moneyline", "away")], { quotedAmerican: 190, potentialPayoutCents: 1_160_000, placedAt: now - 20 * H }),
     slip("e-crab", YOU, OPEN_WEEK, "parlay", 50_000, [leg("g-live", "total", "over"), leg("g-7", "spread", "away")], { quotedAmerican: 264, potentialPayoutCents: 182_231, placedAt: now - 10 * H }),
+    // Half revealed: its odds and payout stay hidden until the second leg kicks off.
+    // 1,000 units x 21/11 x 5/2 = 4,772.73.
+    slip("e-vernon", "u-lou", OPEN_WEEK, "parlay", 100_000, [leg("g-live", "spread", "home"), leg("g-4", "moneyline", "away")], { quotedAmerican: 377, potentialPayoutCents: 477_273, placedAt: now - 4 * H }),
     // Hidden until kickoff.
     slip("e-crab", YOU, OPEN_WEEK, "straight", 300_000, [leg("g-1", "spread", "home", { price: -112 })], { quotedAmerican: -112, potentialPayoutCents: 567_857, placedAt: now - 3 * H }),
     slip("e-harbor", "u-commish", OPEN_WEEK, "teaser", 500_000, [leg("g-2", "spread", "home", { teasedPoint: -2.5 }), leg("g-3", "spread", "home", { teasedPoint: 3.5 })],
@@ -145,12 +149,12 @@ function seed(now: number) {
     e.ledger.push({ amount: -s.stakeCents, kind: "stake", at: s.placedAt, note: "" });
     if (s.payoutCents) e.ledger.push({ amount: s.payoutCents, kind: s.status === "won" ? "payout" : "refund", at: s.settledAt!, note: "" });
   }
-  entries.find((x) => x.id === "e-hampden")!.ledger.push({ amount: -45_000, kind: "weekly_minimum", at: now - 2 * D, note: "Week 4 minimum: wagered 2,220 of 2,670 units" });
+  entries.find((x) => x.id === "e-hampden")!.ledger.push({ amount: -45_000, kind: "weekly_minimum", at: now - 2 * D, note: "Week 4 minimum: wagered 2,220 of 2,670 units", week: 4 });
 
   const audit: AuditRow[] = [
-    { id: 4, actorName: null, action: "week_opened", targetType: "week", targetId: "5", before: { closed: 4 }, after: { opened: 5 }, reason: "The previous week finished", createdAt: new Date(now - 2 * D - 3 * H).toISOString() },
-    { id: 3, actorName: "Commish", action: "line_set", targetType: "game", targetId: "g-2", before: null, after: { market: "spread" }, reason: "Feed was behind on the Ravens injury news", createdAt: new Date(now - 30 * H).toISOString() },
-    { id: 2, actorName: "Commish", action: "bank_adjusted", targetType: "entry", targetId: "e-fells", before: { availableCents: 1_450_000 }, after: { amountCents: 5_000 }, reason: "Splash rounding correction", createdAt: new Date(now - 8 * D).toISOString() },
+    { id: 4, actorName: "Commish", action: "line_set", targetType: "game", targetId: "g-2", before: null, after: { market: "spread" }, reason: "Feed was behind on the Ravens injury news", createdAt: new Date(now - 30 * H).toISOString() },
+    { id: 3, actorName: null, action: "week_opened", targetType: "week", targetId: "5", before: { closed: 4 }, after: { opened: 5 }, reason: "The previous week finished", createdAt: new Date(now - 2 * D - 3 * H).toISOString() },
+    { id: 2, actorName: "Commish", action: "bank_adjusted", targetType: "entry", targetId: "e-fells", before: { bankCents: 1_450_000 }, after: { bankCents: 1_455_000, amountCents: 5_000 }, reason: "Splash rounding correction", createdAt: new Date(now - 8 * D).toISOString() },
     { id: 1, actorName: "Commish", action: "splash_import", targetType: "entry", targetId: "e-crab", before: null, after: { bankCents: 1_922_730 }, reason: "Splash standings after week 3", createdAt: new Date(now - 9 * D).toISOString() },
   ];
   return { users, entries, games, slips, audit, rules: [{ version: 1, effectiveWeek: 1, document: DAY_ONE_RULES, note: "Day-one rules agreed on 2026-09-28.", createdAt: new Date(now - 10 * D).toISOString() }] as RuleVersion[], lastPullAt: now - 7 * 60_000, credits: 91_240 };
@@ -164,6 +168,8 @@ export class DemoApi implements Api {
   private signedIn = false;
   private listeners = new Set<() => void>();
   private nextId = 1000;
+  /** Bets placed, by the id the site sent with each, so a retry returns the same bet. */
+  private placedRefs = new Map<string, { slipId: string; payoutCents: number; american: number }>();
 
   private emit() { for (const l of this.listeners) l(); }
   private entry(id: string) { return this.s.entries.find((e) => e.id === id)!; }
@@ -174,6 +180,8 @@ export class DemoApi implements Api {
   private game(id: string) { return this.s.games.find((g) => g.id === id)!; }
   private firstKickoff(s: DSlip) { return Math.min(...s.legs.map((l) => this.game(l.gameId).kickoffAt)); }
   private revealed(s: DSlip, now = Date.now()) { return this.firstKickoff(s) <= now; }
+  /** Every leg's game has kicked off, so a parlay's odds no longer give anything away. */
+  private fullyRevealed(s: DSlip, now = Date.now()) { return s.legs.every((l) => this.game(l.gameId).kickoffAt <= now); }
   private audit(action: string, targetType: string, targetId: string, after: unknown, reason: string) {
     this.s.audit.unshift({ id: this.nextId++, actorName: "You", action, targetType, targetId, before: null, after, reason, createdAt: new Date().toISOString() });
   }
@@ -202,18 +210,21 @@ export class DemoApi implements Api {
   }
   async teams() { return TEAMS; }
 
-  async standings(range?: { from?: string; to?: string }): Promise<StandingRow[]> {
+  async standings(range?: { from?: string; to?: string; week?: number }): Promise<StandingRow[]> {
     await wait(60);
     const from = range?.from ? Date.parse(range.from) : -Infinity;
     const to = range?.to ? Date.parse(range.to) : Infinity;
-    const season = !range?.from && !range?.to;
+    const week = range?.week;
+    const season = !range?.from && !range?.to && week === undefined;
     return this.s.entries.map((e) => {
-      const settled = this.s.slips.filter((s) => s.entryId === e.id && ["won", "lost", "push"].includes(s.status) && s.settledAt! >= from && s.settledAt! < to);
+      const settled = this.s.slips.filter((s) => s.entryId === e.id && ["won", "lost", "push"].includes(s.status)
+        && (week === undefined || s.week === week) && s.settledAt! >= from && s.settledAt! < to);
       const count = (st: string) => settled.filter((s) => s.status === st).length;
       const risk = settled.reduce((a, s) => a + s.stakeCents, 0);
       const ret = settled.reduce((a, s) => a + (s.payoutCents ?? 0), 0);
       const winnings = settled.filter((s) => s.status === "won").reduce((a, s) => a + s.payoutCents! - s.stakeCents, 0);
-      const other = e.ledger.filter((l) => ["weekly_minimum", "adjustment"].includes(l.kind) && l.at >= from && l.at < to).reduce((a, l) => a + l.amount, 0);
+      const other = e.ledger.filter((l) => ["weekly_minimum", "adjustment"].includes(l.kind) && (week === undefined || l.week === week) && l.at >= from && l.at < to)
+        .reduce((a, l) => a + l.amount, 0);
       const mine = this.mine(e.id);
       const pend = this.s.slips.filter((s) => s.entryId === e.id && s.status === "pending" && (mine || this.revealed(s)));
       const wk = this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && !["undone", "void"].includes(s.status) && (mine || this.revealed(s)));
@@ -268,7 +279,10 @@ export class DemoApi implements Api {
       .map((s) => ({
         id: s.id, entryId: s.entryId, entryName: this.entry(s.entryId).name,
         placedByName: this.s.users.find((u) => u.id === s.placedBy)?.displayName ?? null, week: s.week, type: s.type, teaserPoints: s.teaserPoints,
-        stakeCents: s.stakeCents, quotedAmerican: s.quotedAmerican, potentialPayoutCents: s.potentialPayoutCents, legCount: s.legs.length,
+        stakeCents: s.stakeCents, legCount: s.legs.length,
+        // Like the real site: another entry's parlay shows odds and payout once every leg is revealed.
+        quotedAmerican: this.mine(s.entryId) || this.fullyRevealed(s, now) ? s.quotedAmerican : null,
+        potentialPayoutCents: this.mine(s.entryId) || this.fullyRevealed(s, now) ? s.potentialPayoutCents : null,
         ruleSetVersion: 1, status: s.status, payoutCents: s.payoutCents, placedAt: new Date(s.placedAt).toISOString(),
         settledAt: s.settledAt ? new Date(s.settledAt).toISOString() : null,
         legs: s.legs.filter((l) => this.mine(s.entryId) || this.game(l.gameId).kickoffAt <= now).map((l) => {
@@ -313,6 +327,8 @@ export class DemoApi implements Api {
 
   async placeSlip(req: PlacementRequest): Promise<PlaceResult> {
     await wait(350);
+    const prior = this.placedRefs.get(req.clientRef);
+    if (prior) return { ok: true, ...prior };
     const e = this.entry(req.entryId);
     if (!e || !this.mine(e.id)) return { ok: false, kind: "error", message: "You don't manage that entry." };
     const rules = this.s.rules[0]!.document;
@@ -337,6 +353,7 @@ export class DemoApi implements Api {
       payoutCents: null, placedAt: Date.now(), settledAt: null, legs,
     });
     e.ledger.push({ amount: -req.stakeCents, kind: "stake", at: Date.now(), note: "" });
+    this.placedRefs.set(req.clientRef, { slipId: id, payoutCents: check.quote.payoutCents, american: check.quote.american });
     return { ok: true, slipId: id, payoutCents: check.quote.payoutCents, american: check.quote.american };
   }
 
@@ -361,8 +378,9 @@ export class DemoApi implements Api {
   }
   async adminAddMember(email: string, displayName: string, entryId: string | null) {
     await wait();
+    if (!displayName.trim()) throw new Error("Give the new member a display name.");
     const id = `u-${this.nextId++}`;
-    this.s.users.push({ id, displayName: displayName || email.split("@")[0]!, email, isAdmin: false });
+    this.s.users.push({ id, displayName: displayName.trim(), email, isAdmin: false });
     if (entryId) this.entry(entryId).managers.push(id);
     this.audit("member_added", "profile", id, { displayName }, "");
   }
@@ -396,10 +414,12 @@ export class DemoApi implements Api {
     if (reason.trim().length < 3) throw new Error("reason_required");
     const e = this.entry(entryId);
     if (this.available(e) + amountCents < 0) throw new Error("insufficient_units");
-    e.ledger.push({ amount: amountCents, kind: "adjustment", at: Date.now(), note: reason });
-    this.audit("bank_adjusted", "entry", entryId, { amountCents }, reason);
+    const bank = this.bank(e);
+    e.ledger.push({ amount: amountCents, kind: "adjustment", at: Date.now(), note: reason, week: OPEN_WEEK });
+    this.audit("bank_adjusted", "entry", entryId, { bankCents: bank + amountCents, amountCents }, reason);
   }
-  async adminOpenNextWeek(): Promise<number> {
+  async adminOpenNextWeek(expectedOpenWeek: number | null): Promise<number | null> {
+    if (expectedOpenWeek !== OPEN_WEEK) throw new Error("week_changed");
     throw new Error("The demo stays on week 5.");
   }
   async adminSetLine(gameId: string, market: Leg["market"], a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string) {
@@ -417,17 +437,50 @@ export class DemoApi implements Api {
     this.audit("line_cleared", "game", gameId, { market }, reason);
   }
   async adminSetGameStatus(gameId: string, status: "scheduled" | "postponed" | "void", kickoffAt: string | null, reason: string) {
+    if (reason.trim().length < 3) throw new Error("reason_required");
     const g = this.game(gameId);
+    const now = Date.now();
+    const to = kickoffAt ? Date.parse(kickoffAt) : g.kickoffAt;
+    // The same rules as the real site: no kickoff in the past, no moving one that has
+    // passed, and no reopening a game that has started.
+    if (g.status === "void") throw new Error("game_void");
+    if (g.status === "final" && status !== "void") throw new Error("game_final");
+    if (to !== g.kickoffAt && g.kickoffAt <= now) throw new Error("kickoff_passed");
+    if (to !== g.kickoffAt && to <= now) throw new Error("kickoff_in_past");
+    if (status === "scheduled" && (!["scheduled", "postponed"].includes(g.status) || g.kickoffAt <= now)) throw new Error("game_started");
+    const before = { status: g.status, kickoffAt: new Date(g.kickoffAt).toISOString() };
+    const regraded = status === "void" && g.status === "final" ? this.reopen(gameId, reason) : 0;
     g.status = status;
-    if (kickoffAt) g.kickoffAt = Date.parse(kickoffAt);
-    this.audit("game_status_set", "game", gameId, { status }, reason);
+    g.kickoffAt = to;
+    this.s.audit.unshift({ id: this.nextId++, actorName: "You", action: "game_status_set", targetType: "game", targetId: gameId, before,
+      after: { status, kickoffAt: new Date(to).toISOString(), betsRegraded: regraded }, reason, createdAt: new Date().toISOString() });
     this.grade();
   }
   async adminSetFinalScore(gameId: string, home: number, away: number, reason: string) {
+    if (reason.trim().length < 3) throw new Error("reason_required");
     const g = this.game(gameId);
+    if (g.kickoffAt > Date.now()) throw new Error("game_not_started");
+    if (g.status === "final" && g.homeScore === home && g.awayScore === away) throw new Error("no_change");
+    const before = { status: g.status, home: g.homeScore, away: g.awayScore };
+    const corrected = g.status === "final" || g.status === "void";
+    const regraded = corrected ? this.reopen(gameId, reason) : 0;
     Object.assign(g, { status: "final", homeScore: home, awayScore: away });
-    this.audit("score_set", "game", gameId, { home, away }, reason);
+    this.s.audit.unshift({ id: this.nextId++, actorName: "You", action: corrected ? "score_corrected" : "score_set", targetType: "game", targetId: gameId,
+      before, after: { home, away, betsRegraded: regraded }, reason, createdAt: new Date().toISOString() });
     this.grade();
+  }
+  /** Sends the game's graded bets back to be graded again, taking back what they paid. Admin-voided bets stay void. */
+  private reopen(gameId: string, reason: string): number {
+    let n = 0;
+    for (const s of this.s.slips) {
+      if (!s.legs.some((l) => l.gameId === gameId)) continue;
+      if (!["won", "lost", "push"].includes(s.status) && !(s.status === "void" && !s.voidedByAdmin)) continue;
+      if (s.payoutCents) this.entry(s.entryId).ledger.push({ amount: -s.payoutCents, kind: "regrade_reversal", at: Date.now(), note: reason });
+      Object.assign(s, { status: "pending", payoutCents: null, settledAt: null });
+      for (const l of s.legs) l.result = "pending";
+      n++;
+    }
+    return n;
   }
   private grade() {
     const rules: RuleSet = this.s.rules[0]!.document;
@@ -449,7 +502,7 @@ export class DemoApi implements Api {
     const e = this.entry(s.entryId);
     if (s.status !== "pending" && s.payoutCents) e.ledger.push({ amount: -s.payoutCents, kind: "void_reversal", at: Date.now(), note: reason });
     e.ledger.push({ amount: s.stakeCents, kind: "void_refund", at: Date.now(), note: reason });
-    Object.assign(s, { status: "void", payoutCents: s.stakeCents, settledAt: Date.now() });
+    Object.assign(s, { status: "void", payoutCents: s.stakeCents, settledAt: Date.now(), voidedByAdmin: true });
     this.audit("bet_voided", "slip", slipId, { status: "void" }, reason);
   }
   async adminRunJob(job: "pull-lines" | "pull-scores") {

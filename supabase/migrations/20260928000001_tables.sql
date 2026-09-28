@@ -19,7 +19,10 @@ create table public.league_settings (
   -- Pulls stop when the Odds API plan has fewer credits left than this.
   credit_floor int not null default 5000,
   -- Sportsbooks in priority order; the first is the league's line source.
-  books text[] not null default array['draftkings', 'fanduel']
+  books text[] not null default array['draftkings', 'fanduel'],
+  -- When a bet last claimed a line refresh. Bets share one refresh at a time, so
+  -- many bets (or a script) can't run the Odds API credits down.
+  bet_refresh_claimed_at timestamptz
 );
 
 create table public.profiles (
@@ -89,6 +92,10 @@ create table public.games (
   status text not null default 'scheduled' check (status in ('scheduled', 'live', 'final', 'postponed', 'void')),
   home_score int check (home_score >= 0),
   away_score int check (away_score >= 0),
+  -- A final score the feed has reported once. The game goes final when the next
+  -- pull reports the same score, so one bad reading from the feed isn't graded.
+  feed_final_home int,
+  feed_final_away int,
   final_at timestamptz,
   updated_at timestamptz not null default now(),
   check (home_team <> away_team),
@@ -164,8 +171,9 @@ create table public.slips (
   type text not null check (type in ('straight', 'parlay', 'teaser')),
   teaser_points numeric(3, 1),
   stake_cents bigint not null check (stake_cents > 0),
-  quoted_american int not null,
-  potential_payout_cents bigint not null check (potential_payout_cents >= stake_cents),
+  -- American odds for the whole slip; a long parlay's can pass two billion.
+  quoted_american bigint not null,
+  potential_payout_cents bigint not null check (potential_payout_cents > stake_cents),
   -- How many legs the slip has, so a partly revealed parlay can say how many are still hidden.
   leg_count int not null check (leg_count >= 1),
   rule_set_version int not null references public.rule_sets (version),
@@ -175,6 +183,8 @@ create table public.slips (
   settled_at timestamptz,
   undone_at timestamptz,
   void_reason text,
+  -- Sent by the site with each bet, so a retry after a lost response can't place it twice.
+  client_ref uuid unique,
   check ((type = 'teaser') = (teaser_points is not null))
 );
 create index on public.slips (entry_id, status);
@@ -202,7 +212,8 @@ create table public.ledger (
   entry_id uuid not null references public.entries (id),
   amount_cents bigint not null,
   kind text not null check (kind in (
-    'opening', 'import', 'stake', 'payout', 'refund', 'undo', 'void_refund', 'void_reversal', 'weekly_minimum', 'adjustment'
+    'opening', 'import', 'stake', 'payout', 'refund', 'undo', 'void_refund', 'void_reversal', 'regrade_reversal',
+    'weekly_minimum', 'adjustment'
   )),
   slip_id uuid references public.slips (id),
   week int references public.weeks (week),

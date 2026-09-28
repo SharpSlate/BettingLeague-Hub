@@ -45,13 +45,18 @@ export function decimalToAmerican(dec: Ratio): number {
   return -Math.round(100 / (d - 1));
 }
 
-/** stake x decimal odds, rounded half up to the cent. */
+/**
+ * stake x decimal odds, rounded half up to the cent. Throws a RangeError for a payout
+ * too big to count exactly in a JavaScript number (about 90 trillion units).
+ */
 export function payoutCents(stakeCents: number, dec: Ratio): number {
   if (!Number.isSafeInteger(stakeCents) || stakeCents < 0) {
     throw new Error(`stake must be a whole number of cents: ${stakeCents}`);
   }
   const n = BigInt(stakeCents) * dec.num;
-  return Number((2n * n + dec.den) / (2n * dec.den));
+  const cents = (2n * n + dec.den) / (2n * dec.den);
+  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError("payout too large");
+  return Number(cents);
 }
 
 export function unitsToCents(units: number): number {

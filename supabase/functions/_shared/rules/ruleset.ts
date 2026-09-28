@@ -1,7 +1,20 @@
-import { isValidAmerican } from "./odds.ts";
+import { americanToDecimal, isValidAmerican } from "./odds.ts";
 import type { Market, Problem, RuleSet } from "./types.ts";
 
 const MARKETS: Market[] = ["spread", "total", "moneyline"];
+
+/** A whole number of cents, at least 1 cent, e.g. 1 or 2.5 units but not 1.005. */
+function wholeCents(units: number): boolean {
+  const c = units * 100;
+  return Number.isFinite(c) && c >= 1 && Math.abs(c - Math.round(c)) < 1e-6 && Number.isSafeInteger(Math.round(c));
+}
+
+/** Whether American price a pays less than b. */
+function paysLess(a: number, b: number): boolean {
+  const x = americanToDecimal(a);
+  const y = americanToDecimal(b);
+  return x.num * y.den < y.num * x.den;
+}
 
 /**
  * Checks a rule-set document before it can be published. Grading relies on
@@ -16,21 +29,33 @@ export function validateRuleSet(r: RuleSet): Problem[] {
   if (badMarket(straight.markets) || badMarket(parlay.markets) || badMarket(teaser.markets)) {
     add("markets", "Markets must be spread, total or moneyline.");
   }
-  if (!Number.isInteger(parlay.minLegs) || parlay.minLegs < 2 || parlay.maxLegs < parlay.minLegs || parlay.maxLegs > 20) {
-    add("parlay_legs", "Parlay legs must run from at least 2 up to at most 20.");
+  const legsOk = (min: number, max: number) => Number.isInteger(min) && Number.isInteger(max) && min >= 2 && max >= min && max <= 20;
+  if (!legsOk(parlay.minLegs, parlay.maxLegs)) {
+    add("parlay_legs", "Parlay legs must be whole numbers from at least 2 up to at most 20.");
   }
-  if (!Number.isInteger(teaser.minLegs) || teaser.minLegs < 2 || teaser.maxLegs < teaser.minLegs || teaser.maxLegs > 20) {
-    add("teaser_legs", "Teaser legs must run from at least 2 up to at most 20.");
+  const teaserLegsOk = legsOk(teaser.minLegs, teaser.maxLegs);
+  if (!teaserLegsOk) {
+    add("teaser_legs", "Teaser legs must be whole numbers from at least 2 up to at most 20.");
   }
   if (teaser.markets.includes("moneyline")) add("teaser_markets", "Moneylines can't be teased.");
   if (teaser.enabled && teaser.points.length === 0) add("teaser_points", "Teasers need at least one points option.");
   for (const p of teaser.points) {
     if (!(p > 0) || !Number.isInteger(p * 2)) add("teaser_points", `Teaser points must be whole or half points: ${p}.`);
-    for (let n = teaser.minLegs; n <= teaser.maxLegs; n++) {
+    if (!teaserLegsOk) continue;
+    // A card cut down by pushes or voids is priced on the legs left, down to 2, so the
+    // table needs every row from 2 legs up, each paying more than the row before.
+    let prev: number | null = null;
+    for (let n = 2; n <= teaser.maxLegs; n++) {
       const price = teaser.prices[String(p)]?.[String(n)];
       if (price === undefined || !isValidAmerican(price)) {
         add("teaser_prices", `The teaser table needs a valid price for ${n} legs at ${p} points.`);
+        prev = null;
+        continue;
       }
+      if (prev !== null && !paysLess(prev, price)) {
+        add("teaser_prices", `At ${p} points, ${n} legs must pay more than ${n - 1} legs.`);
+      }
+      prev = price;
     }
   }
   if (!["reduce", "refund", "lose"].includes(teaser.pushRule)) add("teaser_push", "Unknown teaser push rule.");
@@ -38,8 +63,8 @@ export function validateRuleSet(r: RuleSet): Problem[] {
     add("pricing", "Pricing must be book or flat, with a valid flat price.");
   }
   const s = r.stake;
-  if (!(s.incrementUnits > 0) || !(s.minUnits > 0) || s.maxUnits < s.minUnits) {
-    add("stake", "Stake limits must be positive, with the maximum at or above the minimum.");
+  if (!wholeCents(s.incrementUnits) || !wholeCents(s.minUnits) || !wholeCents(s.maxUnits) || s.maxUnits < s.minUnits) {
+    add("stake", "Stake limits must be positive amounts in whole cents (at most 2 decimal places), with the maximum at or above the minimum.");
   }
   if (s.maxPctOfBank !== null && !(s.maxPctOfBank > 0 && s.maxPctOfBank <= 100)) {
     add("stake_pct", "The stake cap must be between 0 and 100 percent of the bank.");
