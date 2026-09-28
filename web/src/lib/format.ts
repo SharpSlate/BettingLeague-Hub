@@ -86,6 +86,16 @@ export function record(w: number, l: number, p: number): string {
   return p ? `${w}-${l}-${p}` : `${w}-${l}`;
 }
 
+/**
+ * Reads a number as typed: a minus sign may be a hyphen or a typographic minus (as
+ * the Rules page shows prices), and anything that isn't a plain number is NaN, so a
+ * rules check flags it instead of the sign being silently dropped.
+ */
+export function parseNumber(text: string): number {
+  const t = text.trim().replace(/^[\u2212\u2013]/, "-").replace(/,/g, "");
+  return /^[-+]?(\d+(\.\d*)?|\.\d+)$/.test(t) ? Number(t) : NaN;
+}
+
 /** When a calendar day ("2026-10-04") starts in Eastern time, as an ISO instant. */
 export function easternDayStart(date: string): string {
   const [y, m, d] = date.split("-").map(Number) as [number, number, number];

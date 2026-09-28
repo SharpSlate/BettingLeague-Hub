@@ -1,6 +1,7 @@
 // The problems the adversarial review found in the database, each reproduced here
 // against the fix: ways to see hidden picks, reopen betting, lose a grade, or close
 // the wrong week.
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DAY_ONE_RULES } from "../functions/_shared/rules/defaults.ts";
 import {
@@ -207,6 +208,14 @@ describe("private details", () => {
   it("only games in a week that hasn't opened can move, so the answer says nothing about bets", async () => {
     await fails(db.q(member(owner), "select public.admin_move_game($1, 5, 'Wrong week')", [ids.MOVE]), "week_already_open");
     await fails(db.q(member(owner), "select public.admin_move_game($1, 5, 'Wrong week')", [ids.LATE]), "week_already_open");
+  });
+
+  it("members can read every slip column the site asks for", async () => {
+    const src = readFileSync(new URL("../../web/src/lib/supabase-api.ts", import.meta.url), "utf8");
+    const cols = /"(id, entry_id,[^"]+?), " \+/.exec(src)?.[1];
+    expect(cols).toContain("stake_cents");
+    expect(cols).not.toContain("quoted_american");
+    await db.q(member(bob), `select ${cols} from public.slips`);
   });
 
   it("a new member gets a neutral display name, never part of their email", async () => {

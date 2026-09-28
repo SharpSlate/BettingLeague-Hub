@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { validateRuleSet, type RuleSet, type SameGameRules } from "@rules";
 import { errorText } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
+import { parseNumber } from "../lib/format.ts";
 import type { RuleVersion } from "../lib/types.ts";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -13,16 +14,6 @@ function flatten(o: unknown, prefix = "", out: Record<string, string> = {}): Rec
     for (const [k, v] of Object.entries(o)) flatten(v, prefix ? `${prefix}.${k}` : k, out);
   } else out[prefix] = JSON.stringify(o);
   return out;
-}
-
-/**
- * Reads a number as typed: a minus sign may be a hyphen or a typographic minus (as
- * the Rules page shows prices), and anything that isn't a plain number is NaN, so the
- * rules check flags it instead of the sign being silently dropped.
- */
-export function parseNumber(text: string): number {
-  const t = text.trim().replace(/^[\u2212\u2013]/, "-").replace(/,/g, "");
-  return /^[-+]?(\d+(\.\d*)?|\.\d+)$/.test(t) ? Number(t) : NaN;
 }
 
 /** A number field that keeps what's typed (e.g. a lone minus sign) while the value is incomplete. */
