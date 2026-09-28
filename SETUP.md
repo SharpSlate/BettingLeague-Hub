@@ -34,7 +34,7 @@ The deploy works without this, but then only you can get codes. Add it before th
 2. Add this authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`
 3. Note the client ID and client secret.
 
-Until this is set up, the "Continue with Google" button won't work. Emailed codes still will.
+Until this is set up, the site doesn't show the "Continue with Google" button; members sign in with emailed codes. Add the two secrets any time and the button appears after the next deploy.
 
 ## 4. GitHub settings
 

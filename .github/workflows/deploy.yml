@@ -80,7 +80,7 @@ jobs:
           PY
           fi
           if [ "$HAS_GOOGLE" != "true" ]; then
-            echo "::warning::No Google sign-in client yet: the Google button won't work."
+            echo "::warning::No Google sign-in client yet: the site hides the Google button until there is one."
             python3 - <<'PY'
           import re
           p = "supabase/config.toml"
@@ -147,6 +147,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          # "true" once the Google sign-in secrets are set; the Google button shows only then.
+          VITE_GOOGLE: ${{ secrets.GOOGLE_CLIENT_ID != '' && secrets.GOOGLE_CLIENT_SECRET != '' }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

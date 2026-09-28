@@ -3,6 +3,8 @@ import { useApi } from "../lib/api.ts";
 
 export function SignIn() {
   const api = useApi();
+  // The deploy sets VITE_GOOGLE once the league has a Google sign-in client.
+  const google = api.demo || import.meta.env.VITE_GOOGLE === "true";
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
@@ -46,8 +48,12 @@ export function SignIn() {
               <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
             </label>
             <button className="btn primary block" disabled={busy || !email}>{busy ? "Sending…" : "Email me a sign-in code"}</button>
-            <div className="divider">or</div>
-            <button type="button" className="btn block" disabled={busy} onClick={() => run(() => api.signInWithGoogle())}>Continue with Google</button>
+            {google ? (
+              <>
+                <div className="divider">or</div>
+                <button type="button" className="btn block" disabled={busy} onClick={() => run(() => api.signInWithGoogle())}>Continue with Google</button>
+              </>
+            ) : null}
           </>
         ) : (
           <>
