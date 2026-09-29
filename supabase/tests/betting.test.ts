@@ -258,9 +258,12 @@ describe("hidden until kickoff", () => {
     const rows = await db.q(member(bob), "select * from public.standings() where entry_id = $1", [aliceEntry]);
     expect(Number(rows[0].bank_cents)).toBe(1_000_000);
     expect(Number(rows[0].at_risk_cents)).toBe(0);
+    expect(Number(rows[0].risk_cents)).toBe(0);
     expect(Number(rows[0].wagered_cents)).toBe(0);
     const mine = await db.q(member(alice), "select * from public.standings() where entry_id = $1", [aliceEntry]);
     expect(Number(mine[0].at_risk_cents)).toBe(15_000);
+    // Total risked counts bets still riding too.
+    expect(Number(mine[0].risk_cents)).toBe(15_000);
     expect(mine[0].is_mine).toBe(true);
   });
 
