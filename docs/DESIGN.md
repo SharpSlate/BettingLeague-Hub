@@ -189,7 +189,7 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 | Page | Contents | Covers Splash's |
 |---|---|---|
-| **Standings** (opens here) | Rank, entry, bank, net, record, risk, return, and this week's minimum (met, or X of Y). Filters: season, this week, last week, last 7 days, custom. Tap an entry for its bets. | Standings, Home |
+| **Standings** (opens here) | Rank, entry, bank, net, record, total risked (graded bets plus bets still riding), return, and this week's minimum (met, or X of Y). Filters: season, this week, last week, last 7 days, custom. Tap an entry for its bets. | Standings, Home |
 | **Board** | The open week's games (spread, total, moneyline with prices, kickoff in ET, line source and when it was updated). Started games are locked. The slip drawer has: which entry, straight / parlay / teaser and points, stakes, live payout, rule problems shown inline, and accepting a moved line. | Picks |
 | **League Picks** | Everyone's revealed bets, by game or by entry, pending and settled, each with line, price, stake and result. Unrevealed picks show as "hidden until kickoff". Includes a latest-activity view. | Activity, Home's feed |
 | **My Bets** | Each of your entries: bank, available, at risk, and weekly-minimum progress with a warning while short. Pending and Settled tabs. | Home's balance, My Entries, Pending, History |

@@ -115,7 +115,7 @@ export function Standings() {
                 <thead>
                   <tr>
                     <th>#</th><th>Entry</th><th className="num">Bank</th><th className="num">Net</th><th className="num">Record</th>
-                    <th className="num">Risk</th><th className="num">Return</th><th className="num">At risk</th><th>This week's 30%</th>
+                    <th className="num">Total risked</th><th className="num">Return</th><th className="num">At risk</th><th>This week's 30%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -138,8 +138,9 @@ export function Standings() {
           </div>
         )}
         <p className="tiny muted">
-          Bank = available units plus stakes still riding. Ties go to net, then total winnings. For other entries, at-risk and the
-          30% column count only bets on games that have started, so hidden picks stay hidden.
+          Bank = available units plus stakes still riding. Total risked = stakes on graded bets plus bets still riding. Ties go
+          to net, then total winnings. For other entries, total risked, at-risk and the 30% column count only bets on games that
+          have started, so hidden picks stay hidden.
         </p>
       </div>
     </>

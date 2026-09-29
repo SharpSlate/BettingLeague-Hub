@@ -235,12 +235,13 @@ export class DemoApi implements Api {
       const mine = this.mine(e.id);
       const pend = this.s.slips.filter((s) => s.entryId === e.id && s.status === "pending" && (mine || this.revealed(s)));
       const wk = this.s.slips.filter((s) => s.entryId === e.id && s.week === OPEN_WEEK && this.counts(s) && (mine || this.revealed(s)));
+      const periodPend = pend.filter((s) => (week === undefined || s.week === week) && s.placedAt >= from && s.placedAt < to);
       const b = e.baseline;
       const seasonWinnings = b.winnings + this.s.slips.filter((s) => s.entryId === e.id && s.status === "won").reduce((a, s) => a + s.payoutCents! - s.stakeCents, 0);
       return {
         entryId: e.id, name: e.name, isMine: mine, bankCents: this.bank(e), seasonNetCents: this.bank(e) - e.startingBankCents, seasonWinningsCents: seasonWinnings,
         wins: count("won") + (season ? b.wins : 0), losses: count("lost") + (season ? b.losses : 0), pushes: count("push") + (season ? b.pushes : 0),
-        riskCents: risk + (season ? b.risk : 0), returnCents: ret + (season ? b.ret : 0),
+        riskCents: risk + (season ? b.risk : 0) + periodPend.reduce((a, s) => a + s.stakeCents, 0), returnCents: ret + (season ? b.ret : 0),
         netCents: season ? this.bank(e) - e.startingBankCents : ret - risk + other, winningsCents: winnings + (season ? b.winnings : 0),
         atRiskCents: pend.reduce((a, s) => a + s.stakeCents, 0), week: OPEN_WEEK,
         requiredCents: requiredMinimumCents(this.weekStartBank(e), this.s.rules[0]!.document.weeklyMinimum.pct), wageredCents: wk.reduce((a, s) => a + s.stakeCents, 0),
