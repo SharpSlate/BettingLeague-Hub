@@ -1,0 +1,81 @@
+# Supabase project settings, applied to the hosted project by the deploy workflow
+# (supabase config push). Secrets come from environment variables via env(); the
+# workflow supplies them from GitHub Secrets. Nothing secret belongs in this file.
+
+project_id = "baltimore-degenerates"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+major_version = 17
+
+# Read by the pg_cron jobs (see the schedule migration); supabase db push stores them in Vault.
+[db.vault]
+project_url = "env(SUPABASE_URL)"
+cron_secret = "env(CRON_SECRET)"
+
+[auth]
+enabled = true
+site_url = "env(SITE_URL)"
+additional_redirect_urls = ["env(SITE_URL)"]
+jwt_expiry = 3600
+# Sign-ups are closed: admins add members (add-member function), then members sign in.
+enable_signup = false
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = false
+enable_confirmations = false
+double_confirm_changes = true
+# Members sign in with a 6-digit code emailed to them (no link, so it works on phones).
+otp_length = 6
+otp_expiry = 3600
+max_frequency = "60s"
+
+[auth.rate_limit]
+# Sign-in emails per hour. Supabase's default is very low; launch day needs headroom.
+email_sent = 100
+
+[auth.email.template.magic_link]
+subject = "Your BALTIMORE DEGENERATES sign-in code"
+content_path = "./supabase/templates/sign-in-code.html"
+
+# The league's Gmail with an app password. Supabase's built-in sender only reaches
+# the project's own team, so this is required for members to get their codes.
+[auth.email.smtp]
+enabled = true
+host = "smtp.gmail.com"
+port = 587
+user = "env(SMTP_USER)"
+pass = "env(SMTP_PASS)"
+admin_email = "env(SMTP_USER)"
+sender_name = "BALTIMORE DEGENERATES"
+
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret = "env(GOOGLE_CLIENT_SECRET)"
+skip_nonce_check = false
+
+# Every function checks its caller itself: members and admins through the Auth server
+# (auth.getUser), and pg_cron through the shared cron secret. The platform's own JWT
+# check only understands Supabase's legacy keys, so it's off; new projects use the
+# newer signing keys by default.
+[functions.pull-lines]
+verify_jwt = false
+
+[functions.pull-scores]
+verify_jwt = false
+
+[functions.place-slip]
+verify_jwt = false
+
+[functions.publish-rules]
+verify_jwt = false
+
+[functions.add-member]
+verify_jwt = false

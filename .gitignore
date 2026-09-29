@@ -1,0 +1,13 @@
+node_modules
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+supabase/.temp/
+supabase/.branches/
+
+# Scratch tests written during review passes (deleted when the review ends).
+zz-review-*

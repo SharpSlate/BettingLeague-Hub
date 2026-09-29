@@ -1,0 +1,91 @@
+[
+  {
+    "id": "evt_kc_buf",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-10-04T17:00:00Z",
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Buffalo Bills",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-10-01T14:02:11Z",
+        "markets": [
+          { "key": "h2h", "last_update": "2026-10-01T14:02:11Z", "outcomes": [
+            { "name": "Buffalo Bills", "price": 130 },
+            { "name": "Kansas City Chiefs", "price": -155 } ] },
+          { "key": "spreads", "last_update": "2026-10-01T14:02:11Z", "outcomes": [
+            { "name": "Buffalo Bills", "price": -108, "point": 3 },
+            { "name": "Kansas City Chiefs", "price": -112, "point": -3 } ] },
+          { "key": "totals", "last_update": "2026-10-01T14:02:11Z", "outcomes": [
+            { "name": "Over", "price": -110, "point": 47.5 },
+            { "name": "Under", "price": -110, "point": 47.5 } ] }
+        ]
+      },
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2026-10-01T14:01:40Z",
+        "markets": [
+          { "key": "h2h", "outcomes": [
+            { "name": "Buffalo Bills", "price": 134 },
+            { "name": "Kansas City Chiefs", "price": -158 } ] },
+          { "key": "spreads", "outcomes": [
+            { "name": "Buffalo Bills", "price": -110, "point": 3.5 },
+            { "name": "Kansas City Chiefs", "price": -110, "point": -3.5 } ] }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "evt_bal_pit",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-10-04T20:25:00Z",
+    "home_team": "Baltimore Ravens",
+    "away_team": "Pittsburgh Steelers",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-10-01T14:02:11Z",
+        "markets": [
+          { "key": "h2h", "outcomes": [
+            { "name": "Baltimore Ravens", "price": -300 },
+            { "name": "Pittsburgh Steelers", "price": 240 } ] },
+          { "key": "spreads", "outcomes": [
+            { "name": "Baltimore Ravens", "price": -110, "point": -6.5 },
+            { "name": "Pittsburgh Steelers", "price": -110, "point": 6.5 } ] },
+          { "key": "totals", "outcomes": [
+            { "name": "Over", "price": -105, "point": 41 },
+            { "name": "Under", "price": -115, "point": 41 } ] }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "evt_broken",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-10-05T00:20:00Z",
+    "home_team": "Dallas Cowboys",
+    "away_team": "New York Giants",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "markets": [
+          { "key": "spreads", "outcomes": [
+            { "name": "Dallas Cowboys", "price": -110, "point": -3 },
+            { "name": "New York Giants", "price": -110, "point": 2.5 } ] },
+          { "key": "totals", "outcomes": [
+            { "name": "Over", "price": -110, "point": 44.25 },
+            { "name": "Under", "price": -110, "point": 44.25 } ] },
+          { "key": "h2h", "outcomes": [
+            { "name": "Dallas Cowboys", "price": -150 } ] }
+        ]
+      }
+    ]
+  }
+]
