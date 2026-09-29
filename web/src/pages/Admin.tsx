@@ -179,7 +179,16 @@ function Members() {
   return (
     <div className="grid-2">
       <Action title="Add a member" submit="Add member" note="Sign-ups are closed, so this is how people get in. They then sign in with their email or Google."
-        onSubmit={async () => { await api.adminAddMember(f.email, f.name.trim(), f.entry || null); users.reload(); setF({ email: "", name: "", entry: "" }); return "Added. They can sign in now."; }}>
+        onSubmit={async () => {
+          const email = f.email.trim();
+          const { created } = await api.adminAddMember(email, f.name.trim(), f.entry || null);
+          users.reload();
+          setF({ email: "", name: "", entry: "" });
+          if (!created) {
+            return `${email} already belongs to a member, so nobody new was added${f.entry ? " (they now manage that entry)" : ""}. Check the email and try again if you meant someone else.`;
+          }
+          return `Added. No email goes out now: they sign in on the site with ${email} and get a code there.`;
+        }}>
         <Field label="Email"><input className="input" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Display name (everyone sees it)"><input className="input" required maxLength={40} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Manages entry (optional)">

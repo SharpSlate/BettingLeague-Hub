@@ -259,7 +259,8 @@ export interface Api {
   adminUsers(): Promise<AdminUser[]>;
   /** Failed pulls and grading problems from the last 3 days, newest first. */
   adminRecentProblems(): Promise<AdminProblem[]>;
-  adminAddMember(email: string, displayName: string, entryId: string | null): Promise<void>;
+  /** created is false when the email already belonged to a member (nobody new was added). */
+  adminAddMember(email: string, displayName: string, entryId: string | null): Promise<{ created: boolean }>;
   adminAddEntry(name: string, startingBankCents: number): Promise<string>;
   adminSetManager(entryId: string, userId: string, add: boolean): Promise<void>;
   adminSetAdmin(userId: string, isAdmin: boolean): Promise<void>;
