@@ -21,7 +21,7 @@ function key(legacy: string, dict: string): string {
   throw new Error(`missing environment variable ${legacy} or ${dict}`);
 }
 
-/** Origins allowed to call the functions from a browser, e.g. "https://bappel2.github.io". */
+/** Origins allowed to call the functions from a browser, e.g. "https://sharpslate.github.io". */
 export const siteOrigins = () => Deno.env.get("SITE_ORIGIN") ?? "*";
 
 /** The service-role client: bypasses RLS. Never hand its results to a member unfiltered. */

@@ -47,7 +47,7 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_PROJECT_REF` | the project ref |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | the publishable (anon) key |
-| `SITE_URL` | `https://bappel2.github.io/BettingLeague/` |
+| `SITE_URL` | `https://sharpslate.github.io/BettingLeague/` |
 
 **Secrets** tab:
 
@@ -71,7 +71,7 @@ Merge the working branch into `main`. The **Deploy** workflow then:
 2. applies the database migrations;
 3. applies the sign-in settings and function secrets;
 4. deploys the functions;
-5. publishes the site to `https://bappel2.github.io/BettingLeague/`.
+5. publishes the site to `https://sharpslate.github.io/BettingLeague/`.
 
 You can watch it under the repo's **Actions** tab. After this, every merge to `main` redeploys.
 
