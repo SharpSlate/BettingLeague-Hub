@@ -28,7 +28,9 @@ enable_signup = false
 enable_anonymous_sign_ins = false
 
 [auth.email]
-enable_signup = false
+# Must stay true: in config push this switch turns the whole email sign-in method
+# on or off. Sign-ups stay closed through [auth] enable_signup above.
+enable_signup = true
 enable_confirmations = false
 double_confirm_changes = true
 # Members sign in with a 6-digit code emailed to them (no link, so it works on phones).
