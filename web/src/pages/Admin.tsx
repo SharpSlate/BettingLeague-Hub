@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import type { Market } from "@rules";
 import { Empty, errorText, Loading, PageHead } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
+import { parsePairings, parseStandings, type Parsed } from "../lib/bulk.ts";
 import { ago, kickoff, matchup, odds, toCents } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
 import { useMe } from "../lib/me.ts";
@@ -50,6 +51,48 @@ function cents(text: string, allowNegative = false): number {
   const c = toCents(t.replace(/^[-+]/, ""));
   if (c === null) throw new Error("Enter an amount in units, e.g. 1500 or 1500.25.");
   return neg ? -c : c;
+}
+
+/** A paste box: checks each line as you type, then runs them one by one and lists what happened. */
+function BulkBox<T>({ title, note, placeholder, submit, parse, run }: {
+  title: string;
+  note: string;
+  placeholder: string;
+  submit: string;
+  parse: (text: string) => Parsed<T>;
+  run: (rows: T[]) => Promise<{ ok: boolean; text: string }[]>;
+}) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState<{ ok: boolean; text: string }[] | null>(null);
+  const parsed = parse(text);
+  const handle = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setResults(null);
+    try {
+      setResults(await run(parsed.rows));
+    } catch (err) {
+      setResults([{ ok: false, text: errorText(err) }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="card pad form" style={{ gridColumn: "1 / -1" }} onSubmit={handle}>
+      <h3>{title}</h3>
+      <p className="small muted" style={{ margin: 0 }}>{note}</p>
+      <textarea className="input" rows={8} spellCheck={false} placeholder={placeholder} value={text} onChange={(e) => { setText(e.target.value); setResults(null); }} />
+      {text.trim() ? (
+        <div className={`banner ${parsed.errors.length ? "bad" : ""}`} style={{ display: "block" }}>
+          {parsed.rows.length} line{parsed.rows.length === 1 ? "" : "s"} ready.
+          {parsed.errors.map((err) => <div key={err}>{err}</div>)}
+        </div>
+      ) : null}
+      <div><button className="btn primary" disabled={busy || parsed.rows.length === 0 || parsed.errors.length > 0}>{busy ? "Working…" : submit}</button></div>
+      {results ? <div className="banner" style={{ display: "block" }}>{results.map((r, i) => <div key={i} className={r.ok ? "" : "bad"}>{r.ok ? "✓" : "✗"} {r.text}</div>)}</div> : null}
+    </form>
+  );
 }
 
 type Section = "status" | "members" | "entries" | "games" | "rules";
@@ -234,6 +277,30 @@ function Members() {
           </select>
         </Field>
       </Action>
+      <BulkBox
+        title="Pair entries with members"
+        note="One line per entry and person: entry name | email | display name. Adds anyone new (the display name is only needed for them) and makes them a manager of that entry. Someone with two entries gets two lines; a shared entry gets a line per person. Nobody is emailed: each person signs in on the site with their email to get a code."
+        placeholder={"Entry name | email | display name"}
+        submit="Pair them"
+        parse={parsePairings}
+        run={async (rows) => {
+          const list = await api.entrants();
+          const out: { ok: boolean; text: string }[] = [];
+          for (const r of rows) {
+            const entry = list.find((e) => e.name.toLowerCase() === r.entryName.toLowerCase());
+            if (!entry) { out.push({ ok: false, text: `${r.entryName}: no entry with that name. Add or import it first.` }); continue; }
+            try {
+              const { created } = await api.adminAddMember(r.email, r.displayName, entry.entryId);
+              out.push({ ok: true, text: `${entry.name}: ${r.email} ${created ? "added and" : "already a member,"} now manages it.` });
+            } catch (err) {
+              out.push({ ok: false, text: `${entry.name}: ${errorText(err)}` });
+            }
+          }
+          users.reload();
+          entrants.reload();
+          return out;
+        }}
+      />
       <div className="card" style={{ gridColumn: "1 / -1" }}>
         <div className="card-head"><h3>Members</h3><span className="small muted">Emails are visible to admins only.</span></div>
         {users.loading && !users.data ? <Loading /> : (
@@ -288,6 +355,33 @@ function Entries() {
         <div className="row"><Field label="Risk"><input className="input num" value={imp.risk} onChange={(e) => setImp({ ...imp, risk: e.target.value })} /></Field><Field label="Return"><input className="input num" value={imp.ret} onChange={(e) => setImp({ ...imp, ret: e.target.value })} /></Field><Field label="Total winnings"><input className="input num" value={imp.win} onChange={(e) => setImp({ ...imp, win: e.target.value })} /></Field></div>
         <Field label="Note"><input className="input" value={imp.note} onChange={(e) => setImp({ ...imp, note: e.target.value })} /></Field>
       </Action>
+      <BulkBox
+        title="Paste Splash standings"
+        note="One line per entry: name | bank | net | record | risk | return, with total winnings as an optional seventh column. Adds any entry that isn't here yet, then imports its Splash row. Pasting again later updates the numbers, as long as the entry has no bets here yet."
+        placeholder={"Entry name | 26,909.15 | +11,909.15 | 5-2 | 14,500 | 26,409.15"}
+        submit="Import all"
+        parse={parseStandings}
+        run={async (rows) => {
+          const list = await api.entrants();
+          const out: { ok: boolean; text: string }[] = [];
+          for (const r of rows) {
+            try {
+              let entryId = list.find((e) => e.name.toLowerCase() === r.name.toLowerCase())?.entryId;
+              const added = !entryId;
+              if (!entryId) entryId = await api.adminAddEntry(r.name, 0);
+              await api.adminImportSplash({
+                entryId, bankCents: r.bankCents, netCents: r.netCents, wins: r.wins, losses: r.losses, pushes: r.pushes,
+                riskCents: r.riskCents, returnCents: r.returnCents, winningsCents: r.winningsCents, note: "Splash standings (pasted)",
+              });
+              out.push({ ok: true, text: `${r.name}: ${added ? "added and imported" : "updated"}.` });
+            } catch (err) {
+              out.push({ ok: false, text: `${r.name}: ${errorText(err)}` });
+            }
+          }
+          entrants.reload();
+          return out;
+        }}
+      />
       <Action title="Adjust a bank" submit="Adjust" note="Adds or removes units, with a reason that goes in the admin log."
         onSubmit={async () => { await api.adminAdjustBank(adj.entry, cents(adj.amount, true), adj.reason); setAdj({ entry: "", amount: "", reason: "" }); }}>
         <Field label="Entry">{pick(adj.entry, (v) => setAdj({ ...adj, entry: v }))}</Field>
