@@ -261,7 +261,8 @@ export class SupabaseApi implements Api {
     return data;
   }
   async adminAddMember(email: string, displayName: string, entryId: string | null) {
-    await this.invoke("add-member", { email, displayName, entryId });
+    const data = await this.invoke("add-member", { email, displayName, entryId });
+    return { created: Boolean(data?.created) };
   }
   async adminAddEntry(name: string, startingBankCents: number) {
     return check(await this.db.rpc("admin_add_entry", { p_name: name, p_starting_bank_cents: startingBankCents })) as string;

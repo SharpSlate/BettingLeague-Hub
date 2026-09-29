@@ -454,11 +454,17 @@ export class DemoApi implements Api {
   }
   async adminAddMember(email: string, displayName: string, entryId: string | null) {
     await wait();
+    const existing = this.s.users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
+    if (existing) {
+      if (entryId && !this.entry(entryId).managers.includes(existing.id)) this.entry(entryId).managers.push(existing.id);
+      return { created: false };
+    }
     if (!displayName.trim()) throw new Error("Give the new member a display name.");
     const id = `u-${this.nextId++}`;
     this.s.users.push({ id, displayName: displayName.trim(), email, isAdmin: false });
     if (entryId) this.entry(entryId).managers.push(id);
     this.audit("member_added", "profile", id, { displayName }, "");
+    return { created: true };
   }
   async adminAddEntry(name: string, startingBankCents: number) {
     const id = `e-${this.nextId++}`;
