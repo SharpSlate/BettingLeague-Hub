@@ -100,6 +100,7 @@ Commissioners have the powers the single-league site gave its admins, for their 
 ## During the season
 
 Site admins:
+- **A final held for ESPN:** a game goes final only once ESPN's scoreboard agrees with the odds feed. When they disagree, or ESPN can't be reached, **Site feeds → Recent problems** says "final held" and why. Check the real score and enter it with **Games & lines → Correct the final score**.
 - **A wrong final score:** **Games & lines → Correct the final score.** Every league's bets on that game are taken back and graded again within 10 minutes.
 - **A postponed game:** set it to **Postponed**. Its bets ride in every league. A league's week won't close by itself while the game is unplayed; its commissioner uses **Open next week** to move on.
 - **Something looks stuck:** **Site feeds → Recent problems** lists failed pulls, bets the grader couldn't settle, and games that need a hand.

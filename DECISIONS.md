@@ -22,6 +22,7 @@ Defaults chosen while fixing the review findings (Sept 28–29). Each is built a
 | Default | Why |
 |---|---|
 | A game goes final only when two score pulls in a row agree (grading waits about 10 minutes). | One bad reading from the feed isn't paid out. |
+| A game also goes final only once ESPN's free scoreboard shows the same final. If ESPN has a different final, doesn't list the game, or can't be reached, the game stays live and the Admin page's Recent problems says why; an admin enters the final by hand. | The handoff's review asked for a second source before banks move: The Odds API alone could pay out a wrong score nobody notices. |
 | Correcting a final score regrades that game's bets automatically: payouts are taken back and paid again, each as its own ledger row. Bets an admin voided stay void. | The design promised "void or regrade"; before, a wrong score couldn't be fixed. |
 | A co-manager added mid-week sees the entry's hidden bets placed before they joined only at kickoff, like everyone else. | Otherwise an admin could add themselves to any entry and see its picks. |
 | Other members see a parlay's odds and payout only after every leg kicks off. | The combined odds give away the hidden legs. |
