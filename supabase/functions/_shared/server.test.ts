@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { gradePending, type GameResult, type PendingSlip } from "./grading.ts";
 import { pullLines, refreshForUndo, runScores, type Settings, type Store } from "./jobs.ts";
 import { normalizeOdds, normalizeScores, oddsUrl, readUsage, scoresUrl, type NormalizedEvent, type NormalizedScore } from "./odds-api.ts";
+import { confirmFinals, espnDays, espnUrl, parseEspn } from "./espn.ts";
 import { checkPlacement, type CurrentLine, type GameInfo } from "./placement.ts";
 import { DAY_ONE_RULES } from "./rules/defaults.ts";
 import { inPullWindow, isStale } from "./schedule.ts";
@@ -550,5 +551,82 @@ describe("pulling the lines for an undo", () => {
     const stuck = new FakeStore();
     stuck.claimOk = "recent";
     expect(await refreshForUndo(stuck, "KEY", fakeFetch(fixture("odds.json")), "u1", since, t0, noSleep)).toBe("failed");
+  });
+});
+
+describe("checking finals against ESPN", () => {
+  // ESPN's scoreboard, trimmed to the fields the check reads.
+  const espnGame = (home: [string, number], away: [string, number], start: string, completed = true) => ({
+    date: start,
+    competitions: [{
+      date: start,
+      status: { type: { state: completed ? "post" : "in", completed } },
+      competitors: [
+        { homeAway: "home", team: { displayName: home[0], abbreviation: "H" }, score: String(home[1]) },
+        { homeAway: "away", team: { displayName: away[0], abbreviation: "A" }, score: String(away[1]) },
+      ],
+    }],
+  });
+  const kcBuf = (kc: number, buf: number, completed = true) =>
+    espnGame(["Kansas City Chiefs", kc], ["Buffalo Bills", buf], "2026-10-04T17:00Z", completed);
+  // The Odds API's answer from the fixture, ESPN's from `espn` (or the status given).
+  const feeds = (espn: unknown[] | number) => {
+    const calls: string[] = [];
+    const f = async (url: string) => {
+      calls.push(url);
+      if (url.startsWith("https://site.api.espn.com/")) {
+        return typeof espn === "number"
+          ? new Response("down", { status: espn })
+          : new Response(JSON.stringify({ events: espn }), { status: 200 });
+      }
+      return new Response(JSON.stringify(fixture("scores.json")), { status: 200, headers: { "x-requests-remaining": "89998", "x-requests-last": "2" } });
+    };
+    return Object.assign(f, { calls });
+  };
+  const run = async (espn: unknown[] | number) => {
+    const store = new FakeStore();
+    store.awaiting = 2;
+    const f = feeds(espn);
+    await runScores(store, "KEY", f, "schedule");
+    return { store, f, held: store.pulls.filter((p) => p.error.startsWith("final held")).map((p) => p.error) };
+  };
+
+  it("asks ESPN for the game's day, Eastern and UTC", () => {
+    expect(espnDays(["2026-10-04T17:00:00Z", "2026-10-05T00:20:00Z"], "America/New_York")).toEqual(["20261004", "20261005"]);
+    expect(new URL(espnUrl("20261004")).searchParams.get("dates")).toBe("20261004");
+  });
+  it("lets a final through when ESPN has the same final, matching teams by name rather than home and away", async () => {
+    const { store, f, held } = await run([espnGame(["Buffalo Bills", 24], ["Kansas City Chiefs", 27], "2026-10-04T17:00Z")]);
+    expect(store.scores).toContainEqual({ id: "evt_kc_buf", completed: true, homeScore: 27, awayScore: 24 });
+    expect(held).toEqual([]);
+    expect(f.calls.filter((u) => u.includes("espn"))).toHaveLength(1);
+  });
+  it("holds a final ESPN scores differently, and says so", async () => {
+    const { store, held } = await run([kcBuf(27, 21)]);
+    expect(store.scores).toContainEqual({ id: "evt_kc_buf", completed: false, homeScore: 27, awayScore: 24 });
+    expect(held).toEqual(["final held: Buffalo Bills at Kansas City Chiefs (24-27): ESPN's final is 21-27. Enter the right final score by hand."]);
+  });
+  it("holds a final quietly while ESPN still shows the game on", async () => {
+    const { store, held } = await run([kcBuf(20, 24, false)]);
+    expect(store.scores).toContainEqual({ id: "evt_kc_buf", completed: false, homeScore: 27, awayScore: 24 });
+    expect(held).toEqual([]);
+  });
+  it("holds a final when ESPN is down or doesn't list the game", async () => {
+    const down = await run(503);
+    expect(down.store.scores).toContainEqual({ id: "evt_kc_buf", completed: false, homeScore: 27, awayScore: 24 });
+    expect(down.held).toEqual(["final held: Buffalo Bills at Kansas City Chiefs (24-27): couldn't check ESPN: 20261004 (HTTP 503)"]);
+    const missing = await run([espnGame(["Kansas City Chiefs", 27], ["Buffalo Bills", 24], "2026-10-11T17:00Z")]);
+    expect(missing.store.scores).toContainEqual({ id: "evt_kc_buf", completed: false, homeScore: 27, awayScore: 24 });
+    expect(missing.held).toEqual(["final held: Buffalo Bills at Kansas City Chiefs (24-27): ESPN doesn't list this game"]);
+  });
+  it("leaves games still on alone, and doesn't call ESPN when nothing is final", async () => {
+    const { store } = await run([kcBuf(27, 24)]);
+    expect(store.scores).toContainEqual({ id: "evt_bal_pit", completed: false, homeScore: 10, awayScore: 7 });
+    const none = await confirmFinals([], [{ id: "x", completed: false, homeScore: 3, awayScore: 0 }], async () => { throw new Error("no call"); }, "America/New_York");
+    expect(none.held).toEqual([]);
+  });
+  it("skips malformed ESPN games", () => {
+    expect(parseEspn({ events: [null, { competitions: [{ date: "2026-10-04T17:00Z", competitors: [{ team: { displayName: "A" }, score: "x" }, {}] }] }] })).toEqual([]);
+    expect(parseEspn(null)).toEqual([]);
   });
 });
