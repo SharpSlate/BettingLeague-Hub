@@ -7,7 +7,31 @@ export type GameStatus = "scheduled" | "live" | "final" | "postponed" | "void";
 export interface Me {
   id: string;
   displayName: string;
-  isAdmin: boolean;
+  /** Runs the games, lines and pulls every league shares. Gives no say in anyone's league. */
+  isSiteAdmin: boolean;
+  /** A commissioner of the league being viewed: runs its rules, entries, weeks and banks. */
+  isCommissioner: boolean;
+}
+
+/** A league the signed-in member belongs to. */
+export interface LeagueSummary {
+  id: string;
+  name: string;
+  role: "commissioner" | "member";
+  /** Only for commissioners, who decide who gets it. */
+  inviteCode: string | null;
+  selfEntry: boolean;
+  openWeek: number | null;
+}
+
+/** What an invite code leads to. */
+export interface InvitePreview {
+  leagueId: string;
+  name: string;
+  members: number;
+  alreadyMember: boolean;
+  /** Whether joining comes with an entry of your own. */
+  selfEntry: boolean;
 }
 
 export interface WeekInfo {
@@ -20,7 +44,11 @@ export interface WeekInfo {
 }
 
 export interface League {
+  id: string;
   name: string;
+  role: "commissioner" | "member";
+  inviteCode: string | null;
+  selfEntry: boolean;
   openWeek: WeekInfo | null;
   timezone: string;
   pullWindowStart: string;
@@ -188,7 +216,7 @@ export interface AdminUser {
   userId: string;
   email: string;
   displayName: string;
-  isAdmin: boolean;
+  isCommissioner: boolean;
   entryNames: string[];
 }
 
@@ -238,6 +266,16 @@ export interface Api {
   signOut(): Promise<void>;
   me(): Promise<Me>;
 
+  /** The leagues the signed-in member belongs to. */
+  myLeagues(): Promise<LeagueSummary[]>;
+  /** Picks the league every league-level call below is about. */
+  setLeague(leagueId: string): void;
+  /** Starts a league with the caller as commissioner; returns its id. */
+  createLeague(name: string): Promise<string>;
+  inviteInfo(code: string): Promise<InvitePreview | null>;
+  /** Joins by invite code, with an entry of your own when entryName is given; returns the league's id. */
+  joinLeague(code: string, entryName: string | null): Promise<string>;
+
   league(): Promise<League>;
   teams(): Promise<Team[]>;
   /** Season standings, or one week's (by week number), or bets settled between two times. */
@@ -256,6 +294,9 @@ export interface Api {
   undoSlips(slipIds: string[]): Promise<UndoResult[]>;
   setDisplayName(name: string): Promise<void>;
 
+  adminUpdateLeague(name: string, selfEntry: boolean, newInvite: boolean): Promise<void>;
+  adminSetCommissioner(userId: string, on: boolean): Promise<void>;
+  adminRemoveMember(userId: string): Promise<void>;
   adminUsers(): Promise<AdminUser[]>;
   /** Failed pulls and grading problems from the last 3 days, newest first. */
   adminRecentProblems(): Promise<AdminProblem[]>;
@@ -263,7 +304,6 @@ export interface Api {
   adminAddMember(email: string, displayName: string, entryId: string | null): Promise<{ created: boolean }>;
   adminAddEntry(name: string, startingBankCents: number): Promise<string>;
   adminSetManager(entryId: string, userId: string, add: boolean): Promise<void>;
-  adminSetAdmin(userId: string, isAdmin: boolean): Promise<void>;
   adminImportSplash(args: SplashImport): Promise<void>;
   adminAdjustBank(entryId: string, amountCents: number, reason: string): Promise<void>;
   /** Closes the open week (the one the page shows) and opens the next. Null when no later week has games. */

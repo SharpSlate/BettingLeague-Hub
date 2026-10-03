@@ -104,7 +104,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    const week = (await db.from("weeks").select("week, rule_set_version").eq("status", "open").maybeSingle()).data;
+    // The open week of the entry's league (each league opens its weeks on its own).
+    const week = ((await db.rpc("open_week_for_entry_internal", { p_entry: input.entryId })).data ?? [])[0] as
+      { week: number; rule_set_version: number } | undefined;
     if (!week) return json(req, origins, 409, { error: "no_open_week", message: friendlyMessage("no_open_week") });
     const rules = (await db.from("rule_sets").select("document").eq("version", week.rule_set_version).single()).data?.document as RuleSet;
 

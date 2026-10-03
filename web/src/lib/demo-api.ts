@@ -6,13 +6,14 @@ import { gradePending, type GameResult, type PendingSlip } from "../../../supaba
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
 import { TEAMS, team } from "./teams.ts";
 import type {
-  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest,
+  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry, PlacementRequest,
   PlaceResult, RuleVersion, SlipView, SplashImport, StandingRow, UndoResult, WeekInfo,
 } from "./types.ts";
 
 const H = 3_600_000;
 const D = 24 * H;
 const OPEN_WEEK = 5;
+const DEMO_LEAGUE = "demo-league";
 
 type Line = { market: Leg["market"]; side: Leg["side"]; point: number | null; price: number; source: string; asOf: number };
 interface DGame {
@@ -203,12 +204,24 @@ export class DemoApi implements Api {
   }
   async signInWithGoogle() { await wait(); this.signedIn = true; this.emit(); }
   async signOut() { this.signedIn = false; this.emit(); }
-  async me(): Promise<Me> { return { id: YOU, displayName: this.s.users[0]!.displayName, isAdmin: true }; }
+  async me(): Promise<Me> { return { id: YOU, displayName: this.s.users[0]!.displayName, isSiteAdmin: true, isCommissioner: true }; }
+
+  // The demo has one league; starting or joining others needs the real site.
+  private leagueName = "Demo League";
+  async myLeagues(): Promise<LeagueSummary[]> {
+    return [{ id: DEMO_LEAGUE, name: this.leagueName, role: "commissioner", inviteCode: "DEMO234567", selfEntry: true, openWeek: OPEN_WEEK }];
+  }
+  setLeague(_leagueId: string) { /* one league */ }
+  async createLeague(_name: string): Promise<string> { throw new Error("Starting a league isn't part of the demo."); }
+  async inviteInfo(code: string): Promise<InvitePreview | null> {
+    return code.toUpperCase() === "DEMO234567" ? { leagueId: DEMO_LEAGUE, name: this.leagueName, members: this.s.users.length, alreadyMember: true, selfEntry: true } : null;
+  }
+  async joinLeague(_code: string, _entryName: string | null): Promise<string> { throw new Error("Joining a league isn't part of the demo."); }
 
   async league(): Promise<League> {
     const now = Date.now();
     return {
-      name: "BALTIMORE DEGENERATES",
+      id: DEMO_LEAGUE, name: this.leagueName, role: "commissioner", inviteCode: "DEMO234567", selfEntry: true,
       openWeek: { week: OPEN_WEEK, label: `Week ${OPEN_WEEK}`, startsAt: new Date(now - 2 * D).toISOString(), endsAt: new Date(now + 5 * D).toISOString(), status: "open", ruleSetVersion: this.s.rules[0]!.version },
       timezone: "America/New_York", pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
       refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
@@ -419,7 +432,7 @@ export class DemoApi implements Api {
 
   async adminUsers(): Promise<AdminUser[]> {
     return this.s.users.map((u) => ({
-      userId: u.id, email: u.email, displayName: u.displayName, isAdmin: u.isAdmin,
+      userId: u.id, email: u.email, displayName: u.displayName, isCommissioner: u.isAdmin,
       entryNames: this.s.entries.filter((e) => e.managers.includes(u.id)).map((e) => e.name),
     }));
   }
@@ -480,12 +493,25 @@ export class DemoApi implements Api {
     e.managers = add ? [...new Set([...e.managers, userId])] : e.managers.filter((m) => m !== userId);
     this.audit(add ? "manager_added" : "manager_removed", "entry", entryId, { userId, member: this.s.users.find((u) => u.id === userId)?.displayName, entry: e.name }, "");
   }
-  async adminSetAdmin(userId: string, isAdmin: boolean) {
+  async adminUpdateLeague(name: string, _selfEntry: boolean, _newInvite: boolean) {
+    if (!name.trim()) throw new Error("bad_name");
+    this.leagueName = name.trim();
+    this.audit("league_updated", "league", DEMO_LEAGUE, { name: this.leagueName }, "");
+  }
+  async adminSetCommissioner(userId: string, on: boolean) {
     const u = this.s.users.find((x) => x.id === userId);
-    if (!u) throw new Error("not_found");
-    if (!isAdmin && this.s.users.filter((x) => x.isAdmin && x.id !== userId).length === 0) throw new Error("last_admin");
-    u.isAdmin = isAdmin;
-    this.audit(isAdmin ? "admin_granted" : "admin_removed", "profile", userId, null, "");
+    if (!u) throw new Error("not_member");
+    if (!on && this.s.users.filter((x) => x.isAdmin && x.id !== userId).length === 0) throw new Error("last_commissioner");
+    u.isAdmin = on;
+    this.audit(on ? "commissioner_granted" : "commissioner_removed", "profile", userId, { member: u.displayName }, "");
+  }
+  async adminRemoveMember(userId: string) {
+    const u = this.s.users.find((x) => x.id === userId);
+    if (!u) throw new Error("not_member");
+    if (this.s.entries.some((e) => e.managers.includes(userId))) throw new Error("manages_entry");
+    if (u.isAdmin && this.s.users.filter((x) => x.isAdmin && x.id !== userId).length === 0) throw new Error("last_commissioner");
+    this.s.users = this.s.users.filter((x) => x.id !== userId);
+    this.audit("member_removed", "profile", userId, { member: u.displayName }, "");
   }
   async adminImportSplash(a: SplashImport) {
     const e = this.entry(a.entryId);

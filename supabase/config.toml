@@ -2,7 +2,7 @@
 # (supabase config push). Secrets come from environment variables via env(); the
 # workflow supplies them from GitHub Secrets. Nothing secret belongs in this file.
 
-project_id = "baltimore-degenerates"
+project_id = "betting-league"
 
 [api]
 enabled = true
@@ -23,13 +23,13 @@ enabled = true
 site_url = "env(SITE_URL)"
 additional_redirect_urls = ["env(SITE_URL)"]
 jwt_expiry = 3600
-# Sign-ups are closed: admins add members (add-member function), then members sign in.
-enable_signup = false
+# Sign-ups are open: anyone can sign in with an emailed code (or Google), then start a
+# league or join one with its invite link.
+enable_signup = true
 enable_anonymous_sign_ins = false
 
 [auth.email]
-# Must stay true: in config push this switch turns the whole email sign-in method
-# on or off. Sign-ups stay closed through [auth] enable_signup above.
+# Must stay true: in config push this switch turns the whole email sign-in method on or off.
 enable_signup = true
 enable_confirmations = false
 double_confirm_changes = true
@@ -43,10 +43,10 @@ max_frequency = "60s"
 email_sent = 100
 
 [auth.email.template.magic_link]
-subject = "Your BALTIMORE DEGENERATES sign-in code"
+subject = "Your Betting League sign-in code"
 content_path = "./supabase/templates/sign-in-code.html"
 
-# The league's Gmail with an app password. Supabase's built-in sender only reaches
+# The site's Gmail with an app password. Supabase's built-in sender only reaches
 # the project's own team, so this is required for members to get their codes.
 [auth.email.smtp]
 enabled = true
@@ -55,7 +55,7 @@ port = 587
 user = "env(SMTP_USER)"
 pass = "env(SMTP_PASS)"
 admin_email = "env(SMTP_USER)"
-sender_name = "BALTIMORE DEGENERATES"
+sender_name = "Betting League"
 
 [auth.external.google]
 enabled = true

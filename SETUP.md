@@ -1,5 +1,7 @@
 # Setting up the site
 
+This is the multi-league site. It runs on its **own** GitHub repository and its **own** Supabase project, never the single-league site's (the deploy refuses to run from `SharpSlate/BettingLeague`).
+
 One-time steps for the owner, roughly in this order. Nothing secret ever goes in this repo or in chat: every key goes into **GitHub Secrets** (repo **Settings → Secrets and variables → Actions**), and the deploy workflow hands it to Supabase.
 
 The menu names below are as of September 2026. If a screen looks different, the Claude session can walk you through it.
@@ -7,7 +9,7 @@ The menu names below are as of September 2026. If a screen looks different, the 
 ## 1. Supabase project
 
 1. At [supabase.com](https://supabase.com), sign in and create a **new project**:
-   - name: `baltimore-degenerates`
+   - name: `betting-league`
    - region: East US
    - a strong database password, saved somewhere safe
 
@@ -18,15 +20,15 @@ The menu names below are as of September 2026. If a screen looks different, the 
    - the **publishable (anon) key**, which is meant to be public.
 3. In your Supabase account settings, create a **personal access token** for the deploy workflow.
 
-## 2. League email for sign-in codes
+## 2. Site email for sign-in codes
 
-Supabase's built-in email only reaches the project's own team, so members' sign-in codes need a real sender.
+Supabase's built-in email only reaches the project's own team, so everyone's sign-in codes need a real sender.
 
-1. Create a Gmail account for the league.
+1. Create a Gmail account for the site.
 2. Turn on 2-Step Verification for it.
 3. Create an **app password**. Google lists it under the account's Security settings.
 
-The deploy works without this, but then only you can get codes. Add it before the commissioner signs in.
+The deploy works without this, but then only you can get codes. Add it before anyone else signs in.
 
 ## 3. Google sign-in (optional for the trial)
 
@@ -47,7 +49,7 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_PROJECT_REF` | the project ref |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | the publishable (anon) key |
-| `SITE_URL` | `https://sharpslate.github.io/BettingLeague/` |
+| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` |
 
 **Secrets** tab:
 
@@ -55,9 +57,9 @@ In **Settings → Secrets and variables → Actions**:
 |---|---|
 | `SUPABASE_ACCESS_TOKEN` | the personal access token from step 1 |
 | `SUPABASE_DB_PASSWORD` | the database password from step 1 |
-| `ODDS_API_KEY` | your The Odds API key |
+| `ODDS_API_KEY` | your The Odds API key (one pull serves every league; a key shared with another site shares its monthly credits) |
 | `CRON_SECRET` | any long random string (it lets the scheduler call the functions) |
-| `SMTP_USER` | the league Gmail address |
+| `SMTP_USER` | the site's Gmail address |
 | `SMTP_PASS` | its app password |
 | `GOOGLE_CLIENT_ID` | from step 3 (optional) |
 | `GOOGLE_CLIENT_SECRET` | from step 3 (optional) |
@@ -71,45 +73,39 @@ Merge the working branch into `main`. The **Deploy** workflow then:
 2. applies the database migrations;
 3. applies the sign-in settings and function secrets;
 4. deploys the functions;
-5. publishes the site to `https://sharpslate.github.io/BettingLeague/`.
+5. publishes the site to the repo's Pages address.
 
 You can watch it under the repo's **Actions** tab. After this, every merge to `main` redeploys.
 
-## 6. Make yourself the first admin
+## 6. Make yourself the site admin
 
-1. In the Supabase dashboard, open **Authentication → Users** and add a user with your email.
-2. In the **SQL editor**, run:
+Site admins run what every league shares: the line and score feeds, line overrides, game status and score corrections. Being one gives no say in anyone's league and shows no hidden picks.
+
+1. Sign in on the site once with your email (sign-ups are open).
+2. In the Supabase dashboard's **SQL editor**, run:
    ```sql
    select app.bootstrap_admin('your-email@example.com');
    ```
-3. Sign in on the site with your email (or Google) and open **Admin**.
+3. Reload the site: **Admin** now has **Site feeds** and **Games & lines**. Click **Pull lines** once to fill the board.
 
-## 7. Week 4 trial
+## 7. Start a league
 
-In **Admin**:
-1. **Members:** add the commissioner by email, then make them an admin.
-2. **Entries & banks:** add your two entries and the commissioner's with no bank, then **Import from Splash** for each, using Splash's standings after week 3.
-3. **Members → Entry managers:** link each entry to its manager.
-4. **Week & feeds:** click **Pull lines**, then **Open next week**. That opens week 4.
+Anyone signed in can start a league from the league menu (**Start or join a league…**). Its creator is its commissioner. A new league:
+- starts on the standard rules (rule set 1, the single-league site's day-one rules), which the commissioner can change for any week that hasn't opened;
+- has no week open: the commissioner opens the first one from **Admin → Week**, once its games are on the board;
+- gets an invite link (**Admin → League**). People who open it sign in, then join, with an entry of their own at the rules' starting bank unless the commissioner turns that off.
 
-During the week, copy your Splash bets onto the site. After Monday night, compare the two sites' grading.
-
-## 8. Go-live for week 5
-
-After week 4 finishes on Splash:
-1. Add every member (each needs a display name, which everyone sees) and every other entry.
-2. Import each of those entries' Splash standings after week 4.
-3. Link each entry to its managers.
-4. **The trial entries** (yours and the commissioner's) already have their week 4 bets here, so they aren't imported again (the site refuses to import an entry with bets). Compare each one's bank with Splash's after week 4. If one differs, for example because a bet wasn't copied, use **Entries & banks → Adjust a bank** with the reason.
-
-Once week 4's last game is final, week 5 opens on its own.
+Commissioners have the powers the single-league site gave its admins, for their own league only: rules, entries and managers, bank adjustments, imports, opening and closing weeks, voiding bets, and making other members commissioners.
 
 ## During the season
 
-- **A wrong final score:** **Games & lines → Correct the final score.** The site takes back what the game's bets paid and grades them again within 10 minutes. Everyone sees the correction in the admin log.
-- **A postponed game:** set it to **Postponed**. Its bets ride. The week won't close by itself while the game is unplayed, so use **Open next week** to move on; the game is graded whenever its final comes in.
-- **The last week of the season:** after its last game, click **Close the season** on the Admin page. It closes the week (and applies its 30% minimum) and opens nothing.
-- **A bet graded wrong:** enter the game's final score again (**Correct the final score**, same numbers). Its bets are graded again within 10 minutes.
-- **Something looks stuck:** **Week & feeds → Recent problems** lists failed line and score pulls and any bet the grader couldn't settle, from the last 3 days. It also flags any game that should have started an hour ago but has no score (if it was postponed, mark it postponed), any game still live 5 hours after kickoff (enter its final score by hand), any postponed game the feed has stopped checking (enter its final score, or void it), and, under **Fair play**, any two entries that share a manager and took opposite sides of a game (for the commissioner to look at; nothing happens automatically).
-- **Betting closed early on a game that hasn't started** (the feed had a wrong start time): **Games & lines → Game status**, mark it **Postponed**; click **Pull lines** on the Week & feeds tab; then set it back to **Scheduled**. Betting reopens only if the feed now shows a start that's still ahead.
-- **An entry changes hands:** **Members → Entry managers.** Make the new manager first, then remove the old one. While an entry has bets riding, the site won't remove its last manager, and an admin can't add themselves to it; another admin has to.
+Site admins:
+- **A wrong final score:** **Games & lines → Correct the final score.** Every league's bets on that game are taken back and graded again within 10 minutes.
+- **A postponed game:** set it to **Postponed**. Its bets ride in every league. A league's week won't close by itself while the game is unplayed; its commissioner uses **Open next week** to move on.
+- **Something looks stuck:** **Site feeds → Recent problems** lists failed pulls, bets the grader couldn't settle, and games that need a hand.
+- **Betting closed early on a game that hasn't started:** mark it **Postponed**, **Pull lines**, then set it back to **Scheduled**.
+
+Commissioners:
+- **The last week of the season:** after its last game, **Close the season** on **Admin → Week**.
+- **An entry changes hands:** **Members → Entry managers.** Make the new manager first, then remove the old one.
+- **Fair play:** **Admin → Week → Recent problems** flags two entries of the league that share a manager and took opposite sides of a game, once both picks are public.

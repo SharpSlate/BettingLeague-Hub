@@ -1,11 +1,14 @@
-# BettingLeague
-NFL betting league site (play units): a commissioner-configurable replacement for the Splash Shares pool
+# Betting League
+A site where anyone can start an NFL betting league (play units) and run it their way: invite people with a link, set the rules, and let the site handle lines, grading, standings and the weekly minimum.
 
-Planning documents:
+It grew out of a single-league site built for one league; this copy runs many leagues side by side, on its own repository and Supabase project. See `docs/MULTI_LEAGUE.md` for how leagues are kept apart.
+
+Planning documents (from the single-league site, still the reference for betting, rules and grading):
 - `HANDOFF.md`: context from the owner's local session
 - `DECISIONS.md`: settled choices, newest first
 - `docs/DESIGN.md`: the design proposal (architecture, rules engine, data model, pages)
 - `SETUP.md`: one-time setup and deploy steps for the owner
+- `docs/MULTI_LEAGUE.md`: what's shared between leagues and what each league keeps to itself
 
 Development:
 - `npm test`: rules, payout, job and placement tests

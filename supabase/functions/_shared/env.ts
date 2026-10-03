@@ -46,6 +46,13 @@ export async function currentUser(req: Request): Promise<{ id: string } | null> 
   return error || !data.user ? null : { id: data.user.id };
 }
 
+/** Whether the user is a commissioner of the league. */
+export async function isCommissioner(userId: string, leagueId: string): Promise<boolean> {
+  const { data } = await serviceClient().rpc("is_commissioner_internal", { p_user: userId, p_league: leagueId });
+  return data === true;
+}
+
+/** Whether the user is a site admin: runs the shared games, lines and pulls (not anyone's league). */
 export async function isAdmin(userId: string): Promise<boolean> {
   const { data } = await serviceClient().from("profiles").select("is_admin").eq("id", userId).maybeSingle();
   return data?.is_admin === true;

@@ -184,10 +184,16 @@ const ACTIONS: Record<string, string> = {
   entry_added: "added an entry",
   manager_added: "added an entry manager",
   manager_removed: "removed an entry manager",
-  admin_granted: "made someone an admin",
-  admin_removed: "removed an admin",
+  admin_granted: "made someone a site admin",
+  admin_removed: "removed a site admin",
   member_added: "added a member",
-  splash_import: "imported Splash standings",
+  member_joined: "joined with the invite link",
+  member_removed: "removed a member",
+  commissioner_granted: "made someone a commissioner",
+  commissioner_removed: "removed a commissioner",
+  league_created: "started the league",
+  league_updated: "changed the league's settings",
+  splash_import: "imported standings",
   bank_adjusted: "adjusted a bank",
   line_set: "set a line",
   line_cleared: "cleared a line override",
@@ -218,6 +224,8 @@ function detail(r: AuditRow): string {
   if (r.action === "score_corrected" && b) return `${b.away}–${b.home} → ${a.away}–${a.home} (away–home)${regraded}`;
   if (r.action === "bets_regraded") return `${a.away}–${a.home} (away–home)${regraded}`;
   if ((r.action === "manager_added" || r.action === "manager_removed") && typeof a.member === "string") return `${a.member}, ${a.entry}`;
+  if (["member_added", "member_joined", "member_removed", "commissioner_granted", "commissioner_removed"].includes(r.action) && typeof a.member === "string") return a.member;
+  if (r.action === "league_updated" && typeof a.name === "string") return a.newInvite ? "new invite link" : a.name;
   if (r.action === "week_closed") return `week ${a.closed}`;
   if (r.action === "bank_adjusted" && typeof a.amountCents === "number") return `${a.amountCents > 0 ? "+" : ""}${units(a.amountCents)} units`;
   if (r.action === "rules_published") return `version ${a.version}, from week ${a.effectiveWeek}`;

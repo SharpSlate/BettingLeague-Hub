@@ -3,7 +3,8 @@
 import { createClient, FunctionsHttpError, type SupabaseClient } from "@supabase/supabase-js";
 import type { RuleSet } from "@rules";
 import type {
-  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, League, LegView, Me, MyEntry, PlacementRequest, PlaceResult,
+  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry,
+  PlacementRequest, PlaceResult,
   RuleVersion, SlipView, SplashImport, StandingRow, Team, UndoResult, WeekInfo,
 } from "./types.ts";
 
@@ -15,8 +16,9 @@ function check<T>(r: { data: T | null; error: { message: string } | null }): T {
   return r.data as T;
 }
 
+/** A league_weeks row with its calendar week (weeks) joined in. */
 function week(w: any): WeekInfo {
-  return { week: w.week, label: w.label, startsAt: w.starts_at, endsAt: w.ends_at, status: w.status, ruleSetVersion: w.rule_set_version };
+  return { week: w.week, label: w.weeks.label, startsAt: w.weeks.starts_at, endsAt: w.weeks.ends_at, status: w.status, ruleSetVersion: w.rule_set_version };
 }
 
 /** Betting on a game closes at its kickoff or at the feed's own start time, whichever comes first. */
@@ -39,6 +41,7 @@ export class SupabaseApi implements Api {
   readonly demo = false;
   private db: SupabaseClient;
   private teamCache: Promise<Team[]> | null = null;
+  private leagueId: string | null = null;
 
   constructor(url: string, anonKey: string) {
     this.db = createClient(url, anonKey, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
@@ -54,7 +57,7 @@ export class SupabaseApi implements Api {
   }
   async sendCode(email: string) {
     const { error } = await this.db.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: false } });
-    if (error) throw new Error(error.message.includes("Signups not allowed") ? "That email isn't on the league list. Ask the commissioner to add you." : error.message);
+    if (error) throw new Error(error.message);
   }
   async verifyCode(email: string, code: string) {
     const { error } = await this.db.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "email" });
@@ -71,19 +74,52 @@ export class SupabaseApi implements Api {
     const s = await this.getSession();
     if (!s) throw new Error("not signed in");
     const p = check(await this.db.from("profiles").select("id, display_name, is_admin").eq("id", s.userId).single()) as any;
-    return { id: p.id, displayName: p.display_name, isAdmin: p.is_admin };
+    const role = this.leagueId
+      ? (check(await this.db.from("league_members").select("role").eq("league_id", this.leagueId).eq("user_id", s.userId).maybeSingle()) as any)?.role
+      : null;
+    return { id: p.id, displayName: p.display_name, isSiteAdmin: p.is_admin, isCommissioner: role === "commissioner" };
+  }
+
+  async myLeagues(): Promise<LeagueSummary[]> {
+    const rows = check(await this.db.rpc("my_leagues")) as any[];
+    return rows.map((r) => ({ id: r.league_id, name: r.name, role: r.role, inviteCode: r.invite_code, selfEntry: r.self_entry, openWeek: r.open_week }));
+  }
+  setLeague(leagueId: string) {
+    this.leagueId = leagueId;
+  }
+  /** The league being viewed; every league-level call needs one. */
+  private get lid(): string {
+    if (!this.leagueId) throw new Error("No league chosen.");
+    return this.leagueId;
+  }
+  async createLeague(name: string) {
+    return check(await this.db.rpc("create_league", { p_name: name })) as string;
+  }
+  async inviteInfo(code: string): Promise<InvitePreview | null> {
+    const [r] = check(await this.db.rpc("league_by_invite", { p_code: code })) as any[];
+    return r ? { leagueId: r.league_id, name: r.name, members: r.members, alreadyMember: r.already_member, selfEntry: r.self_entry } : null;
+  }
+  async joinLeague(code: string, entryName: string | null) {
+    return check(await this.db.rpc("join_league", { p_code: code, p_entry_name: entryName })) as string;
   }
 
   async league(): Promise<League> {
-    const [settings, open, pull, credits] = await Promise.all([
+    const [settings, mine, open, pull, credits] = await Promise.all([
       this.db.from("league_settings").select("*").single(),
-      this.db.from("weeks").select("*").eq("status", "open").maybeSingle(),
+      this.myLeagues(),
+      this.db.from("league_weeks").select("*, weeks(*)").eq("league_id", this.lid).eq("status", "open").maybeSingle(),
       this.db.from("line_pulls").select("at").eq("kind", "lines").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle(),
       this.db.from("line_pulls").select("credits_remaining").not("credits_remaining", "is", null).order("at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     const s = check(settings);
+    const l = mine.find((x) => x.id === this.lid);
+    if (!l) throw new Error("You're not in that league.");
     return {
-      name: s.league_name,
+      id: l.id,
+      name: l.name,
+      role: l.role,
+      inviteCode: l.inviteCode,
+      selfEntry: l.selfEntry,
       openWeek: open.data ? week(open.data) : null,
       timezone: s.timezone,
       pullWindowStart: String(s.pull_window_start).slice(0, 5),
@@ -108,7 +144,7 @@ export class SupabaseApi implements Api {
   }
 
   async standings(range?: { from?: string; to?: string; week?: number }): Promise<StandingRow[]> {
-    const rows = check(await this.db.rpc("standings", { p_from: range?.from ?? null, p_to: range?.to ?? null, p_week: range?.week ?? null }));
+    const rows = check(await this.db.rpc("standings", { p_from: range?.from ?? null, p_to: range?.to ?? null, p_week: range?.week ?? null, p_league: this.lid }));
     return (rows as any[]).map((r) => ({
       entryId: r.entry_id, name: r.name, isMine: r.is_mine, bankCents: num(r.bank_cents), seasonNetCents: num(r.season_net_cents),
       seasonWinningsCents: num(r.season_winnings_cents), wins: r.wins, losses: r.losses, pushes: r.pushes, riskCents: num(r.risk_cents),
@@ -135,7 +171,7 @@ export class SupabaseApi implements Api {
   }
 
   async myEntries(): Promise<MyEntry[]> {
-    const rows = check(await this.db.rpc("my_entries")) as any[];
+    const rows = check(await this.db.rpc("my_entries", { p_league: this.lid })) as any[];
     return rows.map((r) => ({
       entryId: r.entry_id, name: r.name, availableCents: num(r.available_cents), pendingCents: num(r.pending_cents),
       bankCents: num(r.bank_cents), week: r.week, requiredCents: n(r.required_cents), wageredCents: num(r.wagered_cents),
@@ -151,6 +187,7 @@ export class SupabaseApi implements Api {
         "id, entry_id, placed_by, week, type, teaser_points, stake_cents, leg_count, rule_set_version, status, payout_cents, placed_at, settled_at, " +
         "entries(name), profiles!slips_placed_by_fkey(display_name), slip_legs(*, games(home_team, away_team, kickoff_at, feed_commence, status, home_score, away_score))",
       )
+      .eq("league_id", this.lid)
       .neq("status", "undone")
       .order("placed_at", { ascending: false })
       .limit(q.limit ?? 200);
@@ -179,21 +216,21 @@ export class SupabaseApi implements Api {
   }
 
   async hiddenActivity(): Promise<HiddenPick[]> {
-    const rows = check(await this.db.rpc("hidden_activity", { p_limit: 100 })) as any[];
+    const rows = check(await this.db.rpc("hidden_activity", { p_limit: 100, p_league: this.lid })) as any[];
     return rows.map((r) => ({ entryId: r.entry_id, name: r.name, placedAt: r.placed_at }));
   }
 
   async ruleVersions(): Promise<RuleVersion[]> {
-    const rows = check(await this.db.from("rule_sets").select("*").order("version", { ascending: false })) as any[];
+    const rows = check(await this.db.from("rule_sets").select("*").eq("league_id", this.lid).order("version", { ascending: false })) as any[];
     return rows.map((r) => ({ version: r.version, effectiveWeek: r.effective_week, document: r.document, note: r.note, createdAt: r.created_at }));
   }
 
   async weeks(): Promise<WeekInfo[]> {
-    return (check(await this.db.from("weeks").select("*").order("week")) as any[]).map(week);
+    return (check(await this.db.from("league_weeks").select("*, weeks(*)").eq("league_id", this.lid).order("week")) as any[]).map(week);
   }
 
   async entrants(): Promise<Entrant[]> {
-    const rows = check(await this.db.from("entries").select("id, name, status, entry_managers(profiles(display_name))").order("name")) as any[];
+    const rows = check(await this.db.from("entries").select("id, name, status, entry_managers(profiles(display_name))").eq("league_id", this.lid).order("name")) as any[];
     return rows.map((e) => ({
       entryId: e.id, name: e.name, status: e.status,
       managers: (e.entry_managers ?? []).map((m: any) => m.profiles?.display_name).filter(Boolean),
@@ -201,7 +238,9 @@ export class SupabaseApi implements Api {
   }
 
   async auditLog(limit = 200): Promise<AuditRow[]> {
-    const rows = check(await this.db.from("audit_log").select("*, profiles(display_name)").order("id", { ascending: false }).limit(limit)) as any[];
+    const rows = check(await this.db.from("audit_log").select("*, profiles(display_name)")
+      // The league's own log, plus site-wide changes to the games every league shares.
+      .or(`league_id.eq.${this.lid},league_id.is.null`).order("id", { ascending: false }).limit(limit)) as any[];
     return rows.map((r) => ({
       id: r.id, actorName: r.profiles?.display_name ?? null, action: r.action, targetType: r.target_type, targetId: r.target_id,
       before: r.before, after: r.after, reason: r.reason, createdAt: r.created_at,
@@ -245,11 +284,11 @@ export class SupabaseApi implements Api {
   }
 
   async adminUsers(): Promise<AdminUser[]> {
-    const rows = check(await this.db.rpc("admin_list_users")) as any[];
-    return rows.map((r) => ({ userId: r.user_id, email: r.email, displayName: r.display_name, isAdmin: r.is_admin, entryNames: r.entry_names ?? [] }));
+    const rows = check(await this.db.rpc("admin_list_users", { p_league: this.lid })) as any[];
+    return rows.map((r) => ({ userId: r.user_id, email: r.email, displayName: r.display_name, isCommissioner: r.is_commissioner, entryNames: r.entry_names ?? [] }));
   }
   async adminRecentProblems(): Promise<AdminProblem[]> {
-    const rows = check(await this.db.rpc("admin_recent_problems", { p_limit: 10 })) as any[];
+    const rows = check(await this.db.rpc("admin_recent_problems", { p_limit: 10, p_league: this.lid })) as any[];
     return rows.map((r) => ({ at: r.at, kind: r.kind, trigger: r.trigger, error: r.error }));
   }
   private async invoke(name: string, body: Record<string, unknown>) {
@@ -261,17 +300,23 @@ export class SupabaseApi implements Api {
     return data;
   }
   async adminAddMember(email: string, displayName: string, entryId: string | null) {
-    const data = await this.invoke("add-member", { email, displayName, entryId });
+    const data = await this.invoke("add-member", { leagueId: this.lid, email, displayName, entryId });
     return { created: Boolean(data?.created) };
   }
   async adminAddEntry(name: string, startingBankCents: number) {
-    return check(await this.db.rpc("admin_add_entry", { p_name: name, p_starting_bank_cents: startingBankCents })) as string;
+    return check(await this.db.rpc("admin_add_entry", { p_name: name, p_starting_bank_cents: startingBankCents, p_league: this.lid })) as string;
   }
   async adminSetManager(entryId: string, userId: string, add: boolean) {
     check(await this.db.rpc("admin_set_manager", { p_entry: entryId, p_user: userId, p_add: add }));
   }
-  async adminSetAdmin(userId: string, isAdmin: boolean) {
-    check(await this.db.rpc("admin_set_admin", { p_user: userId, p_is_admin: isAdmin }));
+  async adminUpdateLeague(name: string, selfEntry: boolean, newInvite: boolean) {
+    check(await this.db.rpc("admin_update_league", { p_league: this.lid, p_name: name, p_self_entry: selfEntry, p_new_invite: newInvite }));
+  }
+  async adminSetCommissioner(userId: string, on: boolean) {
+    check(await this.db.rpc("admin_set_commissioner", { p_user: userId, p_on: on, p_league: this.lid }));
+  }
+  async adminRemoveMember(userId: string) {
+    check(await this.db.rpc("admin_remove_member", { p_user: userId, p_league: this.lid }));
   }
   async adminImportSplash(a: SplashImport) {
     check(await this.db.rpc("admin_import_splash", {
@@ -283,10 +328,10 @@ export class SupabaseApi implements Api {
     check(await this.db.rpc("admin_adjust_bank", { p_entry: entryId, p_amount_cents: amountCents, p_reason: reason }));
   }
   async adminOpenNextWeek(expectedOpenWeek: number | null, reason: string) {
-    return check(await this.db.rpc("admin_open_next_week", { p_expected_open: expectedOpenWeek, p_reason: reason || null })) as number | null;
+    return check(await this.db.rpc("admin_open_next_week", { p_expected_open: expectedOpenWeek, p_reason: reason || null, p_league: this.lid })) as number | null;
   }
   async adminCloseSeason(expectedOpenWeek: number, reason: string) {
-    check(await this.db.rpc("admin_close_season", { p_expected_open: expectedOpenWeek, p_reason: reason || null }));
+    check(await this.db.rpc("admin_close_season", { p_expected_open: expectedOpenWeek, p_reason: reason || null, p_league: this.lid }));
   }
   async adminSetLine(gameId: string, market: string, a: { point: number | null; price: number }, b: { point: number | null; price: number }, offered: boolean, reason: string) {
     check(await this.db.rpc("admin_set_line", {
@@ -309,6 +354,6 @@ export class SupabaseApi implements Api {
     return JSON.stringify(await this.invoke(job, { trigger: "admin" }));
   }
   async adminPublishRules(document: RuleSet, effectiveWeek: number, note: string) {
-    return (await this.invoke("publish-rules", { document, effectiveWeek, note })).version as number;
+    return (await this.invoke("publish-rules", { leagueId: this.lid, document, effectiveWeek, note })).version as number;
   }
 }

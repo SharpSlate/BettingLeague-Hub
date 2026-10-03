@@ -6,7 +6,8 @@ import { parsePairings, parseStandings, type Parsed } from "../lib/bulk.ts";
 import { ago, kickoff, matchup, odds, toCents } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
 import { useMe } from "../lib/me.ts";
-import type { GameView } from "../lib/types.ts";
+import type { GameView, League } from "../lib/types.ts";
+import { inviteLink } from "./Leagues.tsx";
 import { RulesEditor } from "./RulesEditor.tsx";
 
 /** A form section whose submit shows a result or an error. */
@@ -95,30 +96,145 @@ function BulkBox<T>({ title, note, placeholder, submit, parse, run }: {
   );
 }
 
-type Section = "status" | "members" | "entries" | "games" | "rules";
+type Section = "status" | "league" | "members" | "entries" | "rules" | "site" | "games";
 
+const SECTION_NAMES: Record<Section, string> = {
+  status: "Week", league: "League", members: "Members", entries: "Entries & banks", rules: "Rules",
+  site: "Site feeds", games: "Games & lines",
+};
+
+/**
+ * A league's commissioners run its weeks, members, entries, banks and rules. Site admins
+ * run what every league shares: the line and score feeds, and the games themselves.
+ */
 export function Admin() {
   const api = useApi();
   const me = useMe();
-  const [section, setSection] = useState<Section>("status");
+  const sections: Section[] = [
+    ...(me.isCommissioner ? (["status", "league", "members", "entries", "rules"] as Section[]) : []),
+    ...(me.isSiteAdmin ? (["site", "games"] as Section[]) : []),
+  ];
+  const [picked, setSection] = useState<Section | null>(null);
+  const section = picked && sections.includes(picked) ? picked : sections[0];
   const league = useLoad(() => api.league(), []);
-  if (!me.isAdmin) return <Empty>This page is for the commissioner and admins.</Empty>;
+  if (!section) return <Empty>This page is for the league's commissioners.</Empty>;
   return (
     <>
-      <PageHead title="Admin" sub="Everything here is recorded in the admin log that every member can read." />
+      <PageHead title="Admin" sub={me.isCommissioner
+        ? "Everything here is recorded in the admin log that every member of the league can read."
+        : "Changes to games and lines apply to every league, and are recorded in every league's admin log."} />
       <div className="stack">
         <div className="scroll-x">
           <div className="seg" role="tablist">
-            {(["status", "members", "entries", "games", "rules"] as Section[]).map((s) => (
+            {sections.map((s) => (
               <button key={s} type="button" className={section === s ? "on" : ""} onClick={() => setSection(s)}>
-                {{ status: "Week & feeds", members: "Members", entries: "Entries & banks", games: "Games & lines", rules: "Rules" }[s]}
+                {SECTION_NAMES[s]}
               </button>
             ))}
           </div>
         </div>
-        {section === "status" ? <Status reload={league.reload} /> : section === "members" ? <Members /> : section === "entries" ? <Entries /> : section === "games" ? <Games week={league.data?.openWeek?.week ?? null} /> : <RulesSection openWeek={league.data?.openWeek?.week ?? null} />}
+        {section === "status" ? <Status reload={league.reload} />
+          : section === "league" ? (league.data ? <LeagueSettings league={league.data} reload={league.reload} /> : <Loading />)
+          : section === "members" ? <Members />
+          : section === "entries" ? <Entries />
+          : section === "rules" ? <RulesSection openWeek={league.data?.openWeek?.week ?? null} />
+          : section === "site" ? <SiteStatus />
+          : <Games openWeek={league.data?.openWeek?.week ?? null} />}
       </div>
     </>
+  );
+}
+
+function LeagueSettings({ league, reload }: { league: League; reload: () => void }) {
+  const api = useApi();
+  const [f, setF] = useState({ name: league.name, selfEntry: league.selfEntry });
+  const [armed, setArmed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const link = league.inviteCode ? inviteLink(league.inviteCode) : null;
+  return (
+    <div className="grid-2">
+      <div className="card pad stack-sm">
+        <h3>Invite people</h3>
+        <p className="small muted" style={{ margin: 0 }}>Anyone with this link can join the league. They sign in with their email or Google first.</p>
+        {link ? <div className="invite-link">{link}</div> : <Loading />}
+        <div className="row">
+          <button type="button" className="btn primary" disabled={!link} onClick={async () => {
+            try { await navigator.clipboard.writeText(link!); setCopied(true); } catch { /* the link is on screen to copy by hand */ }
+          }}>{copied ? "Copied" : "Copy link"}</button>
+        </div>
+      </div>
+      <Action title="League settings" submit="Save"
+        onSubmit={async () => { await api.adminUpdateLeague(f.name.trim(), f.selfEntry, false); reload(); return "Saved. Reload the page to see the new name everywhere."; }}>
+        <Field label="League name"><input className="input" required maxLength={60} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+        <label className="row small"><input type="checkbox" checked={f.selfEntry} onChange={(e) => setF({ ...f, selfEntry: e.target.checked })} /> People who join get an entry of their own, with the starting bank in the rules</label>
+      </Action>
+      <Action title="Stop the current link" submit={armed ? "Yes, make a new link" : "Make a new invite link"}
+        note="The old link stops working at once. Nobody already in the league is affected."
+        onSubmit={async () => {
+          if (!armed) { setArmed(true); return "Click the button again to confirm."; }
+          setArmed(false);
+          await api.adminUpdateLeague(league.name, league.selfEntry, true);
+          setCopied(false);
+          reload();
+          return "Done. Share the new link above.";
+        }}>
+        <span />
+      </Action>
+    </div>
+  );
+}
+
+/** The shared feeds every league bets on, for site admins. */
+function SiteStatus() {
+  const api = useApi();
+  const league = useLoad(() => api.league(), []);
+  const problems = useLoad(() => api.adminRecentProblems(), [], 60_000);
+  const lg = league.data;
+  return (
+    <div className="grid-2">
+      <div className="card pad stack-sm">
+        <h3>Feeds</h3>
+        {lg ? (
+          <dl className="kv">
+            <dt>Last line pull</dt><dd>{ago(lg.lastPullAt)}</dd>
+            <dt>Odds API credits</dt><dd className="num">{lg.creditsRemaining?.toLocaleString() ?? "unknown"}</dd>
+            <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min ({lg.pullNearKickoffMinutes} in the {lg.nearKickoffHours} hours before a kickoff)</dd>
+          </dl>
+        ) : <Loading />}
+      </div>
+      <Problems problems={problems} empty="None in the last 3 days. Failed line or score pulls, bets the grader couldn't settle, and games that need a hand show here." />
+      <Action title="Run a job now" submit="Pull lines" onSubmit={async () => { const r = await api.adminRunJob("pull-lines"); league.reload(); return r; }}
+        note="Lines refresh on their own; use this if the feed looks behind. Each pull costs 3 credits.">
+        <span />
+      </Action>
+      <Action title="Scores and grading" submit="Pull scores and grade" onSubmit={async () => api.adminRunJob("pull-scores")}
+        note="Runs every 10 minutes on its own, and only calls the Odds API while a game is on. A game goes final when two pulls in a row report the same final score.">
+        <span />
+      </Action>
+    </div>
+  );
+}
+
+function Problems({ problems, empty }: { problems: ReturnType<typeof useLoad<import("../lib/types.ts").AdminProblem[]>>; empty: string }) {
+  return (
+    <div className="card pad stack-sm">
+      <h3>Recent problems</h3>
+      {problems.data?.length ? (
+        <div className="feed">
+          {problems.data.map((p, i) => (
+            <div className="feed-item" key={i}>
+              <div className="grow">
+                <div><b>{PROBLEM_KIND[p.kind] ?? p.kind}</b> <span className="muted">({p.trigger})</span></div>
+                <div className="tiny muted" style={{ overflowWrap: "anywhere" }}>{p.error}</div>
+              </div>
+              <span className="when">{ago(p.at)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="small muted">{problems.loading ? "Checking…" : empty}</div>
+      )}
+    </div>
   );
 }
 
@@ -126,6 +242,7 @@ const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scor
 
 function Status({ reload }: { reload: () => void }) {
   const api = useApi();
+  const me = useMe();
   const league = useLoad(() => api.league(), []);
   const problems = useLoad(() => api.adminRecentProblems(), [], 60_000);
   const [reason, setReason] = useState("");
@@ -140,37 +257,12 @@ function Status({ reload }: { reload: () => void }) {
           <dl className="kv">
             <dt>Open week</dt><dd>{lg.openWeek?.label ?? "None"}{lg.openWeek ? ` (rules version ${lg.openWeek.ruleSetVersion})` : ""}</dd>
             <dt>Last line pull</dt><dd>{ago(lg.lastPullAt)}</dd>
-            <dt>Odds API credits</dt><dd className="num">{lg.creditsRemaining?.toLocaleString() ?? "unknown"}</dd>
-            <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min ({lg.pullNearKickoffMinutes} in the {lg.nearKickoffHours} hours before a kickoff)</dd>
           </dl>
         ) : <Loading />}
       </div>
-      <div className="card pad stack-sm">
-        <h3>Recent problems</h3>
-        {problems.data?.length ? (
-          <div className="feed">
-            {problems.data.map((p, i) => (
-              <div className="feed-item" key={i}>
-                <div className="grow">
-                  <div><b>{PROBLEM_KIND[p.kind] ?? p.kind}</b> <span className="muted">({p.trigger})</span></div>
-                  <div className="tiny muted" style={{ overflowWrap: "anywhere" }}>{p.error}</div>
-                </div>
-                <span className="when">{ago(p.at)}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="small muted">{problems.loading ? "Checking…" : "None in the last 3 days. Failed line or score pulls, and bets the grader couldn't settle, show here."}</div>
-        )}
-      </div>
-      <Action title="Run a job now" submit="Pull lines" onSubmit={async () => { const r = await api.adminRunJob("pull-lines"); league.reload(); reload(); return r; }}
-        note="Lines refresh on their own; use this if the feed looks behind. Each pull costs 3 credits.">
-        <span />
-      </Action>
-      <Action title="Scores and grading" submit="Pull scores and grade" onSubmit={async () => api.adminRunJob("pull-scores")}
-        note="Runs every 10 minutes on its own, and only calls the Odds API while a game is on. A game goes final when two pulls in a row report the same final score.">
-        <span />
-      </Action>
+      <Problems problems={problems} empty={me.isSiteAdmin
+        ? "None in the last 3 days. Feed problems show under Site feeds; entries that share a manager and bet against each other show here."
+        : "None in the last 3 days. Entries that share a manager and bet against each other show here, once both picks are public."} />
       <Action title={lg?.openWeek ? "Open the next week" : "Open a week"}
         submit={armed ? (lg?.openWeek ? `Yes, close ${lg.openWeek.label} and open the next` : "Yes, open the next week") : lg?.openWeek ? "Open next week" : "Open the next week"}
         note={lg?.openWeek
@@ -217,11 +309,11 @@ function Members() {
   const entrants = useLoad(() => api.entrants(), []);
   const [f, setF] = useState({ email: "", name: "", entry: "" });
   const [link, setLink] = useState({ user: "", entry: "", add: "add" });
-  const [adminForm, setAdminForm] = useState({ user: "", on: "yes" });
+  const [roleForm, setRoleForm] = useState({ user: "", action: "on" });
   const entries = entrants.data ?? [];
   return (
     <div className="grid-2">
-      <Action title="Add a member" submit="Add member" note="Sign-ups are closed, so this is how people get in. They then sign in with their email or Google."
+      <Action title="Add a member" submit="Add member" note="Adds someone by email, so they're in the league the first time they sign in. You can also send them the invite link (League tab)."
         onSubmit={async () => {
           const email = f.email.trim();
           const { created } = await api.adminAddMember(email, f.name.trim(), f.entry || null);
@@ -262,18 +354,23 @@ function Members() {
           </select>
         </Field>
       </Action>
-      <Action title="Admins" submit="Save" note="Admins can use this page. Admin powers never include seeing anyone's picks before kickoff."
-        onSubmit={async () => { await api.adminSetAdmin(adminForm.user, adminForm.on === "yes"); users.reload(); }}>
+      <Action title="Commissioners" submit="Save" note="Commissioners can use this page for the league. Their powers never include seeing anyone's picks before kickoff. The league always keeps at least one."
+        onSubmit={async () => {
+          if (roleForm.action === "remove") await api.adminRemoveMember(roleForm.user);
+          else await api.adminSetCommissioner(roleForm.user, roleForm.action === "on");
+          users.reload();
+        }}>
         <Field label="Member">
-          <select className="input" required value={adminForm.user} onChange={(e) => setAdminForm({ ...adminForm, user: e.target.value })}>
+          <select className="input" required value={roleForm.user} onChange={(e) => setRoleForm({ ...roleForm, user: e.target.value })}>
             <option value="">Choose…</option>
-            {(users.data ?? []).map((u) => <option key={u.userId} value={u.userId}>{u.displayName}{u.isAdmin ? " (admin)" : ""}</option>)}
+            {(users.data ?? []).map((u) => <option key={u.userId} value={u.userId}>{u.displayName}{u.isCommissioner ? " (commissioner)" : ""}</option>)}
           </select>
         </Field>
         <Field label="Action">
-          <select className="input" value={adminForm.on} onChange={(e) => setAdminForm({ ...adminForm, on: e.target.value })}>
-            <option value="yes">Make admin</option>
-            <option value="no">Remove admin</option>
+          <select className="input" value={roleForm.action} onChange={(e) => setRoleForm({ ...roleForm, action: e.target.value })}>
+            <option value="on">Make commissioner</option>
+            <option value="off">Make a regular member</option>
+            <option value="remove">Remove from the league (take them off their entries first)</option>
           </select>
         </Field>
       </Action>
@@ -302,14 +399,14 @@ function Members() {
         }}
       />
       <div className="card" style={{ gridColumn: "1 / -1" }}>
-        <div className="card-head"><h3>Members</h3><span className="small muted">Emails are visible to admins only.</span></div>
+        <div className="card-head"><h3>Members</h3><span className="small muted">Emails are visible to commissioners only.</span></div>
         {users.loading && !users.data ? <Loading /> : (
           <div className="scroll-x">
             <table className="table">
-              <thead><tr><th>Name</th><th>Email</th><th>Entries</th><th>Admin</th></tr></thead>
+              <thead><tr><th>Name</th><th>Email</th><th>Entries</th><th>Commissioner</th></tr></thead>
               <tbody>
                 {(users.data ?? []).map((u) => (
-                  <tr key={u.userId}><td>{u.displayName}</td><td>{u.email}</td><td>{u.entryNames.join(", ") || "—"}</td><td>{u.isAdmin ? "Yes" : ""}</td></tr>
+                  <tr key={u.userId}><td>{u.displayName}</td><td>{u.email}</td><td>{u.entryNames.join(", ") || "—"}</td><td>{u.isCommissioner ? "Yes" : ""}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -325,7 +422,7 @@ function Entries() {
   const entrants = useLoad(() => api.entrants(), []);
   const entries = entrants.data ?? [];
   const [add, setAdd] = useState({ name: "", bank: "" });
-  const [imp, setImp] = useState({ entry: "", bank: "", net: "", w: "0", l: "0", p: "0", risk: "", ret: "", win: "", note: "Splash standings" });
+  const [imp, setImp] = useState({ entry: "", bank: "", net: "", w: "0", l: "0", p: "0", risk: "", ret: "", win: "", note: "Imported standings" });
   const [adj, setAdj] = useState({ entry: "", amount: "", reason: "" });
   const [voidForm, setVoidForm] = useState({ id: "", reason: "" });
   const pick = (value: string, onChange: (v: string) => void) => (
@@ -336,12 +433,12 @@ function Entries() {
   );
   return (
     <div className="grid-2">
-      <Action title="Add an entry" submit="Add entry" note="For a new entry. For an entry coming over from Splash, add it with no bank and then import it."
+      <Action title="Add an entry" submit="Add entry" note="For a new entry. For an entry coming over from another site, add it with no bank and then import it."
         onSubmit={async () => { await api.adminAddEntry(add.name.trim(), add.bank ? cents(add.bank) : 0); entrants.reload(); setAdd({ name: "", bank: "" }); }}>
         <Field label="Entry name"><input className="input" required maxLength={40} value={add.name} onChange={(e) => setAdd({ ...add, name: e.target.value })} /></Field>
         <Field label="Starting bank (units, optional)"><input className="input num" inputMode="decimal" value={add.bank} onChange={(e) => setAdd({ ...add, bank: e.target.value })} placeholder="15000" /></Field>
       </Action>
-      <Action title="Import from Splash" submit="Import" note="Copies an entry's Splash standings row: its bank, plus its record and totals for the season columns. Only for an entry with no bets here yet."
+      <Action title="Import standings" submit="Import" note="Brings an entry over from another site: its bank, plus its record and totals for the season columns. Only for an entry with no bets here yet."
         onSubmit={async () => {
           await api.adminImportSplash({
             entryId: imp.entry, bankCents: cents(imp.bank), netCents: cents(imp.net || "0", true), wins: Number(imp.w), losses: Number(imp.l), pushes: Number(imp.p),
@@ -356,8 +453,8 @@ function Entries() {
         <Field label="Note"><input className="input" value={imp.note} onChange={(e) => setImp({ ...imp, note: e.target.value })} /></Field>
       </Action>
       <BulkBox
-        title="Paste Splash standings"
-        note="One line per entry: name | bank | net | record | risk | return, with total winnings as an optional seventh column. Adds any entry that isn't here yet, then imports its Splash row. Pasting again later updates the numbers, as long as the entry has no bets here yet."
+        title="Paste standings"
+        note="One line per entry: name | bank | net | record | risk | return, with total winnings as an optional seventh column. Adds any entry that isn't here yet, then imports its row. Pasting again later updates the numbers, as long as the entry has no bets here yet."
         placeholder={"Entry name | 26,909.15 | +11,909.15 | 5-2 | 14,500 | 26,409.15"}
         submit="Import all"
         parse={parseStandings}
@@ -371,7 +468,7 @@ function Entries() {
               if (!entryId) entryId = await api.adminAddEntry(r.name, 0);
               await api.adminImportSplash({
                 entryId, bankCents: r.bankCents, netCents: r.netCents, wins: r.wins, losses: r.losses, pushes: r.pushes,
-                riskCents: r.riskCents, returnCents: r.returnCents, winningsCents: r.winningsCents, note: "Splash standings (pasted)",
+                riskCents: r.riskCents, returnCents: r.returnCents, winningsCents: r.winningsCents, note: "Standings (pasted)",
               });
               out.push({ ok: true, text: `${r.name}: ${added ? "added and imported" : "updated"}.` });
             } catch (err) {
@@ -397,19 +494,28 @@ function Entries() {
   );
 }
 
-function Games({ week }: { week: number | null }) {
+/** The shared games, for site admins: any week, starting from this league's open one or the current one. */
+function Games({ openWeek }: { openWeek: number | null }) {
   const api = useApi();
+  const weeks = useLoad(() => api.weeks(), []);
+  const now = Date.now();
+  const thisWeek = weeks.data?.find((w) => Date.parse(w.startsAt) <= now && now < Date.parse(w.endsAt))?.week ?? null;
+  const [chosen, setChosen] = useState<number | null>(null);
+  const week = chosen ?? openWeek ?? thisWeek;
   const games = useLoad(() => (week ? api.games(week) : Promise.resolve([] as GameView[])), [week]);
   const [id, setId] = useState("");
   const g = games.data?.find((x) => x.id === id);
   const [line, setLine] = useState({ market: "spread" as Market, pa: "", ra: "-110", pb: "", rb: "-110", offered: true, reason: "" });
   const [status, setStatus] = useState({ status: "postponed", kickoff: "", reason: "" });
   const [score, setScore] = useState({ home: "", away: "", reason: "" });
-  if (!week) return <Empty>No week is open.</Empty>;
+  if (!week) return weeks.loading ? <Loading /> : <Empty>The season hasn't started.</Empty>;
   const cur = (m: Market) => g?.lines.filter((l) => l.market === m) ?? [];
   const num = (s: string) => (s.trim() === "" ? null : Number(s));
   return (
     <div className="stack">
+      <select className="input" value={week} onChange={(e) => { setChosen(Number(e.target.value)); setId(""); }} aria-label="Week">
+        {(weeks.data ?? []).map((w) => <option key={w.week} value={w.week}>{w.label}</option>)}
+      </select>
       <select className="input" value={id} onChange={(e) => setId(e.target.value)} aria-label="Game">
         <option value="">Choose a game…</option>
         {(games.data ?? []).map((x) => <option key={x.id} value={x.id}>{matchup(x)} · {kickoff(x.kickoffAt)} · {x.status}</option>)}

@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { initials } from "../components/Shell.tsx";
 import { useApi } from "../lib/api.ts";
+import { SITE_NAME } from "./Leagues.tsx";
 
 export function SignIn() {
   const api = useApi();
-  // The deploy sets VITE_GOOGLE once the league has a Google sign-in client.
+  // The deploy sets VITE_GOOGLE once the site has a Google sign-in client.
   const google = api.demo || import.meta.env.VITE_GOOGLE === "true";
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -34,10 +36,10 @@ export function SignIn() {
         }}
       >
         <div className="row">
-          <span className="brand-mark" aria-hidden="true">BD</span>
+          <span className="brand-mark" aria-hidden="true">{initials(SITE_NAME)}</span>
           <div>
-            <h1 style={{ fontSize: 18 }}>BALTIMORE DEGENERATES</h1>
-            <div className="small muted">NFL betting league · play units</div>
+            <h1 style={{ fontSize: 18 }}>{SITE_NAME}</h1>
+            <div className="small muted">NFL betting leagues · play units</div>
           </div>
         </div>
         {api.demo ? <div className="banner">Demo: use any email, then any 6 digits.</div> : null}
@@ -67,7 +69,7 @@ export function SignIn() {
           </>
         )}
         {error ? <div className="banner bad" role="alert">{error}</div> : null}
-        <p className="tiny muted" style={{ margin: 0 }}>Only league members can sign in. New here? Ask the commissioner to add your email.</p>
+        <p className="tiny muted" style={{ margin: 0 }}>New here? Sign in with your email and you can start a league or join one with an invite link. Play units only: no real money changes hands on this site.</p>
       </form>
     </div>
   );

@@ -403,6 +403,19 @@ details.card > .body { padding: 14px; }
 .kv dd { margin: 0; }
 .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .signin { min-height: 100vh; display: grid; place-items: center; padding: 24px var(--gutter); }
-.signin .card { width: 100%; max-width: 400px; padding: 22px; display: grid; gap: 16px; }
+.signin .card { width: 100%; max-width: 440px; padding: 22px; display: grid; gap: 16px; }
 .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+/* ---------- leagues ---------- */
+
+.league-switch { min-height: 36px; padding: 6px 10px; font-size: 13px; font-weight: 650; }
+.topbar .league-switch { width: auto; max-width: 60vw; }
+/* On phones the switcher names the league, so the top bar shows only the badge. */
+.topbar .brand > span:last-child { display: none; }
+.sidebar .league-switch { margin: 0 4px 12px; width: calc(100% - 8px); }
+.league-list { display: grid; gap: 8px; }
+.league-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); cursor: pointer; text-align: left; width: 100%; color: inherit; font: inherit; }
+.league-row:hover { border-color: var(--accent); }
+.league-row.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.invite-link { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }

@@ -281,7 +281,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
 
   // ---- banks and standings
   const standings: RuleItem[] = [
-    { lead: "Starting bank.", text: `Entries that came over from Splash kept their Splash bank. A new entry starts with the bank the commissioner gives it: normally ${units(r.bank.startUnits * 100)} units${r.bank.bonusUnits ? `, plus a ${units(r.bank.bonusUnits * 100)}-unit sign-up bonus where the commissioner grants one` : ""}.` },
+    { lead: "Starting bank.", text: `A new entry starts with the bank the commissioner gives it (an entry brought over from another site keeps its bank there): normally ${units(r.bank.startUnits * 100)} units${r.bank.bonusUnits ? `, plus a ${units(r.bank.bonusUnits * 100)}-unit sign-up bonus where the commissioner grants one` : ""}.` },
     { lead: "Stakes.", text: `From ${units(s.minUnits * 100)} to ${units(s.maxUnits * 100)} units${s.incrementUnits === 1 ? ", in whole units" : `, in steps of ${s.incrementUnits}`}, and never more than your available units.${s.maxPctOfBank !== null ? ` No single bet can be more than ${s.maxPctOfBank}% of your bank.` : ""}` },
     { lead: "Ranking.", text: "Standings rank entries by bank. Ties go to the higher net, then the higher total winnings." },
   ];

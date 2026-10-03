@@ -4,7 +4,7 @@ import { rulesPage, teaserBreakEvenText, undoText } from "./rules-text.ts";
 import type { League } from "./types.ts";
 
 const league: League = {
-  name: "BALTIMORE DEGENERATES", openWeek: null, timezone: "America/New_York",
+  id: "l1", name: "Test League", role: "member", inviteCode: null, selfEntry: true, openWeek: null, timezone: "America/New_York",
   pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
   refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
   books: ["draftkings", "fanduel"], lastPullAt: null, creditsRemaining: null,

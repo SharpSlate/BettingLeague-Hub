@@ -28,6 +28,9 @@ jobs:
 
   supabase:
     needs: test
+    # This code is the multi-league site. It must never deploy from the single-league
+    # site's repository, whose settings point at that league's live project.
+    if: github.repository != 'SharpSlate/BettingLeague'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Only the non-secret settings are job-wide. Each secret goes to the steps that

@@ -26,7 +26,7 @@ export function Picks() {
   const [error, setError] = useState<string | null>(null);
   const isOpenWeek = week === open?.week;
 
-  const voidSlip = me.isAdmin
+  const voidSlip = me.isCommissioner
     ? async (id: string, reason: string) => {
         try {
           await api.adminVoidSlip(id, reason);
