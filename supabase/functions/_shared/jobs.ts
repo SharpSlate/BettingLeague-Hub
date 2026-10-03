@@ -1,6 +1,7 @@
 // The scheduled jobs: pull lines, pull scores, grade, and advance the week.
 // They talk to the database through the Store interface (supabase-store.ts in
 // production, a fake in the tests) and to The Odds API through an injected fetch.
+import { confirmFinals } from "./espn.ts";
 import { gradePending, type GameResult, type PendingSlip, type Settlement } from "./grading.ts";
 import {
   normalizeOdds,
@@ -233,8 +234,8 @@ export interface ScoresRun {
 }
 
 /**
- * Pulls scores if any game needs them, grades what can be graded, then advances the
- * week if it's done. One bet that can't be settled doesn't hold up the others or the
+ * Pulls scores if any game needs them, checks each final against ESPN, grades what
+ * can be graded, then advances the week if it's done. One bet that can't be settled doesn't hold up the others or the
  * week: it's reported and tried again on the next run.
  */
 export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, trigger: Trigger, now = new Date()): Promise<ScoresRun> {
@@ -250,7 +251,12 @@ export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, 
       if ("error" in r) {
         scores = { status: "failed", reason: r.error };
       } else {
-        const count = await storePaid(store, "scores", trigger, r, () => store.ingestScores(trigger, normalizeScores(r.data), r.cost, r.remaining));
+        // A final goes in only once ESPN shows the same one (espn.ts); the rest stay live.
+        const checked = await confirmFinals(Array.isArray(r.data) ? r.data : [], normalizeScores(r.data), fetchImpl, s.timezone);
+        for (const h of checked.held) {
+          await store.recordPull("scores", trigger, false, `final held: ${h}`.slice(0, 500), null, null).catch(() => undefined);
+        }
+        const count = await storePaid(store, "scores", trigger, r, () => store.ingestScores(trigger, checked.scores, r.cost, r.remaining));
         scores = typeof count === "number"
           ? { status: "pulled", count, remaining: r.remaining }
           : { status: "failed", reason: count.error, remaining: r.remaining };

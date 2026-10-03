@@ -106,6 +106,7 @@ Once week 4's last game is final, week 5 opens on its own.
 
 ## During the season
 
+- **A final held for ESPN:** a game goes final only once ESPN's scoreboard agrees with the odds feed. When they disagree, or ESPN can't be reached, **Recent problems** says "final held" and why. Check the real score and enter it with **Games & lines → Correct the final score**.
 - **A wrong final score:** **Games & lines → Correct the final score.** The site takes back what the game's bets paid and grades them again within 10 minutes. Everyone sees the correction in the admin log.
 - **A postponed game:** set it to **Postponed**. Its bets ride. The week won't close by itself while the game is unplayed, so use **Open next week** to move on; the game is graded whenever its final comes in.
 - **The last week of the season:** after its last game, click **Close the season** on the Admin page. It closes the week (and applies its 30% minimum) and opens nothing.
