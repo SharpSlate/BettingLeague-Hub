@@ -8,6 +8,7 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
   makeUser,
   member,
   place,
@@ -35,6 +36,7 @@ beforeAll(async () => {
   alice = await makeUser(db, "alice@example.com");
   bob = await makeUser(db, "bob@example.com");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   aliceEntry = (await db.q(member(owner), "select public.admin_add_entry('Alice', 1000000) as id"))[0].id;
   bobEntry = (await db.q(member(owner), "select public.admin_add_entry('Bob', 1000000) as id"))[0].id;
   await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, alice]);
@@ -52,7 +54,7 @@ describe("starting the season", () => {
   it("the scheduled job never opens the first week by itself", async () => {
     const [r] = await db.q(service, "select public.advance_week_internal() as w");
     expect(r.w).toBeNull();
-    expect((await db.su("select count(*)::int as n from public.weeks where status = 'open'"))[0].n).toBe(0);
+    expect((await db.su("select count(*)::int as n from public.league_weeks where status = 'open'"))[0].n).toBe(0);
   });
 
   it("an admin opens it", async () => {
@@ -64,19 +66,20 @@ describe("starting the season", () => {
 describe("rule changes", () => {
   const doc = { ...DAY_ONE_RULES, undoMinutes: 3 };
   it("can't take effect in the open week", async () => {
-    await fails(db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 4, 'too soon')", [owner, JSON.stringify(doc)]), "effective_week_must_be_future");
-    await fails(db.su("insert into public.rule_sets (version, effective_week, document) values (9, 4, '{}')"), "future week");
+    await fails(db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 4, 'too soon')", [owner, JSON.stringify(doc)]), "effective_week_must_be_future");
+    await fails(db.su("insert into public.rule_sets (version, league_id, effective_week, document) select 9, id, 4, '{}' from public.leagues"), "future week");
   });
   it("only an admin can publish", async () => {
-    await fails(db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 5, 'x')", [alice, JSON.stringify(doc)]), "admin_only");
+    await fails(db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 5, 'x')", [alice, JSON.stringify(doc)]), "commissioner_only");
   });
-  it("publishes version 2 from week 6; week 5 keeps version 1", async () => {
-    const [r] = await db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 6, 'Shorter undo window') as v", [owner, JSON.stringify(doc)]);
-    expect(r.v).toBe(2);
-    const [w5] = await db.su("select app.rule_set_for_week(5) as v");
-    const [w6] = await db.su("select app.rule_set_for_week(6) as v");
-    expect([w5.v, w6.v]).toEqual([1, 2]);
-    await fails(db.su("update public.weeks set rule_set_version = 2 where week = 4"), "fixed once it opens");
+  it("publishes a new version from week 6; week 5 keeps the league's first", async () => {
+    const [r] = await db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 6, 'Shorter undo window') as v", [owner, JSON.stringify(doc)]);
+    // Version 1 is the day-one template; the league started on a copy, version 2.
+    expect(r.v).toBe(3);
+    const [w5] = await db.su("select app.rule_set_for_week(id, 5) as v from public.leagues");
+    const [w6] = await db.su("select app.rule_set_for_week(id, 6) as v from public.leagues");
+    expect([w5.v, w6.v]).toEqual([2, 3]);
+    await fails(db.su("update public.league_weeks set rule_set_version = 3 where week = 4"), "fixed once it opens");
   });
 });
 
@@ -147,10 +150,10 @@ describe("closing a week", () => {
       { entry_id: aliceEntry, bank: 800_000, req: 240_000 },
       { entry_id: bobEntry, bank: 1_000_000, req: 300_000 },
     ]);
-    const weeks = await db.su("select week, status, rule_set_version from public.weeks where week in (4, 5) order by week");
+    const weeks = await db.su("select week, status, rule_set_version from public.league_weeks where week in (4, 5) order by week");
     expect(weeks).toEqual([
-      { week: 4, status: "closed", rule_set_version: 1 },
-      { week: 5, status: "open", rule_set_version: 1 },
+      { week: 4, status: "closed", rule_set_version: 2 },
+      { week: 5, status: "open", rule_set_version: 2 },
     ]);
   });
 
@@ -175,7 +178,7 @@ describe("postponed games", () => {
     expect((await db.q(service, "select public.advance_week_internal() as w"))[0].w).toBeNull();
     const [r] = await db.q(member(owner), "select public.admin_open_next_week(5, 'Opening week 6 around the postponed game') as w");
     expect(r.w).toBe(6);
-    expect((await db.su("select rule_set_version from public.weeks where week = 6"))[0].rule_set_version).toBe(2);
+    expect((await db.su("select rule_set_version from public.league_weeks where week = 6"))[0].rule_set_version).toBe(3);
   });
 });
 

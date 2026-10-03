@@ -14,6 +14,7 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
   makeUser,
   member,
   place,
@@ -67,6 +68,7 @@ beforeAll(async () => {
   dan = await makeUser(db, "dan@example.com", "Dan");
   mia = await makeUser(db, "mia@example.com", "Mia");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   const entry = async (name: string, user: string) => {
     const id = (await db.q(member(owner), "select public.admin_add_entry($1, 1000000) as id", [name]))[0].id as string;
     await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [id, user]);
@@ -132,7 +134,7 @@ describe("the admins' problem list", () => {
 
 describe("rules the database reads", () => {
   const refused = async (doc: unknown) =>
-    fails(db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]), "bad_rules");
+    fails(db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]), "bad_rules");
   it("are refused with a leg limit, market list, teaser points or flat price missing", async () => {
     const bt = DAY_ONE_RULES.betTypes;
     await refused({ ...DAY_ONE_RULES, betTypes: { ...bt, parlay: { ...bt.parlay, minLegs: null } } });

@@ -12,6 +12,8 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
+  makeCommissioner,
   makeUser,
   member,
   place,
@@ -63,7 +65,9 @@ beforeAll(async () => {
   bob = await makeUser(db, "bob@example.com", "Bob");
   erin = await makeUser(db, "erin@example.com", "Erin");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   await db.q(member(owner), "select public.admin_set_admin($1, true)", [owner2]);
+  await makeCommissioner(db, owner2);
   const entry = async (name: string, user: string) => {
     const id = (await db.q(member(owner), "select public.admin_add_entry($1, 1000000) as id", [name]))[0].id as string;
     await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [id, user]);
@@ -83,7 +87,7 @@ afterAll(async () => db?.close());
 describe("closing the season", () => {
   it("with no week open is refused, rather than opening one", async () => {
     await fails(db.q(member(owner), "select public.admin_close_season(null, 'Season over')"), "no_open_week");
-    expect((await db.su("select count(*)::int as n from public.weeks where status = 'open'"))[0].n).toBe(0);
+    expect((await db.su("select count(*)::int as n from public.league_weeks where status = 'open'"))[0].n).toBe(0);
     await db.q(member(owner), "select public.admin_open_next_week(null, 'Start')");
   });
 });
@@ -216,9 +220,9 @@ describe("resending a bet", () => {
 describe("rules", () => {
   it("with a number missing are refused", async () => {
     const doc = { ...DAY_ONE_RULES, weeklyMinimum: { ...DAY_ONE_RULES.weeklyMinimum, pct: null } };
-    await fails(db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]), "bad_rules");
+    await fails(db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]), "bad_rules");
     const doc2 = { ...DAY_ONE_RULES, undoMinutes: "5" };
-    await fails(db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc2)]), "bad_rules");
+    await fails(db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc2)]), "bad_rules");
   });
 });
 

@@ -12,6 +12,8 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
+  makeCommissioner,
   makeUser,
   member,
   place,
@@ -68,7 +70,9 @@ beforeAll(async () => {
   bob = await makeUser(db, "bob@example.com", "Bob");
   commish = await makeUser(db, "commish@example.com", "Commish");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   await db.q(member(owner), "select public.admin_set_admin($1, true)", [commish]);
+  await makeCommissioner(db, commish);
   aliceEntry = (await db.q(member(owner), "select public.admin_add_entry('Alice', 1000000) as id"))[0].id;
   bobEntry = (await db.q(member(owner), "select public.admin_add_entry('Bob', 1000000) as id"))[0].id;
   await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, alice]);
@@ -232,7 +236,9 @@ describe("private details", () => {
 
   it("a new member gets a neutral display name, never part of their email", async () => {
     const u = await makeUser(db, "carol.jones1987@example.com");
-    expect((await db.q(member(bob), "select display_name from public.profiles where id = $1", [u]))[0].display_name).toBe("Member");
+    expect((await db.q(member(u), "select display_name from public.profiles where id = $1", [u]))[0].display_name).toBe("Member");
+    // Someone who shares no league with them can't see them at all.
+    expect(await db.q(member(bob), "select display_name from public.profiles where id = $1", [u])).toEqual([]);
   });
 });
 
@@ -346,11 +352,12 @@ describe("correcting a final score", () => {
 describe("rule versions", () => {
   it("a new version can't start before one that's already scheduled", async () => {
     const doc = JSON.stringify({ ...DAY_ONE_RULES, undoMinutes: 3 });
-    const publish = (week: number) => db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, $3, 'change') as v", [owner, doc, week]);
-    expect((await publish(7))[0].v).toBe(2);
-    await fails(publish(6), "effective_week_before_scheduled");
+    const publish = (week: number) => db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, $3, 'change') as v", [owner, doc, week]);
+    // Version 1 is the day-one template; the league started on a copy, version 2.
     expect((await publish(7))[0].v).toBe(3);
-    expect((await db.su("select app.rule_set_for_week(6) as w6, app.rule_set_for_week(7) as w7"))[0]).toEqual({ w6: 1, w7: 3 });
+    await fails(publish(6), "effective_week_before_scheduled");
+    expect((await publish(7))[0].v).toBe(4);
+    expect((await db.su("select app.rule_set_for_week(id, 6) as w6, app.rule_set_for_week(id, 7) as w7 from public.leagues"))[0]).toEqual({ w6: 2, w7: 4 });
   });
 });
 
@@ -392,7 +399,7 @@ describe("opening the next week by hand", () => {
     await setKickoff("W5", "now() - interval '3 hours'");
     await fails(db.q(member(owner), "select public.admin_open_next_week(5, 'Season over')"), "next_week_not_loaded");
     await db.q(member(owner), "select public.admin_close_season(5, 'Season over')");
-    expect(await db.su("select week, status from public.weeks where week in (5, 6) order by week")).toEqual([
+    expect(await db.su("select week, status from public.league_weeks where week in (5, 6) order by week")).toEqual([
       { week: 5, status: "closed" },
       { week: 6, status: "upcoming" },
     ]);

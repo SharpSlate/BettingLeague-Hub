@@ -3,7 +3,7 @@
 // exactly the entries they manage: a shared entry's bets show to both its owners before
 // kickoff, and the co-owner's own entry stays hidden from the owner like anyone else's.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { centerOnWeek4, event, fails, freshDb, gameId, hoursFromNow, ingest, makeUser, member, place, standardLines, undo, type Db } from "./db.ts";
+import { centerOnWeek4, event, fails, freshDb, gameId, hoursFromNow, ingest, makeLeague, makeUser, member, place, standardLines, undo, type Db } from "./db.ts";
 
 let db: Db;
 let you: string, pat: string, sam: string;
@@ -33,6 +33,7 @@ beforeAll(async () => {
   pat = await makeUser(db, "pat@example.com", "Pat");
   sam = await makeUser(db, "sam@example.com", "Sam");
   await db.su("select app.bootstrap_admin('you@example.com')");
+  await makeLeague(db, you);
   const add = async (name: string) => (await db.q(member(you), "select public.admin_add_entry($1, 1000000) as id", [name]))[0].id as string;
   withPat = await add("You & Pat");
   withSam = await add("You & Sam");

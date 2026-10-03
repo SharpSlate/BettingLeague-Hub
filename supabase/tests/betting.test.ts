@@ -8,6 +8,8 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
+  makeCommissioner,
   makeUser,
   member,
   place,
@@ -32,7 +34,9 @@ beforeAll(async () => {
   alice = await makeUser(db, "alice@example.com", "Alice");
   bob = await makeUser(db, "bob@example.com", "Bob");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   await db.q(member(owner), "select public.admin_set_admin($1, true)", [commish]);
+  await makeCommissioner(db, commish);
 
   aliceEntry = (await db.q(member(owner), "select public.admin_add_entry('Alice', 1000000) as id"))[0].id;
   bobEntry = (await db.q(member(owner), "select public.admin_add_entry('Bob', 1000000) as id"))[0].id;
@@ -65,9 +69,10 @@ afterAll(async () => db?.close());
 
 describe("week opening", () => {
   it("opens the week containing today and snapshots each bank and 30% minimum", async () => {
-    const weeks = await db.su("select week, status, rule_set_version from public.weeks where week between 1 and 5 order by week");
+    const weeks = await db.su("select week, status, rule_set_version from public.league_weeks where week between 1 and 5 order by week");
     expect(weeks.map((w) => w.status)).toEqual(["closed", "closed", "closed", "open", "upcoming"]);
-    expect(weeks[3].rule_set_version).toBe(1);
+    // The league's first rule set: a copy of the day-one template (version 1).
+    expect(weeks[3].rule_set_version).toBe(2);
     const [s] = await db.su("select * from public.week_entry_status where entry_id = $1", [aliceEntry]);
     expect(Number(s.bank_at_start_cents)).toBe(1_000_000);
     expect(Number(s.required_cents)).toBe(300_000);
@@ -141,7 +146,7 @@ describe("placing bets", () => {
   });
 
   it("refuses a rule-set version that isn't the week's", async () => {
-    await fails(place(db, { entry: aliceEntry, user: alice, type: "straight", stakeCents: 10_000, ruleSetVersion: 2, legs: [kcSpreadHome()] }), "rules_changed");
+    await fails(place(db, { entry: aliceEntry, user: alice, type: "straight", stakeCents: 10_000, ruleSetVersion: 1, legs: [kcSpreadHome()] }), "rules_changed");
   });
 
   it("stores the teased number on teaser legs", async () => {
@@ -215,9 +220,9 @@ describe("members can't go around the functions", () => {
   });
 
   it("non-admins can't use admin functions", async () => {
-    await fails(db.q(member(alice), "select public.admin_adjust_bank($1, 100000, 'give me units')", [aliceEntry]), "admin_only");
-    await fails(db.q(member(alice), "select public.admin_open_next_week(null, null)"), "admin_only");
-    await fails(db.q(member(alice), "select * from public.admin_list_users()"), "admin_only");
+    await fails(db.q(member(alice), "select public.admin_adjust_bank($1, 100000, 'give me units')", [aliceEntry]), "commissioner_only");
+    await fails(db.q(member(alice), "select public.admin_open_next_week(null, null)"), "commissioner_only");
+    await fails(db.q(member(alice), "select * from public.admin_list_users()"), "commissioner_only");
   });
 });
 

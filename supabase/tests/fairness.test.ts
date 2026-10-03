@@ -14,6 +14,8 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
+  makeCommissioner,
   makeUser,
   member,
   place,
@@ -63,7 +65,7 @@ const bet = (entry: string, user: string, p: Pick) =>
 const setRule = (path: string, value: unknown) =>
   db.su(`do $$ begin
     alter table public.rule_sets disable trigger user;
-    update public.rule_sets set document = jsonb_set(document, '${path}', '${JSON.stringify(value)}') where version = 1;
+    update public.rule_sets set document = jsonb_set(document, '${path}', '${JSON.stringify(value)}') where league_id is not null;
     alter table public.rule_sets enable trigger user;
   end $$`);
 /** The feed's next reading of one game. */
@@ -79,6 +81,7 @@ beforeAll(async () => {
   alice = await makeUser(db, "alice@example.com", "Alice");
   bob = await makeUser(db, "bob@example.com", "Bob");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   const entry = async (name: string, user: string) => {
     const id = (await db.q(member(owner), "select public.admin_add_entry($1, 1000000) as id", [name]))[0].id as string;
     await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [id, user]);
@@ -159,6 +162,7 @@ describe("both sides of a game across separate bets", () => {
     // other side isn't refused for them (the entry can end up on both sides this way).
     const commish = await makeUser(db, "commish@example.com", "Commish");
     await db.q(member(owner), "select public.admin_set_admin($1, true)", [commish]);
+    await makeCommissioner(db, commish);
     await bet(aliceEntry, alice, { id: "PROBE", market: "spread", side: "home" });
     await db.q(member(commish), "select public.admin_set_manager($1, $2, true)", [aliceEntry, owner]);
     await bet(aliceEntry, owner, { id: "PROBE", market: "moneyline", side: "away" });
@@ -199,7 +203,7 @@ describe("both sides of a game across separate bets", () => {
   });
 
   it("rules missing the setting, or the undo one, can't be published", async () => {
-    const publish = (doc: unknown) => db.q(service, "select public.publish_rule_set_internal($1, $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]);
+    const publish = (doc: unknown) => db.q(service, "select public.publish_rule_set_internal($1, (select id from public.leagues), $2::jsonb, 6, 'typo')", [owner, JSON.stringify(doc)]);
     await fails(publish({ ...DAY_ONE_RULES, acrossBets: {} }), "bad_rules");
     await fails(publish({ ...DAY_ONE_RULES, acrossBets: { oppositeSides: "no" } }), "bad_rules");
     const { undoAfterLineMove: _, ...noUndoSetting } = DAY_ONE_RULES;
@@ -471,7 +475,7 @@ describe("line pulls near kickoff", () => {
 describe("entries that share a manager betting against each other", () => {
   let dana: string, one: string, two: string, danaBet: string;
   const flags = async () =>
-    (await db.q(member(owner), "select error from public.admin_recent_problems(50) where kind = 'fair_play'")).map((r) => r.error as string);
+    (await db.q(member(owner), "select error from public.admin_recent_problems(50, (select id from public.leagues)) where kind = 'fair_play'")).map((r) => r.error as string);
 
   it("are flagged for the admins once both picks are public, and not before", async () => {
     dana = await makeUser(db, "dana@example.com", "Dana");
@@ -510,7 +514,7 @@ describe("entries that share a manager betting against each other", () => {
     for (let i = 0; i < 12; i++) {
       await db.q(service, "select public.record_pull_internal('lines', 'schedule', false, 'stopped at the credit floor (4000 left)', null, null)");
     }
-    const top = await db.q(member(owner), "select kind, error from public.admin_recent_problems(10)");
+    const top = await db.q(member(owner), "select kind, error from public.admin_recent_problems(10, (select id from public.leagues))");
     expect(top.filter((r) => r.kind === "fair_play")).toHaveLength(1);
     expect(top.filter((r) => r.error.startsWith("stopped at the credit floor"))).toEqual([{ kind: "lines", error: "stopped at the credit floor (4000 left) (12 times)" }]);
   });

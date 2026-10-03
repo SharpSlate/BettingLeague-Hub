@@ -54,6 +54,20 @@ export const service: Who = { role: "service_role" };
 export const anon: Who = { role: "anon" };
 export const member = (userId: string): Who => ({ role: "authenticated", userId });
 
+/** Starts a league with the user as its commissioner (the tests use one league each). */
+export async function makeLeague(db: Db, userId: string, name = "Test league"): Promise<string> {
+  return (await db.q(member(userId), "select public.create_league($1) as id", [name]))[0].id;
+}
+
+/** Makes the user a commissioner of the test's league. */
+export async function makeCommissioner(db: Db, userId: string): Promise<void> {
+  await db.su(
+    `insert into public.league_members (league_id, user_id, role) select id, $1, 'commissioner' from public.leagues
+     on conflict (league_id, user_id) do update set role = 'commissioner'`,
+    [userId],
+  );
+}
+
 export async function makeUser(db: Db, email: string, displayName?: string): Promise<string> {
   const rows = await db.su("insert into auth.users (email, raw_user_meta_data) values ($1, $2) returning id", [
     email,
@@ -122,6 +136,18 @@ export interface PlaceArgs {
   clientRef?: string;
 }
 
+/** The rule set of the open week in the entry's league (or the league's newest, with none open). */
+async function openRuleSet(db: Db, entry: string): Promise<number> {
+  const [r] = await db.su(
+    `select coalesce(
+       (select w.rule_set_version from public.league_weeks w where w.league_id = e.league_id and w.status = 'open'),
+       (select max(version) from public.rule_sets where league_id = e.league_id)) as v
+     from public.entries e where e.id = $1`,
+    [entry],
+  );
+  return r?.v ?? 1;
+}
+
 export async function place(db: Db, a: PlaceArgs, c?: pg.PoolClient): Promise<string> {
   const sql = "select public.place_slip_internal($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::uuid) as id";
   const params = [
@@ -132,7 +158,7 @@ export async function place(db: Db, a: PlaceArgs, c?: pg.PoolClient): Promise<st
     a.stakeCents,
     a.quotedAmerican ?? -110,
     a.potentialPayoutCents ?? a.stakeCents * 3,
-    a.ruleSetVersion ?? 1,
+    a.ruleSetVersion ?? (await openRuleSet(db, a.entry)),
     JSON.stringify(a.legs),
     a.clientRef ?? null,
   ];

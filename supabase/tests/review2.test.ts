@@ -10,6 +10,7 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
   makeUser,
   member,
   place,
@@ -55,6 +56,7 @@ beforeAll(async () => {
   alice = await makeUser(db, "alice@example.com", "Alice");
   bob = await makeUser(db, "bob@example.com", "Bob");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   aliceEntry = (await db.q(member(owner), "select public.admin_add_entry('Alice', 1000000) as id"))[0].id;
   await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [aliceEntry, alice]);
   for (const [id, hours, home, away] of GAMES) {

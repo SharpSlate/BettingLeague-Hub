@@ -10,6 +10,7 @@ import {
   gameId,
   hoursFromNow,
   ingest,
+  makeLeague,
   makeUser,
   member,
   place,
@@ -50,6 +51,7 @@ beforeAll(async () => {
   alice = await makeUser(db, "alice@example.com", "Alice");
   fay = await makeUser(db, "fay@example.com", "Fay");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   const entry = async (name: string, user: string) => {
     const id = (await db.q(member(owner), "select public.admin_add_entry($1, 1000000) as id", [name]))[0].id as string;
     await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [id, user]);

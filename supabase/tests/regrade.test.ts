@@ -1,7 +1,7 @@
 // Grades that race a score correction, and the weekly minimum of a week that has
 // already closed when one of its bets changes. From the second review pass.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { centerOnWeek4, event, fails, freshDb, gameId, hoursFromNow, ingest, makeUser, member, place, service, standardLines, type Db } from "./db.ts";
+import { centerOnWeek4, event, fails, freshDb, gameId, hoursFromNow, ingest, makeLeague, makeUser, member, place, service, standardLines, type Db } from "./db.ts";
 
 let db: Db;
 let owner: string, carol: string, dave: string;
@@ -23,6 +23,7 @@ beforeAll(async () => {
   carol = await makeUser(db, "carol@example.com", "Carol");
   dave = await makeUser(db, "dave@example.com", "Dave");
   await db.su("select app.bootstrap_admin('owner@example.com')");
+  await makeLeague(db, owner);
   carolEntry = (await db.q(member(owner), "select public.admin_add_entry('Carol', 1000000) as id"))[0].id;
   daveEntry = (await db.q(member(owner), "select public.admin_add_entry('Dave', 1000000) as id"))[0].id;
   await db.q(member(owner), "select public.admin_set_manager($1, $2, true)", [carolEntry, carol]);
