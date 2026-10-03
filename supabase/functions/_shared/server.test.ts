@@ -599,7 +599,7 @@ describe("checking finals against ESPN", () => {
     const { store, f, held } = await run([espnGame(["Buffalo Bills", 24], ["Kansas City Chiefs", 27], "2026-10-04T17:00Z")]);
     expect(store.scores).toContainEqual({ id: "evt_kc_buf", completed: true, homeScore: 27, awayScore: 24 });
     expect(held).toEqual([]);
-    expect(f.calls.filter((u) => u.includes("espn"))).toHaveLength(1);
+    expect(f.calls.filter((u) => u.includes("espn")).map((u) => new URL(u).searchParams.get("dates"))).toEqual(["20261004", null]);
   });
   it("holds a final ESPN scores differently, and says so", async () => {
     const { store, held } = await run([kcBuf(27, 21)]);
@@ -614,7 +614,7 @@ describe("checking finals against ESPN", () => {
   it("holds a final when ESPN is down or doesn't list the game", async () => {
     const down = await run(503);
     expect(down.store.scores).toContainEqual({ id: "evt_kc_buf", completed: false, homeScore: 27, awayScore: 24 });
-    expect(down.held).toEqual(["final held: Buffalo Bills at Kansas City Chiefs (24-27): couldn't check ESPN: 20261004 (HTTP 503)"]);
+    expect(down.held).toEqual(["final held: Buffalo Bills at Kansas City Chiefs (24-27): couldn't check ESPN: 20261004 (HTTP 503), this week (HTTP 503)"]);
     const missing = await run([espnGame(["Kansas City Chiefs", 27], ["Buffalo Bills", 24], "2026-10-11T17:00Z")]);
     expect(missing.store.scores).toContainEqual({ id: "evt_kc_buf", completed: false, homeScore: 27, awayScore: 24 });
     expect(missing.held).toEqual(["final held: Buffalo Bills at Kansas City Chiefs (24-27): ESPN doesn't list this game"]);

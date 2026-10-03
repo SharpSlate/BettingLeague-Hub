@@ -10,9 +10,9 @@ import type { NormalizedScore, OddsApiScoreEvent } from "./odds-api.ts";
 
 export const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 
-/** One day's scoreboard. `day` is YYYYMMDD. */
+/** One day's scoreboard (`day` is YYYYMMDD), or the current week's when `day` is empty. */
 export function espnUrl(day: string): string {
-  return `${ESPN_SCOREBOARD}?${new URLSearchParams({ dates: day, limit: "100" })}`;
+  return `${ESPN_SCOREBOARD}?${new URLSearchParams(day ? { dates: day, limit: "100" } : { limit: "100" })}`;
 }
 
 export interface EspnGame {
@@ -94,13 +94,16 @@ export async function confirmFinals(
 
   const espn: EspnGame[] = [];
   const failed: string[] = [];
-  for (const day of espnDays(finals.map((s) => byId.get(s.id)!.commence_time), timeZone)) {
+  // Each final's day, plus the current week's scoreboard in case a dated request
+  // comes back without the game. Games are matched by teams and start time, so extra
+  // games in an answer don't matter.
+  for (const day of [...espnDays(finals.map((s) => byId.get(s.id)!.commence_time), timeZone), ""]) {
     try {
       const res = await fetchImpl(espnUrl(day));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       espn.push(...parseEspn(await res.json()));
     } catch (e) {
-      failed.push(`${day} (${e instanceof Error ? e.message : String(e)})`.slice(0, 80));
+      failed.push(`${day || "this week"} (${e instanceof Error ? e.message : String(e)})`.slice(0, 80));
     }
   }
 
