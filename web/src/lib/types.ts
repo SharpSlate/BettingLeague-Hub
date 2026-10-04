@@ -63,6 +63,8 @@ export interface League {
   books: string[];
   lastPullAt: string | null;
   creditsRemaining: number | null;
+  /** Off until the site's owner turns the odds feed on; until then nothing calls the Odds API. */
+  oddsPullsEnabled: boolean;
 }
 
 export interface Team {

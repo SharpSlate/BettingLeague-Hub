@@ -182,6 +182,8 @@ jobs:
       SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
     steps:
       - name: Check the live site
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           fail() { echo "::error::$1"; exit 1; }
           # A first publish can take a minute to show up.
@@ -214,6 +216,13 @@ jobs:
             echo "Function $f answered $code without signing in"
             case "$code" in 404|000|5*) fail "Function $f isn't working ($code)";; esac
           done
+
+          # The lines job, called as the schedule calls it, answers and says what it did. While
+          # the odds feed is off (SETUP.md step 7) it skips without calling the Odds API.
+          code=$(curl -s -o lines.json -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/pull-lines" \
+            -H "apikey: $SUPABASE_ANON_KEY" -H "x-cron-secret: $CRON_SECRET" -H "Content-Type: application/json" -d '{}')
+          echo "Lines job, as the schedule, answered $code: $(head -c 200 lines.json)"
+          [ "$code" = "200" ] || fail "The lines job isn't working ($code)"
 
           # Signed out, this is refused; a 404 would mean the migrations didn't apply.
           code=$(curl -s -o rpc.json -w "%{http_code}" -X POST "$SUPABASE_URL/rest/v1/rpc/league_by_invite" \

@@ -226,6 +226,7 @@ export class DemoApi implements Api {
       timezone: "America/New_York", pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
       refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
       books: ["draftkings", "fanduel"], lastPullAt: new Date(this.s.lastPullAt).toISOString(), creditsRemaining: this.s.credits,
+      oddsPullsEnabled: true,
     };
   }
   async teams() { return TEAMS; }

@@ -196,6 +196,7 @@ function SiteStatus() {
         <h3>Feeds</h3>
         {lg ? (
           <dl className="kv">
+            <dt>Odds feed</dt><dd>{lg.oddsPullsEnabled ? "On" : "Off: the site makes no Odds API calls, and spends no credits, until it's turned on"}</dd>
             <dt>Last line pull</dt><dd>{ago(lg.lastPullAt)}</dd>
             <dt>Odds API credits</dt><dd className="num">{lg.creditsRemaining?.toLocaleString() ?? "unknown"}</dd>
             <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min ({lg.pullNearKickoffMinutes} in the {lg.nearKickoffHours} hours before a kickoff)</dd>
