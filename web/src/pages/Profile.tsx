@@ -5,9 +5,12 @@ import { useMe } from "../lib/me.ts";
 
 type Theme = "auto" | "light" | "dark";
 
+// Its own key: the single-league site on the same address keeps its theme under "bd.theme".
+const THEME_KEY = "blh.theme";
+
 function readTheme(): Theme {
   try {
-    return (localStorage.getItem("bd.theme") as Theme) || "auto";
+    return (localStorage.getItem(THEME_KEY) as Theme) || "auto";
   } catch {
     return "auto";
   }
@@ -52,7 +55,7 @@ export function Profile({ onChanged }: { onChanged: () => void }) {
             value={theme}
             onChange={(t) => {
               setTheme(t);
-              try { localStorage.setItem("bd.theme", t); } catch { /* ignore */ }
+              try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ }
               applyTheme(t);
             }}
             options={[{ value: "auto", label: "Match phone" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]}

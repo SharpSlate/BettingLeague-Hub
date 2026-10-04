@@ -32,7 +32,7 @@ export function App() {
   return <SignedIn />;
 }
 
-const LAST_LEAGUE = "bl.league";
+const LAST_LEAGUE = "blh.league";
 function storedLeague(): string | null {
   try {
     return localStorage.getItem(LAST_LEAGUE);
