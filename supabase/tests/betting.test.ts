@@ -188,6 +188,7 @@ describe("placing bets", () => {
       const leg = { gameId: gB, market: "spread", side: "away", point: 6.5, price: -110 };
       await place(db, { entry: bobEntry, user: bob, type: "straight", stakeCents: stake, legs: [leg] }, c1);
       const second = place(db, { entry: bobEntry, user: bob, type: "straight", stakeCents: stake, legs: [leg] }, c2);
+      second.catch(() => undefined); // it can fail before the commit below returns; checked after it
       await new Promise((r) => setTimeout(r, 200)); // c2 is now waiting on c1's lock
       await c1.query("commit");
       await fails(second, "insufficient_units");
