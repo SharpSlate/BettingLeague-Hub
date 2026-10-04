@@ -46,14 +46,20 @@ function SignedIn() {
   const api = useApi();
   const leagues = useLoad(() => api.myLeagues(), []);
   const [chosen, setChosen] = useState<string | null>(storedLeague());
+  // A league just started or joined isn't in the list until the list reloads. Wait for it,
+  // rather than opening another league or sending the member back to the list.
+  const [opening, setOpening] = useState<string | null>(null);
+  useEffect(() => setOpening(null), [leagues.data]);
   const choose = (id: string) => {
     setChosen(id);
+    setOpening(id);
     try { localStorage.setItem(LAST_LEAGUE, id); } catch { /* ignore */ }
     leagues.reload();
   };
   if (leagues.error) return <div className="signin"><div className="card stack"><b>Couldn't load your leagues.</b><span className="small muted">{leagues.error}</span><button className="btn" onClick={() => api.signOut()}>Sign out</button></div></div>;
   if (!leagues.data) return <Loading what="Loading your leagues" />;
   const list = leagues.data;
+  if (opening && !list.some((l) => l.id === opening)) return <Loading what="Opening your league" />;
   const current = list.find((l) => l.id === chosen) ?? list[0] ?? null;
   // Pages uses #/ routes; the demo page embedded elsewhere keeps its route in memory.
   const Router = import.meta.env.VITE_ROUTER === "memory" ? MemoryRouter : HashRouter;
