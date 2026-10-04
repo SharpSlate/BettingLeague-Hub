@@ -74,15 +74,19 @@ jobs:
           HAS_GOOGLE: ${{ secrets.GOOGLE_CLIENT_ID != '' && secrets.GOOGLE_CLIENT_SECRET != '' }}
         run: |
           if [ "$HAS_SMTP" != "true" ]; then
-            echo "::warning::No league email yet: sign-in codes only reach the Supabase project's own members."
-            # Supabase's own sender has a fixed hourly cap, and only a custom sender's
-            # limit can be raised, so the email_sent limit is left off too.
+            echo "::warning::No site email yet: sign-in emails only reach the Supabase project's own members, with a sign-in link instead of a code."
+            # On the free plan, Supabase's own sender keeps its standard email (a sign-in
+            # link) and its fixed hourly cap: only a custom sender's template and limit can
+            # be changed. So the code email and the email_sent limit are left off too, and
+            # the site asks for a link instead of a code (VITE_EMAIL_CODES below).
             python3 - <<'PY'
           import re
           p = "supabase/config.toml"
           s = open(p).read()
           s = re.sub(r"(\[auth\.email\.smtp\]\nenabled = )true", r"\1false", s)
           s = re.sub(r"(?m)^email_sent = .*\n", "", s)
+          s, n = re.subn(r"\[auth\.email\.template\.magic_link\]\nsubject = .*\ncontent_path = .*\n", "", s)
+          assert n == 1, "the magic_link template section wasn't found"
           open(p, "w").write(s)
           PY
           fi
@@ -156,6 +160,9 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
           # "true" once the Google sign-in secrets are set; the Google button shows only then.
           VITE_GOOGLE: ${{ secrets.GOOGLE_CLIENT_ID != '' && secrets.GOOGLE_CLIENT_SECRET != '' }}
+          # "true" once the site's own email sender is set: its email carries a 6-digit code.
+          # Until then Supabase's standard email carries a sign-in link.
+          VITE_EMAIL_CODES: ${{ secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

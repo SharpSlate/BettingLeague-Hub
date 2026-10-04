@@ -28,7 +28,7 @@ Supabase's built-in email only reaches the project's own team, so everyone's sig
 2. Turn on 2-Step Verification for it.
 3. Create an **app password**. Google lists it under the account's Security settings.
 
-The deploy works without this, but then only you can get codes. Add it before anyone else signs in.
+The deploy works without this, but then only you can sign in, and with a link instead of a code: on Supabase's free plan, its own sender keeps its standard email (open the link in the browser you asked from). Add it before anyone else signs in; the next deploy switches everyone to codes.
 
 ## 3. Google sign-in (optional for the trial)
 

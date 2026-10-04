@@ -5,8 +5,11 @@ import { SITE_NAME } from "./Leagues.tsx";
 
 export function SignIn() {
   const api = useApi();
-  // The deploy sets VITE_GOOGLE once the site has a Google sign-in client.
+  // The deploy sets VITE_GOOGLE once the site has a Google sign-in client, and
+  // VITE_EMAIL_CODES once it has its own email sender. Until then the email is
+  // Supabase's standard one, which has a sign-in link rather than a code.
   const google = api.demo || import.meta.env.VITE_GOOGLE === "true";
+  const codes = api.demo || import.meta.env.VITE_EMAIL_CODES === "true";
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
@@ -49,13 +52,18 @@ export function SignIn() {
               <span>Email</span>
               <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
             </label>
-            <button className="btn primary block" disabled={busy || !email}>{busy ? "Sending…" : "Email me a sign-in code"}</button>
+            <button className="btn primary block" disabled={busy || !email}>{busy ? "Sending…" : codes ? "Email me a sign-in code" : "Email me a sign-in link"}</button>
             {google ? (
               <>
                 <div className="divider">or</div>
                 <button type="button" className="btn block" disabled={busy} onClick={() => run(() => api.signInWithGoogle())}>Continue with Google</button>
               </>
             ) : null}
+          </>
+        ) : !codes ? (
+          <>
+            <p className="small muted" style={{ margin: 0 }}>We sent a sign-in link to <b>{email}</b>. Open it in this browser to sign in. It works for an hour.</p>
+            <button type="button" className="btn link" onClick={() => setSent(false)}>Use a different email</button>
           </>
         ) : (
           <>
