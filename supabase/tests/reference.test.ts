@@ -30,6 +30,11 @@ describe("reference data", () => {
     expect(weeks[18]).toMatchObject({ week: 19, label: "Wild Card" });
   });
 
+  it("starts with the odds feed off, so the site spends no Odds API credits until it's turned on", async () => {
+    const [s] = await db.su("select odds_pulls_enabled from public.league_settings");
+    expect(s.odds_pulls_enabled).toBe(false);
+  });
+
   it("the SQL weekly minimum matches the TypeScript one", async () => {
     for (const bank of [2_690_915, 1_500_000, 1_052_730, 1_000_000, 0, 1, 99, 12_345_678]) {
       const [r] = await db.su("select app.required_cents($1, document) as c from public.rule_sets where version = 1", [bank]);

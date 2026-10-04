@@ -137,6 +137,7 @@ export class SupabaseApi implements Api {
       books: s.books,
       lastPullAt: pull.data?.at ?? null,
       creditsRemaining: credits.data?.credits_remaining ?? null,
+      oddsPullsEnabled: s.odds_pulls_enabled === true,
     };
   }
 

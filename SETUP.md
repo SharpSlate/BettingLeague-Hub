@@ -86,9 +86,17 @@ Site admins run what every league shares: the line and score feeds, line overrid
    ```sql
    select app.bootstrap_admin('your-email@example.com');
    ```
-3. Reload the site: **Admin** now has **Site feeds** and **Games & lines**. Click **Pull lines** once to fill the board.
+3. Reload the site: **Admin** now has **Site feeds** and **Games & lines**.
 
-## 7. Start a league
+## 7. Turn on the odds feed
+
+The site starts with its odds feed off: nothing calls The Odds API, so no credits are spent, and the board stays empty, so no league can open a week. Turn it on when the site is ready to launch. In the Supabase dashboard's **SQL editor**, run:
+```sql
+update public.league_settings set odds_pulls_enabled = true;
+```
+Then click **Admin → Site feeds → Pull lines** once to fill the board (3 credits). From then on lines come in on the schedule while at least one league exists. Running the same statement with `false` turns the feed off again; **Site feeds** shows which it is.
+
+## 8. Start a league
 
 Anyone signed in can start a league from the league menu (**Start or join a league…**). Its creator is its commissioner. A new league:
 - starts on the standard rules (rule set 1, the single-league site's day-one rules), which the commissioner can change for any week that hasn't opened;

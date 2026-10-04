@@ -7,7 +7,7 @@ const league: League = {
   id: "l1", name: "Test League", role: "member", inviteCode: null, selfEntry: true, openWeek: null, timezone: "America/New_York",
   pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
   refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
-  books: ["draftkings", "fanduel"], lastPullAt: null, creditsRemaining: null,
+  books: ["draftkings", "fanduel"], lastPullAt: null, creditsRemaining: null, oddsPullsEnabled: true,
 };
 const text = (r: RuleSet, l: League | null = league) =>
   rulesPage(r, l).sections.flatMap((s) => [...s.items.map((i) => (typeof i === "string" ? i : `${i.lead} ${i.text}`)), s.example ?? ""]).join("\n");

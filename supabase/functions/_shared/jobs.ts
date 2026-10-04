@@ -33,6 +33,8 @@ export interface Settings {
   maxLineAgeMinutes: number;
   creditFloor: number;
   books: string[];
+  /** Off until the site's owner turns the feed on: no pull of any kind calls the Odds API. */
+  oddsPullsEnabled: boolean;
 }
 
 export interface Store {
@@ -88,6 +90,9 @@ export function redact(text: string): string {
     .replace(/(api[_-]?key=)[^&\s"']+/gi, "$1[hidden]")
     .replace(/https?:\/\/\S+/g, (url) => url.split("?")[0] + (url.includes("?") ? "?[hidden]" : ""));
 }
+
+/** Why a pull skipped while the site's odds feed is off (Settings.oddsPullsEnabled). */
+export const ODDS_OFF = "odds pulls are off";
 
 /** pg_cron calls the lines job this often (supabase/migrations/20260928000005_schedule.sql). */
 const TICK_MS = 10 * 60_000;
@@ -158,6 +163,7 @@ export async function pullLines(
   opts: { forUndo?: boolean } = {},
 ): Promise<PullOutcome> {
   const s = await store.settings();
+  if (!s.oddsPullsEnabled) return { status: "skipped", reason: ODDS_OFF };
   if (trigger === "schedule") {
     if (!inPullWindow(now, s.pullWindowStart, s.pullWindowEnd, s.timezone)) return { status: "skipped", reason: "outside the pull window" };
     // No credits go to a site nobody plays on yet; a site admin can still pull by hand.
@@ -221,7 +227,7 @@ export async function refreshForUndo(
     if (await store.linesFetchedSince(since)) return "ok";
     const pulled = await pullLines(store, apiKey, fetchImpl, "bet", now, userId, { forUndo: true });
     if (pulled.status === "pulled") return "ok";
-    if (pulled.status === "failed") return "failed";
+    if (pulled.status === "failed" || pulled.reason === ODDS_OFF) return "failed";
     if (pulled.reason === "credit floor") return "credit_floor";
     if (pulled.reason === "limit") return "limit";
     await sleep(1000); // "recent": another of the member's undos pulled a moment ago
@@ -247,7 +253,9 @@ export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, 
   if ((await store.gamesAwaitingScores(now)) > 0) {
     const s = await store.settings();
     const low = await belowCreditFloor(store, s.creditFloor, now);
-    if (low !== null) {
+    if (!s.oddsPullsEnabled) {
+      scores = { status: "skipped", reason: ODDS_OFF };
+    } else if (low !== null) {
       await store.recordPull("scores", trigger, false, `stopped at the credit floor (${low} left)`, null, null);
       scores = { status: "skipped", reason: "credit floor" };
     } else {

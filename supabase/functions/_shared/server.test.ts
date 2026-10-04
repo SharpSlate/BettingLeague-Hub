@@ -210,6 +210,7 @@ class FakeStore implements Store {
     maxLineAgeMinutes: 35,
     creditFloor: 5_000,
     books: ["draftkings", "fanduel"],
+    oddsPullsEnabled: true,
   };
   credits: { remaining: number; at: Date } | null = null;
   pulls: { kind: string; trigger: string; ok: boolean; error: string }[] = [];
@@ -323,6 +324,20 @@ describe("pullLines", () => {
     expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toEqual({ status: "skipped", reason: "no leagues yet" });
     expect((await pullLines(store, "KEY", f, "admin", inWindow)).status).toBe("pulled");
     expect(f.calls).toHaveLength(1);
+  });
+  it("makes no Odds API call of any kind while the site's odds feed is off", async () => {
+    const store = new FakeStore();
+    store.settingsValue = { ...store.settingsValue, oddsPullsEnabled: false };
+    const f = fakeFetch(fixture("odds.json"));
+    for (const trigger of ["schedule", "bet", "admin"] as const) {
+      expect(await pullLines(store, "KEY", f, trigger, inWindow, "u1")).toEqual({ status: "skipped", reason: "odds pulls are off" });
+    }
+    expect(f.calls).toHaveLength(0);
+    // Nothing is claimed or recorded: a bet's refresh limits aren't spent, and no failure shows on the Admin page.
+    expect(store.claims).toEqual([]);
+    expect(store.pulls).toEqual([]);
+    store.settingsValue = { ...store.settingsValue, oddsPullsEnabled: true };
+    expect((await pullLines(store, "KEY", f, "schedule", inWindow)).status).toBe("pulled");
   });
   it("pulls every 30 minutes, and every 10 in the 3 hours before a kickoff", async () => {
     const store = new FakeStore();
@@ -505,6 +520,16 @@ describe("runScores", () => {
     expect(await runScores(store, "KEY", f, "schedule")).toEqual({ scores: { status: "skipped", reason: "no games waiting on scores" }, settled: 0, advancedTo: 6, errors: [] });
     expect(f.calls).toHaveLength(0);
   });
+  it("doesn't call the API for scores while the odds feed is off, but still grades and advances", async () => {
+    const store = new FakeStore();
+    store.settingsValue = { ...store.settingsValue, oddsPullsEnabled: false };
+    store.awaiting = 2;
+    store.advanceTo = 6;
+    const f = fakeFetch(fixture("scores.json"));
+    expect(await runScores(store, "KEY", f, "schedule")).toEqual({ scores: { status: "skipped", reason: "odds pulls are off" }, settled: 0, advancedTo: 6, errors: [] });
+    expect(f.calls).toHaveLength(0);
+    expect(store.pulls).toEqual([]);
+  });
   it("pulls scores while games are on, then grades what's final", async () => {
     const store = new FakeStore();
     store.awaiting = 2;
@@ -561,6 +586,15 @@ describe("pulling the lines for an undo", () => {
     const stuck = new FakeStore();
     stuck.claimOk = "recent";
     expect(await refreshForUndo(stuck, "KEY", fakeFetch(fixture("odds.json")), "u1", since, t0, noSleep)).toBe("failed");
+  });
+  it("gives up at once, without calling the API, while the odds feed is off", async () => {
+    const store = new FakeStore();
+    store.settingsValue = { ...store.settingsValue, oddsPullsEnabled: false };
+    const f = fakeFetch(fixture("odds.json"));
+    let waits = 0;
+    expect(await refreshForUndo(store, "KEY", f, "u1", since, t0, async () => { waits++; })).toBe("failed");
+    expect(waits).toBe(0);
+    expect(f.calls).toHaveLength(0);
   });
 });
 

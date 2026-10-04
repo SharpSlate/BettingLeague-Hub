@@ -34,6 +34,7 @@ export class SupabaseStore implements Store {
       maxLineAgeMinutes: s.max_line_age_minutes,
       creditFloor: s.credit_floor,
       books: s.books,
+      oddsPullsEnabled: s.odds_pulls_enabled === true,
     };
   }
 
