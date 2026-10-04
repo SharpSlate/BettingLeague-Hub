@@ -218,7 +218,7 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 - **Supabase project.** Keys go into GitHub Secrets: access token, project ref, database password.
 - **Odds API key** → Supabase's secret store.
-- **League email** for sign-in codes (e.g. a new Gmail with an app password) → Supabase's email settings.
+- **Site email** for sign-in codes: Resend, sending as info@sharpslatesports.com (SETUP.md step 2) → Supabase's email settings.
 - **Google sign-in client** → Supabase's Google provider.
 - **GitHub Pages source:** GitHub Actions.
 

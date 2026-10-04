@@ -46,15 +46,17 @@ email_sent = 100
 subject = "Your Betting League sign-in code"
 content_path = "./supabase/templates/sign-in-code.html"
 
-# The site's Gmail with an app password. Supabase's built-in sender only reaches
-# the project's own team, so this is required for members to get their codes.
+# Sign-in emails go out through Resend as info@sharpslatesports.com. That address only
+# forwards incoming mail (Cloudflare Email Routing), so it can't send them itself.
+# Supabase's built-in sender only reaches the project's own team, so this is required
+# for members to get their codes. SMTP_PASS is a Resend API key (SETUP.md step 2).
 [auth.email.smtp]
 enabled = true
-host = "smtp.gmail.com"
-port = 587
-user = "env(SMTP_USER)"
+host = "smtp.resend.com"
+port = 465
+user = "resend"
 pass = "env(SMTP_PASS)"
-admin_email = "env(SMTP_USER)"
+admin_email = "info@sharpslatesports.com"
 sender_name = "Betting League"
 
 [auth.external.google]

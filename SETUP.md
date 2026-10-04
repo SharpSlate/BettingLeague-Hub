@@ -22,11 +22,12 @@ The menu names below are as of September 2026. If a screen looks different, the 
 
 ## 2. Site email for sign-in codes
 
-Supabase's built-in email only reaches the project's own team, so everyone's sign-in codes need a real sender.
+Supabase's built-in email only reaches the project's own team, so everyone's sign-in codes need a real sender. The site sends them through [Resend](https://resend.com) as info@sharpslatesports.com (set in `supabase/config.toml`). That address only forwards incoming mail (Cloudflare Email Routing), so it can't send them itself.
 
-1. Create a Gmail account for the site.
-2. Turn on 2-Step Verification for it.
-3. Create an **app password**. Google lists it under the account's Security settings.
+1. Sign up at [resend.com](https://resend.com) and add the domain `sharpslatesports.com`. Its DNS records go on the `send` subdomain and `resend._domainkey`, so the domain's own mail, info@ included, keeps working. **Sign in to Cloudflare** on that page adds them for you.
+2. Once the domain shows **Verified**, create an **API key** with sending access. It goes in the `SMTP_PASS` secret (step 4).
+
+Resend's free plan sends 3,000 emails a month, 100 a day.
 
 The deploy works without this, but then only you can sign in, and with a link instead of a code: on Supabase's free plan, its own sender keeps its standard email (open the link in the browser you asked from). Add it before anyone else signs in; the next deploy switches everyone to codes.
 
@@ -59,8 +60,7 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_DB_PASSWORD` | the database password from step 1 |
 | `ODDS_API_KEY` | your The Odds API key (one pull serves every league; a key shared with another site shares its monthly credits) |
 | `CRON_SECRET` | any long random string (it lets the scheduler call the functions) |
-| `SMTP_USER` | the site's Gmail address |
-| `SMTP_PASS` | its app password |
+| `SMTP_PASS` | the Resend API key from step 2 |
 | `GOOGLE_CLIENT_ID` | from step 3 (optional) |
 | `GOOGLE_CLIENT_SECRET` | from step 3 (optional) |
 
