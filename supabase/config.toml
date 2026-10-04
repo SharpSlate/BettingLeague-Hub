@@ -21,7 +21,9 @@ cron_secret = "env(CRON_SECRET)"
 [auth]
 enabled = true
 site_url = "env(SITE_URL)"
-additional_redirect_urls = ["env(SITE_URL)"]
+# The repo's GitHub Pages address stays allowed after the site moves to its own address
+# (SETUP.md step 9), since that copy sends its visitors on to SITE_URL.
+additional_redirect_urls = ["env(SITE_URL)", "https://sharpslate.github.io/BettingLeague-Hub/"]
 jwt_expiry = 3600
 # Sign-ups are open: anyone can sign in with an emailed code (or Google), then start a
 # league or join one with its invite link.

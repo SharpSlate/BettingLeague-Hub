@@ -49,7 +49,8 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_PROJECT_REF` | the project ref |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | the publishable (anon) key |
-| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` |
+| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` (the site's own address once step 9 is done) |
+| `CLOUDFLARE_ACCOUNT_ID` | from step 9 (optional) |
 
 **Secrets** tab:
 
@@ -63,6 +64,7 @@ In **Settings → Secrets and variables → Actions**:
 | `SMTP_PASS` | its app password |
 | `GOOGLE_CLIENT_ID` | from step 3 (optional) |
 | `GOOGLE_CLIENT_SECRET` | from step 3 (optional) |
+| `CLOUDFLARE_API_TOKEN` | from step 9 (optional) |
 
 Then in **Settings → Pages**, set **Source** to **GitHub Actions**.
 
@@ -73,7 +75,7 @@ Merge the working branch into `main`. The **Deploy** workflow then:
 2. applies the database migrations;
 3. applies the sign-in settings and function secrets;
 4. deploys the functions;
-5. publishes the site to the repo's Pages address.
+5. publishes the site to the repo's Pages address (and to Cloudflare Pages once step 9 is done).
 
 You can watch it under the repo's **Actions** tab. After this, every merge to `main` redeploys.
 
@@ -104,6 +106,17 @@ Anyone signed in can start a league from the league menu (**Start or join a leag
 - gets an invite link (**Admin → League**). People who open it sign in, then join, with an entry of their own at the rules' starting bank unless the commissioner turns that off.
 
 Commissioners have the powers the single-league site gave its admins, for their own league only: rules, entries and managers, bank adjustments, imports, opening and closing weeks, voiding bets, and making other members commissioners.
+
+## 9. The site's own address (optional)
+
+The site can live at **leagues.sharpslatesports.com** instead of the repo's Pages address. Cloudflare Pages serves it there: the domain's DNS is on Cloudflare, and the domain is verified on GitHub for the owner's personal account, which keeps GitHub Pages from serving its subdomains from this organization's repo.
+
+1. In Cloudflare, create an **API token** with one permission, *Account → Cloudflare Pages → Edit*, and note your **Account ID** (on the account's home page).
+2. Add them on step 4's page: the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`. The next deploy creates the Cloudflare Pages project `sharpslate-leagues` and publishes the site to it.
+3. In Cloudflare, open **Workers & Pages → sharpslate-leagues → Custom domains** and add `leagues.sharpslatesports.com`. Cloudflare adds its DNS record itself.
+4. Once Cloudflare shows the domain as **Active**, change the `SITE_URL` variable to `https://leagues.sharpslatesports.com/` and redeploy (**Actions → Deploy → Run workflow**). Sign-in emails and invite links then use the new address, and the GitHub Pages address sends its visitors there (an invite link keeps its code). Until then, every copy sends visitors to the `SITE_URL` address.
+
+Sign-ins belong to an address, so everyone signs in once more on the new one.
 
 ## During the season
 
