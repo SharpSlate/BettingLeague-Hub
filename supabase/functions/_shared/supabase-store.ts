@@ -102,6 +102,12 @@ export class SupabaseStore implements Store {
     return Number(await must<number>(this.db.rpc("games_starting_soon_internal", { p_now: now.toISOString(), p_hours: hours }), "games starting soon"));
   }
 
+  async hasLeagues() {
+    const { count, error } = await this.db.from("leagues").select("id", { count: "exact", head: true });
+    if (error) throw new Error(`leagues: ${error.message}`);
+    return (count ?? 0) > 0;
+  }
+
   async pendingSlips(): Promise<PendingSlip[]> {
     const slips = await must<any[]>(
       this.db.from("slips")
