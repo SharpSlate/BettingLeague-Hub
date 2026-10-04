@@ -58,6 +58,8 @@ export interface Store {
   gamesAwaitingScores(now: Date): Promise<number>;
   /** How many scheduled games lock for betting within the next `hours`. */
   gamesStartingSoon(now: Date, hours: number): Promise<number>;
+  /** Whether anyone has started a league on the site yet. */
+  hasLeagues(): Promise<boolean>;
   pendingSlips(): Promise<PendingSlip[]>;
   games(ids: string[]): Promise<Map<string, GameResult>>;
   settle(s: Settlement): Promise<boolean>;
@@ -158,6 +160,8 @@ export async function pullLines(
   const s = await store.settings();
   if (trigger === "schedule") {
     if (!inPullWindow(now, s.pullWindowStart, s.pullWindowEnd, s.timezone)) return { status: "skipped", reason: "outside the pull window" };
+    // No credits go to a site nobody plays on yet; a site admin can still pull by hand.
+    if (!(await store.hasLeagues())) return { status: "skipped", reason: "no leagues yet" };
     // Every pullEveryMinutes, or every pullNearKickoffMinutes while a game is about to
     // lock: a pull is due once waiting for the next call would leave the lines older than
     // that, give or take a minute. Only a good pull counts, a bet's included, so after a

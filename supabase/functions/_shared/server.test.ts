@@ -230,6 +230,7 @@ class FakeStore implements Store {
   async lastCredits() { return this.credits; }
   lastPull: Date | null = null;
   startingSoon = 0;
+  leagues = true;
   claims: { userId: string | null; forUndo: boolean }[] = [];
   /** The order things happened in: the database clock read, the request, the store. */
   log: string[] = [];
@@ -267,6 +268,7 @@ class FakeStore implements Store {
   }
   async gamesAwaitingScores() { return this.awaiting; }
   async gamesStartingSoon() { return this.startingSoon; }
+  async hasLeagues() { return this.leagues; }
   async pendingSlips() { return this.pending; }
   async games(ids: string[]) { return new Map([...this.gameMap].filter(([k]) => ids.includes(k))); }
   async settle(s: { slipId: string }) {
@@ -312,6 +314,14 @@ describe("pullLines", () => {
     const threeAm = new Date("2026-10-01T07:00:00Z");
     expect((await pullLines(store, "KEY", f, "schedule", threeAm)).status).toBe("skipped");
     expect((await pullLines(store, "KEY", f, "bet", threeAm)).status).toBe("pulled");
+    expect(f.calls).toHaveLength(1);
+  });
+  it("skips scheduled pulls until someone starts a league, but not a site admin's pull", async () => {
+    const store = new FakeStore();
+    store.leagues = false;
+    const f = fakeFetch(fixture("odds.json"));
+    expect(await pullLines(store, "KEY", f, "schedule", inWindow)).toEqual({ status: "skipped", reason: "no leagues yet" });
+    expect((await pullLines(store, "KEY", f, "admin", inWindow)).status).toBe("pulled");
     expect(f.calls).toHaveLength(1);
   });
   it("pulls every 30 minutes, and every 10 in the 3 hours before a kickoff", async () => {
