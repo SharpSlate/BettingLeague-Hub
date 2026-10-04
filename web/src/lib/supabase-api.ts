@@ -56,7 +56,9 @@ export class SupabaseApi implements Api {
     return () => data.subscription.unsubscribe();
   }
   async sendCode(email: string) {
-    const { error } = await this.db.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: false } });
+    // Sign-ups are open: a new email gets an account (and a profile named "Member",
+    // which the leagues page asks them to change) with its first code.
+    const { error } = await this.db.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: true } });
     if (error) throw new Error(error.message);
   }
   async verifyCode(email: string, code: string) {

@@ -5,7 +5,7 @@ import { Loading } from "./components/ui.tsx";
 import { useApi } from "./lib/api.ts";
 import { useLoad } from "./lib/hooks.ts";
 import { MeContext } from "./lib/me.ts";
-import { SlipProvider } from "./lib/slip.tsx";
+import { SlipProvider, slipStorageKey } from "./lib/slip.tsx";
 import type { LeagueSummary } from "./lib/types.ts";
 import { Admin } from "./pages/Admin.tsx";
 import { Board } from "./pages/Board.tsx";
@@ -78,7 +78,7 @@ function LeagueApp({ league: summary, leagues, onChoose }: { league: LeagueSumma
   if (!me.data) return <Loading what="Loading your account" />;
   return (
     <MeContext.Provider value={me.data}>
-      <SlipProvider>
+      <SlipProvider storageKey={slipStorageKey(summary.id)}>
         <Shell me={me.data} league={league.data} leagues={leagues} onChoose={onChoose}>
           <Routes>
             <Route path="/" element={<Standings />} />

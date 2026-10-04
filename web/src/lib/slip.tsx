@@ -1,5 +1,7 @@
 // The bet slip: picks tapped on the Board, the bet type, stakes and entry.
-// Kept in localStorage so a half-built slip survives a reload (per device only).
+// Kept in localStorage so a half-built slip survives a reload (per device only), one
+// per league: the single-league site shares this origin (sharpslate.github.io), so the
+// key is this site's own and never that site's.
 // What happened on the last submit (a moved line, a problem, a bet in flight) is kept
 // here too, not in the slip component, because the Board shows the slip in two places
 // (the side panel and the phone sheet) and the phone sheet closes after a bet.
@@ -46,12 +48,13 @@ export interface SlipState {
 
 export const pickKey = (gameId: string, market: Market, side: Side) => `${gameId}:${market}:${side}`;
 
-const STORAGE = "bd.slip.v2";
+/** Where a league's slip is saved in this browser. */
+export const slipStorageKey = (leagueId: string) => `blh.slip.v1:${leagueId}`;
 const empty: SlipState = { picks: [], mode: "straight", teaserPoints: 6, stakes: {}, entryId: null, refs: {} };
 
-function load(): SlipState {
+function load(storage: string): SlipState {
   try {
-    const raw = localStorage.getItem(STORAGE);
+    const raw = localStorage.getItem(storage);
     return raw ? { ...empty, ...JSON.parse(raw) } : empty;
   } catch {
     return empty;
@@ -59,14 +62,14 @@ function load(): SlipState {
 }
 
 /** Drops a bet's id from the saved slip at once, rather than at the next save after a render. */
-function unsaveRef(key: string) {
+function unsaveRef(storage: string, key: string) {
   try {
-    const raw = localStorage.getItem(STORAGE);
+    const raw = localStorage.getItem(storage);
     if (!raw) return;
     const saved = JSON.parse(raw) as Partial<SlipState>;
     if (!saved.refs?.[key]) return;
     const { [key]: _gone, ...refs } = saved.refs;
-    localStorage.setItem(STORAGE, JSON.stringify({ ...saved, refs }));
+    localStorage.setItem(storage, JSON.stringify({ ...saved, refs }));
   } catch {
     /* private mode */
   }
@@ -119,19 +122,19 @@ interface SlipApi extends SlipState {
 
 const Ctx = createContext<SlipApi | null>(null);
 
-export function SlipProvider({ children }: { children: ReactNode }) {
-  const [s, set] = useState<SlipState>(load);
+export function SlipProvider({ storageKey, children }: { storageKey: string; children: ReactNode }) {
+  const [s, set] = useState<SlipState>(() => load(storageKey));
   const [open, setOpen] = useState(false);
   const [status, setStatusState] = useState<SlipStatus>(idle);
   // Read and written synchronously while a submit runs, and mirrored into the saved slip.
   const refs = useRef<SlipState["refs"]>(s.refs ?? {});
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE, JSON.stringify(s));
+      localStorage.setItem(storageKey, JSON.stringify(s));
     } catch {
       /* private mode: the slip just won't survive a reload */
     }
-  }, [s]);
+  }, [s, storageKey]);
 
   const api = useMemo<SlipApi>(
     () => ({
@@ -161,7 +164,7 @@ export function SlipProvider({ children }: { children: ReactNode }) {
       clientRef: (key, fingerprint) => {
         // Another tab may have sent this same bet already: its id is in the saved slip.
         const mine = refs.current[key];
-        const saved = load().refs?.[key];
+        const saved = load(storageKey).refs?.[key];
         const cur = mine?.fingerprint === fingerprint ? mine
           : saved?.fingerprint === fingerprint ? saved
           : { fingerprint, ref: newClientRef() };
@@ -175,11 +178,11 @@ export function SlipProvider({ children }: { children: ReactNode }) {
         refs.current = rest;
         // clientRef also reads the saved slip, so drop the id there now too; otherwise a
         // resend right after this (see Slip.tsx) would pick the used id back up.
-        unsaveRef(key);
+        unsaveRef(storageKey, key);
         set((x) => ({ ...x, refs: rest }));
       },
     }),
-    [s, open, status],
+    [s, open, status, storageKey],
   );
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

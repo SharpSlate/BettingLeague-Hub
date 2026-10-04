@@ -75,11 +75,14 @@ jobs:
         run: |
           if [ "$HAS_SMTP" != "true" ]; then
             echo "::warning::No league email yet: sign-in codes only reach the Supabase project's own members."
+            # Supabase's own sender has a fixed hourly cap, and only a custom sender's
+            # limit can be raised, so the email_sent limit is left off too.
             python3 - <<'PY'
           import re
           p = "supabase/config.toml"
           s = open(p).read()
           s = re.sub(r"(\[auth\.email\.smtp\]\nenabled = )true", r"\1false", s)
+          s = re.sub(r"(?m)^email_sent = .*\n", "", s)
           open(p, "w").write(s)
           PY
           fi
