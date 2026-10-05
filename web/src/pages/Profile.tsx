@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { PageHead, Segmented } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
+import { MIN_PASSWORD } from "../lib/auth.ts";
 import { useMe } from "../lib/me.ts";
+import { PasswordField } from "./SignIn.tsx";
 
 type Theme = "auto" | "light" | "dark";
 
@@ -48,6 +50,7 @@ export function Profile({ onChanged }: { onChanged: () => void }) {
           <button className="btn primary" disabled={!name.trim() || name === me.displayName}>Save</button>
           {saved ? <span className="small good">Saved.</span> : null}
         </form>
+        <ChangePassword />
         <div className="card pad stack-sm">
           <b>Appearance</b>
           <Segmented<Theme>
@@ -64,5 +67,36 @@ export function Profile({ onChanged }: { onChanged: () => void }) {
         <button className="btn danger" onClick={() => api.signOut()}>Sign out</button>
       </div>
     </>
+  );
+}
+
+/** Sets the password they sign in with. Members who signed in another way can add one here too. */
+function ChangePassword() {
+  const api = useApi();
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  return (
+    <form
+      className="card pad form"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setNote(null);
+        try {
+          await api.setPassword(password);
+          setPassword("");
+          setNote({ ok: true, text: "Password changed. Use it the next time you sign in." });
+        } catch (err) {
+          setNote({ ok: false, text: err instanceof Error ? err.message : String(err) });
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <PasswordField label="New password" value={password} onChange={(v) => { setPassword(v); setNote(null); }} isNew />
+      <button className="btn primary" disabled={busy || password.length < MIN_PASSWORD}>{busy ? "Saving…" : "Change password"}</button>
+      {note ? <span className={`small ${note.ok ? "good" : "bad"}`} role={note.ok ? undefined : "alert"}>{note.text}</span> : null}
+    </form>
   );
 }

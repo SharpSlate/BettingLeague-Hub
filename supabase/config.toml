@@ -23,35 +23,42 @@ enabled = true
 site_url = "env(SITE_URL)"
 additional_redirect_urls = ["env(SITE_URL)"]
 jwt_expiry = 3600
-# Sign-ups are open: anyone can sign in with an emailed code (or Google), then start a
-# league or join one with its invite link.
+# Sign-ups are open: anyone can make an account with an email and password (or Google),
+# then start a league or join one with its invite link.
 enable_signup = true
 enable_anonymous_sign_ins = false
+# The site asks for the same (MIN_PASSWORD in web/src/lib/auth.ts).
+minimum_password_length = 8
 
 [auth.email]
-# Must stay true: in config push this switch turns the whole email sign-in method on or off.
+# Must stay true: in config push this switch turns the whole email and password sign-in
+# method on or off.
 enable_signup = true
+# New accounts aren't asked to confirm their email, so signing up sends nothing. Whoever
+# owns an address can always take its account back with a password reset.
 enable_confirmations = false
 double_confirm_changes = true
-# Members sign in with a 6-digit code emailed to them (no link, so it works on phones).
+# Members sign in with a password. Email goes out only for a forgotten one: a 6-digit
+# code (no link, so it works on phones).
 otp_length = 6
 otp_expiry = 3600
 max_frequency = "60s"
 
 [auth.rate_limit]
-# Sign-in emails per hour. Supabase's default is very low; launch day needs headroom.
+# Password-reset emails per hour. Supabase's default is very low; launch day needs headroom.
 email_sent = 100
 
-[auth.email.template.magic_link]
-subject = "Your Betting League sign-in code"
-content_path = "./supabase/templates/sign-in-code.html"
+[auth.email.template.recovery]
+subject = "Reset your Betting League password"
+content_path = "./supabase/templates/reset-code.html"
 
-# The site's Gmail with an app password. Supabase's built-in sender only reaches
-# the project's own team, so this is required for members to get their codes.
+# The site's own mailbox, with an app password. Supabase's built-in sender only reaches
+# the project's own team, so members need this to get reset codes. Host and port are
+# Yahoo's; the deploy switches them to Gmail's when SMTP_USER is a Gmail address.
 [auth.email.smtp]
 enabled = true
-host = "smtp.gmail.com"
-port = 587
+host = "smtp.mail.yahoo.com"
+port = 465
 user = "env(SMTP_USER)"
 pass = "env(SMTP_PASS)"
 admin_email = "env(SMTP_USER)"

@@ -15,20 +15,22 @@ import { Join, Leagues } from "./pages/Leagues.tsx";
 import { MyBets } from "./pages/MyBets.tsx";
 import { Picks } from "./pages/Picks.tsx";
 import { Profile } from "./pages/Profile.tsx";
-import { SignIn } from "./pages/SignIn.tsx";
+import { NewPassword, SignIn } from "./pages/SignIn.tsx";
 import { Standings } from "./pages/Standings.tsx";
 
 export function App() {
   const api = useApi();
-  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  // "new-password": a password-reset email signed them in, so they choose a password first.
+  const [auth, setAuth] = useState<"out" | "in" | "new-password" | null>(null);
   useEffect(() => {
-    const check = () => api.getSession().then((s) => setSignedIn(!!s));
+    const check = () => api.getSession().then((s) => setAuth(!s ? "out" : s.newPassword ? "new-password" : "in"));
     check();
     return api.onAuthChange(check);
   }, [api]);
 
-  if (signedIn === null) return <Loading what="Starting" />;
-  if (!signedIn) return <SignIn />;
+  if (auth === null) return <Loading what="Starting" />;
+  if (auth === "out") return <SignIn />;
+  if (auth === "new-password") return <NewPassword onDone={() => setAuth("in")} />;
   return <SignedIn />;
 }
 

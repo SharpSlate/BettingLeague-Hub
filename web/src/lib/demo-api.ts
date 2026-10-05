@@ -4,6 +4,7 @@
 import { checkAcrossBets, DAY_ONE_RULES, oppositeSides, requiredMinimumCents, type BetType, type Leg, type RuleSet } from "@rules";
 import { gradePending, type GameResult, type PendingSlip } from "../../../supabase/functions/_shared/grading.ts";
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
+import { MIN_PASSWORD } from "./auth.ts";
 import { TEAMS, team } from "./teams.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry, PlacementRequest,
@@ -193,17 +194,25 @@ export class DemoApi implements Api {
     this.s.audit.unshift({ id: this.nextId++, actorName: "You", action, targetType, targetId, before: null, after, reason, createdAt: new Date().toISOString() });
   }
 
-  async getSession() { return this.signedIn ? { userId: YOU } : null; }
+  async getSession() { return this.signedIn ? { userId: YOU, newPassword: this.newPassword } : null; }
   onAuthChange(cb: () => void) { this.listeners.add(cb); return () => this.listeners.delete(cb); }
-  async sendCode(email: string) { await wait(); if (!email.includes("@")) throw new Error("Enter your email address."); }
-  async verifyCode(_email: string, code: string) {
+  // Any email and any password of MIN_PASSWORD or more characters work; reset codes are any 6 digits.
+  private newPassword = false;
+  private checkEmail(email: string) { if (!email.includes("@")) throw new Error("That email address doesn't look right."); }
+  private checkPassword(password: string) { if (password.length < MIN_PASSWORD) throw new Error(`Use at least ${MIN_PASSWORD} characters.`); }
+  async signIn(email: string, password: string) { await wait(); this.checkEmail(email); this.checkPassword(password); this.signedIn = true; this.emit(); }
+  async signUp(email: string, password: string) { await this.signIn(email, password); }
+  async sendPasswordReset(email: string) { await wait(); this.checkEmail(email); }
+  async verifyResetCode(_email: string, code: string) {
     await wait();
     if (!/^\d{6}$/.test(code.trim())) throw new Error("Codes are 6 digits. In the demo, any 6 digits work.");
     this.signedIn = true;
+    this.newPassword = true;
     this.emit();
   }
+  async setPassword(password: string) { await wait(); this.checkPassword(password); this.newPassword = false; this.emit(); }
   async signInWithGoogle() { await wait(); this.signedIn = true; this.emit(); }
-  async signOut() { this.signedIn = false; this.emit(); }
+  async signOut() { this.signedIn = false; this.newPassword = false; this.emit(); }
   async me(): Promise<Me> { return { id: YOU, displayName: this.s.users[0]!.displayName, isSiteAdmin: true, isCommissioner: true }; }
 
   // The demo has one league; starting or joining others needs the real site.

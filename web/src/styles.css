@@ -406,6 +406,8 @@ details.card > .body { padding: 14px; }
 .signin .card { width: 100%; max-width: 440px; padding: 22px; display: grid; gap: 16px; }
 .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.pw-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; }
+.pw-foot label { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ---------- leagues ---------- */
 
