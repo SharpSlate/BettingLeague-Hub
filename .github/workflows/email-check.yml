@@ -14,28 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Sign in to the site's mailbox (sends nothing)
+      - name: The mailbox settings' shape (sends nothing)
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
         run: |
           python3 - <<'PY'
-          import os, re, smtplib, time
+          import os
           u, p = os.environ["SMTP_USER"], os.environ["SMTP_PASS"]
           print(f"Address: domain {u.strip().rsplit('@', 1)[-1]!r}, extra spaces around it: {u != u.strip()}")
           print(f"App password: {len(p)} characters, spaces inside: {p.strip().count(' ')}, extra spaces around it: {p != p.strip()}")
-          for port in (587, 465):
-              t = time.time()
-              try:
-                  s = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) if port == 465 else smtplib.SMTP("smtp.gmail.com", 587, timeout=20)
-                  if port == 587:
-                      s.starttls()
-                  s.login(u, p)
-                  print(f"Port {port}: signed in OK ({time.time() - t:.1f}s)")
-                  s.quit()
-              except Exception as e:
-                  msg = re.sub(r"\S+@\S+", "<address>", str(e))
-                  print(f"Port {port}: {type(e).__name__}: {msg} ({time.time() - t:.1f}s)")
           PY
       - name: The auth server's recent warnings and errors
         env:
@@ -48,7 +36,7 @@ jobs:
           start = end - dt.timedelta(hours=2)
           sql = "select timestamp, event_message from auth_logs order by timestamp desc limit 300"
           q = urllib.parse.urlencode({"sql": sql, "iso_timestamp_start": start.isoformat(), "iso_timestamp_end": end.isoformat()})
-          req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{os.environ['PROJECT_REF']}/analytics/endpoints/logs.all?{q}",
+          req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{os.environ['PROJECT_REF']}/analytics/endpoints/logs?{q}",
                                        headers={"Authorization": "Bearer " + os.environ["SUPABASE_ACCESS_TOKEN"]})
           try:
               body = json.load(urllib.request.urlopen(req, timeout=30))
