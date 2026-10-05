@@ -4,7 +4,7 @@ import type { Api } from "./types.ts";
 /**
  * The demo runs when the build asks for it (VITE_DEMO=1), or in local development
  * with no Supabase settings. A production build without them is an error, never a
- * silent demo: the demo takes any email and code. (vite.config.ts refuses to build
+ * silent demo: the demo takes any email and password. (vite.config.ts refuses to build
  * one; this is the second line.) Each backend is loaded on demand, so the real site
  * doesn't ship the sample data and the demo doesn't ship the Supabase client.
  */

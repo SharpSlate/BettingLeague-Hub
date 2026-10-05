@@ -323,7 +323,7 @@ function Members() {
           if (!created) {
             return `${email} already belongs to a member, so nobody new was added${f.entry ? " (they now manage that entry)" : ""}. Check the email and try again if you meant someone else.`;
           }
-          return `Added. No email goes out now: they sign in on the site with ${email} and get a code there.`;
+          return `Added. Nobody is emailed now. To sign in the first time, they choose “Forgot your password?” on the sign-in page and enter ${email}, which sets their password.`;
         }}>
         <Field label="Email"><input className="input" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Display name (everyone sees it)"><input className="input" required maxLength={40} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -377,7 +377,7 @@ function Members() {
       </Action>
       <BulkBox
         title="Pair entries with members"
-        note="One line per entry and person: entry name | email | display name. Adds anyone new (the display name is only needed for them) and makes them a manager of that entry. Someone with two entries gets two lines; a shared entry gets a line per person. Nobody is emailed: each person signs in on the site with their email to get a code."
+        note="One line per entry and person: entry name | email | display name. Adds anyone new (the display name is only needed for them) and makes them a manager of that entry. Someone with two entries gets two lines; a shared entry gets a line per person. Nobody is emailed now: someone new sets a first password with “Forgot your password?” on the sign-in page, using that email."
         placeholder={"Entry name | email | display name"}
         submit="Pair them"
         parse={parsePairings}

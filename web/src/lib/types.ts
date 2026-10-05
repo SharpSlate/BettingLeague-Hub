@@ -260,10 +260,18 @@ export type UndoResult = { slipId: string; undone: true } | { slipId: string; un
 export interface Api {
   readonly demo: boolean;
 
-  getSession(): Promise<{ userId: string } | null>;
+  /** newPassword: a password-reset email just signed them in, so the site asks for a new password first. */
+  getSession(): Promise<{ userId: string; newPassword: boolean } | null>;
   onAuthChange(cb: () => void): () => void;
-  sendCode(email: string): Promise<void>;
-  verifyCode(email: string, code: string): Promise<void>;
+  signIn(email: string, password: string): Promise<void>;
+  /** Makes an account and signs in. New accounts don't confirm their email, so nothing is sent. */
+  signUp(email: string, password: string): Promise<void>;
+  /** Emails a 6-digit code for choosing a new password; before the site has its own sender, a link. */
+  sendPasswordReset(email: string): Promise<void>;
+  /** Signs in with that code; the site then asks for the new password. */
+  verifyResetCode(email: string, code: string): Promise<void>;
+  /** Changes the signed-in member's password. */
+  setPassword(password: string): Promise<void>;
   signInWithGoogle(): Promise<void>;
   signOut(): Promise<void>;
   me(): Promise<Me>;

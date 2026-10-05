@@ -2,6 +2,7 @@
 // Security; bets and admin work go through database functions and Edge Functions.
 import { createClient, FunctionsHttpError, type SupabaseClient } from "@supabase/supabase-js";
 import type { RuleSet } from "@rules";
+import { authErrorText } from "./auth.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry,
   PlacementRequest, PlaceResult,
@@ -43,30 +44,59 @@ export class SupabaseApi implements Api {
   private teamCache: Promise<Team[]> | null = null;
   private leagueId: string | null = null;
 
+  /** A password-reset email signed the member in, and they haven't chosen a new password yet. */
+  private newPassword = false;
+
   constructor(url: string, anonKey: string) {
     this.db = createClient(url, anonKey, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
+    // Registered before the client reads a reset link from the address, so it never misses one.
+    this.db.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") this.newPassword = true;
+      if (event === "SIGNED_OUT") this.newPassword = false;
+    });
   }
 
   async getSession() {
     const { data } = await this.db.auth.getSession();
-    return data.session ? { userId: data.session.user.id } : null;
+    return data.session ? { userId: data.session.user.id, newPassword: this.newPassword } : null;
   }
   onAuthChange(cb: () => void) {
     const { data } = this.db.auth.onAuthStateChange(() => cb());
     return () => data.subscription.unsubscribe();
   }
-  async sendCode(email: string) {
-    // Sign-ups are open: a new email gets an account (and a profile named "Member",
-    // which the leagues page asks them to change) with its first code.
-    // The link in Supabase's standard email (before the site has its own sender) comes
-    // back here, in the browser that asked for it, to finish signing in.
-    const emailRedirectTo = window.location.origin + window.location.pathname;
-    const { error } = await this.db.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: true, emailRedirectTo } });
-    if (error) throw new Error(error.message);
+  async signIn(email: string, password: string) {
+    const { error } = await this.db.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) throw new Error(authErrorText(error));
   }
-  async verifyCode(email: string, code: string) {
-    const { error } = await this.db.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "email" });
-    if (error) throw new Error("That code didn't work. Check it, or send a new one.");
+  async signUp(email: string, password: string) {
+    // Sign-ups are open, and config.toml doesn't ask new accounts to confirm their email,
+    // so this signs them straight in (with a profile named "Member", which the leagues
+    // page asks them to change).
+    const { data, error } = await this.db.auth.signUp({ email: email.trim(), password });
+    if (error) throw new Error(authErrorText(error));
+    if (!data.session) throw new Error("Your account is made. Confirm it from the email we sent, then sign in.");
+  }
+  async sendPasswordReset(email: string) {
+    // The site's own sender emails a code (verifyResetCode). Supabase's standard email has a
+    // link instead, which comes back here, in the browser that asked for it, signed in.
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await this.db.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+    if (error) throw new Error(authErrorText(error));
+  }
+  async verifyResetCode(email: string, code: string) {
+    const { error } = await this.db.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "recovery" });
+    if (error) throw new Error(authErrorText(error));
+  }
+  async setPassword(password: string) {
+    // Cleared first: the change tells the site to look again, and it should find them done.
+    const resetting = this.newPassword;
+    this.newPassword = false;
+    const { error } = await this.db.auth.updateUser({ password });
+    // After a reset, choosing the old password again is fine: it's the password now.
+    if (error && !(resetting && error.code === "same_password")) {
+      this.newPassword = resetting;
+      throw new Error(authErrorText(error));
+    }
   }
   async signInWithGoogle() {
     const { error } = await this.db.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin + window.location.pathname } });

@@ -20,15 +20,14 @@ The menu names below are as of September 2026. If a screen looks different, the 
    - the **publishable (anon) key**, which is meant to be public.
 3. In your Supabase account settings, create a **personal access token** for the deploy workflow.
 
-## 2. Site email for sign-in codes
+## 2. Site email for password resets
 
-Supabase's built-in email only reaches the project's own team, so everyone's sign-in codes need a real sender.
+Members sign in with an email and a password, so the site only sends email when someone forgets their password: a 6-digit code. Supabase's built-in email only reaches the project's own team, so everyone else's codes need a mailbox of the site's own, at Yahoo or Gmail.
 
-1. Create a Gmail account for the site.
-2. Turn on 2-Step Verification for it.
-3. Create an **app password**. Google lists it under the account's Security settings.
+- **Yahoo:** at [Account Security](https://login.yahoo.com/account/security), under **External connections**, choose **Create app password**. Yahoo keeps that button grayed out for the first days of a new account.
+- **Gmail:** turn on 2-Step Verification, then create an **app password** under the account's Security settings.
 
-The deploy works without this, but then only you can sign in, and with a link instead of a code: on Supabase's free plan, its own sender keeps its standard email (open the link in the browser you asked from). Add it before anyone else signs in; the next deploy switches everyone to codes.
+The address and its app password go in the `SMTP_USER` and `SMTP_PASS` secrets (step 4); the deploy picks Yahoo's or Gmail's mail server from the address. The deploy works without them, but then only you get reset emails, with a link instead of a code: on Supabase's free plan, its own sender keeps its standard email (open the link in the browser you asked from). Signing in and making an account never need email.
 
 ## 3. Google sign-in (optional for the trial)
 
@@ -36,7 +35,7 @@ The deploy works without this, but then only you can sign in, and with a link in
 2. Add this authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`
 3. Note the client ID and client secret.
 
-Until this is set up, the site doesn't show the "Continue with Google" button; members sign in with emailed codes. Add the two secrets any time and the button appears after the next deploy.
+Until this is set up, the site doesn't show the "Continue with Google" button; members sign in with their email and password. Add the two secrets any time and the button appears after the next deploy.
 
 ## 4. GitHub settings
 
@@ -59,7 +58,7 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_DB_PASSWORD` | the database password from step 1 |
 | `ODDS_API_KEY` | your The Odds API key (one pull serves every league; a key shared with another site shares its monthly credits) |
 | `CRON_SECRET` | any long random string (it lets the scheduler call the functions) |
-| `SMTP_USER` | the site's Gmail address |
+| `SMTP_USER` | the site's Yahoo or Gmail address |
 | `SMTP_PASS` | its app password |
 | `GOOGLE_CLIENT_ID` | from step 3 (optional) |
 | `GOOGLE_CLIENT_SECRET` | from step 3 (optional) |

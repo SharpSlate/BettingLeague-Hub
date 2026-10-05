@@ -7,7 +7,7 @@
 | Piece | Job |
 |---|---|
 | **GitHub Pages** | Hosts the site from this private repo (GitHub Pro). A static TypeScript + React app built with Vite, mobile-first, using `#/` routes so Pages needs no server. |
-| **Supabase** | Postgres holds every entry, bet, line and ledger row. Auth handles sign-in (emailed 6-digit code, or Google). Row Level Security decides who can read what. Edge Functions (TypeScript) place bets and run jobs. Cron schedules the jobs. The secret store holds the Odds API key. |
+| **Supabase** | Postgres holds every entry, bet, line and ledger row. Auth handles sign-in (email and password, or Google; a forgotten password gets an emailed 6-digit code). Row Level Security decides who can read what. Edge Functions (TypeScript) place bets and run jobs. Cron schedules the jobs. The secret store holds the Odds API key. |
 | **The Odds API** | Lines (DraftKings, with a backup book at no extra cost) and scores. |
 | **GitHub Actions** | Runs the tests on every push. Deploys the site to Pages and the database changes and functions to Supabase, using keys kept in GitHub Secrets. |
 
@@ -218,7 +218,7 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 
 - **Supabase project.** Keys go into GitHub Secrets: access token, project ref, database password.
 - **Odds API key** → Supabase's secret store.
-- **League email** for sign-in codes (e.g. a new Gmail with an app password) → Supabase's email settings.
+- **League email** for password-reset codes (a Yahoo or Gmail mailbox with an app password) → Supabase's email settings.
 - **Google sign-in client** → Supabase's Google provider.
 - **GitHub Pages source:** GitHub Actions.
 
