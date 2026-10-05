@@ -70,6 +70,9 @@ export function Board() {
 
   const body = <SlipBody rules={weekRules} entries={entries.data ?? []} onPlaced={onPlaced} />;
   const lg = league.data;
+  // Props come from the site owner's own pulls, a few times a day; too old and they can't be bet.
+  const propsOn = Boolean(weekRules?.props?.enabled);
+  const propsStale = !lg?.propsPulledAt || now - Date.parse(lg.propsPulledAt) > lg.propMaxAgeMinutes * 60_000;
 
   return (
     <>
@@ -77,7 +80,7 @@ export function Board() {
         title={lg?.openWeek ? `${lg.openWeek.label} board` : "Board"}
         sub={
           lg
-            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than ${duration(lg.refreshOnBetSeconds)} old (once every ${lg.betRefreshMemberMinutes} minutes per member, up to a daily limit). All times Eastern.`
+            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than ${duration(lg.refreshOnBetSeconds)} old (once every ${lg.betRefreshMemberMinutes} minutes per member, up to a daily limit).${propsOn ? ` Player props ${lg.propsPulledAt ? `updated ${ago(lg.propsPulledAt, now)}` : "not loaded yet"}, a few times a day.` : ""} All times Eastern.`
             : undefined
         }
       />
@@ -91,7 +94,7 @@ export function Board() {
               <section key={d}>
                 <h2 className="day-label">{d}</h2>
                 <div className="games">
-                  {gs.map((g) => <GameCard key={g.id} game={g} now={now} rules={weekRules} />)}
+                  {gs.map((g) => <GameCard key={g.id} game={g} now={now} rules={weekRules} propsStale={propsStale} />)}
                 </div>
               </section>
             ))}

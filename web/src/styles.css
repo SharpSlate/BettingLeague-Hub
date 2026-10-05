@@ -288,6 +288,12 @@ h3 { font-size: 15px; font-weight: 700; }
 .price:disabled { cursor: not-allowed; opacity: 0.45; }
 .game.locked .price { display: none; }
 .game-final { display: grid; gap: 6px; }
+.props { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.props > summary { cursor: pointer; font-size: 13px; font-weight: 750; }
+.prop-grid { display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, minmax(74px, 92px)); gap: 6px; align-items: center; margin-top: 8px; }
+.prop-grid .colhead { font-size: 11px; font-weight: 700; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: 0.05em; }
+.prop-grid .prop-head { text-align: left; }
+.prop-player { font-weight: 650; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- slip ---------- */
 

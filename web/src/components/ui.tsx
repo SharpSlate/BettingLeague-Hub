@@ -98,6 +98,12 @@ export function errorText(e: unknown): string {
     no_open_week: "No week is open, so there's nothing to close.",
     bad_rules: "Some of the rules' numbers are missing or aren't numbers. Check the form and try again.",
     effective_week_before_scheduled: "A rules change is already scheduled for a later week. Start this one from that week or later.",
+    game_not_final: "That game isn't final yet. Player stats can only be set on a final game.",
+    bad_player: "Enter the player's name (up to 80 characters).",
+    bad_stats: "Stats are whole numbers; receptions and touchdowns can't be negative.",
+    props_off: "This league doesn't offer player props.",
+    props_stale: "Player props haven't been updated recently enough to bet on. Try again after the next update.",
+    same_game_props: "A game's picks in a parlay with a player prop must all be props, within the league's limit per game.",
   };
   return map[m] ?? m;
 }

@@ -16,6 +16,8 @@ export function espnUrl(day: string): string {
 }
 
 export interface EspnGame {
+  /** ESPN's event id, for its box score. */
+  id: string;
   start: string;
   completed: boolean;
   /** Each team's score by its full name ("Baltimore Ravens"), as ESPN and The Odds API both write it. */
@@ -47,7 +49,7 @@ export function parseEspn(body: unknown): EspnGame[] {
     }
     if (scores.size !== 2) continue;
     const type = c.status?.type ?? ev.status?.type;
-    out.push({ start, completed: type?.completed === true, scores });
+    out.push({ id: String(ev?.id ?? ""), start, completed: type?.completed === true, scores });
   }
   return out;
 }
@@ -127,4 +129,82 @@ export async function confirmFinals(
     return { ...s, completed: false };
   });
   return { scores: out, held };
+}
+
+// ---------------------------------------------------------------- box scores (player props)
+
+export const ESPN_SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary";
+
+export const espnSummaryUrl = (eventId: string) => `${ESPN_SUMMARY}?${new URLSearchParams({ event: eventId })}`;
+
+/** One player's line in a box score, as ingest_box_internal takes it. */
+export interface BoxPlayer {
+  player: string;
+  team: string | null;
+  passYds: number;
+  rushYds: number;
+  recYds: number;
+  receptions: number;
+  /** Touchdowns he scored himself: rushing, receiving, kick and punt returns, defensive returns. */
+  tds: number;
+}
+
+const TD_KEYS = ["rushingTouchdowns", "receivingTouchdowns", "kickReturnTouchdowns", "puntReturnTouchdowns",
+  "interceptionTouchdowns", "defensiveTouchdowns"];
+
+function statNum(x: unknown): number {
+  const n = typeof x === "number" ? x : typeof x === "string" ? Number(x.trim()) : NaN;
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+/**
+ * Every player in a game summary's box score (any category: passing, rushing,
+ * receiving, returns, defense...), with the stats props grade on. Someone in no
+ * category isn't in the result. A touchdown counted in two categories (a pick-six as
+ * both an interception and a defensive TD) can count twice, which only matters past
+ * "scored at least one".
+ */
+export function parseBox(body: unknown): BoxPlayer[] {
+  const teams = (body as { boxscore?: { players?: unknown } })?.boxscore?.players;
+  if (!Array.isArray(teams)) return [];
+  const byId = new Map<string, BoxPlayer & { tdKeys: Set<string> }>();
+  for (const t of teams) {
+    const team = typeof t?.team?.abbreviation === "string" ? t.team.abbreviation : null;
+    for (const cat of Array.isArray(t?.statistics) ? t.statistics : []) {
+      const keys: unknown[] = Array.isArray(cat?.keys) ? cat.keys : [];
+      for (const a of Array.isArray(cat?.athletes) ? cat.athletes : []) {
+        const name = a?.athlete?.displayName;
+        if (typeof name !== "string" || !name.trim()) continue;
+        const id = String(a?.athlete?.id ?? `${team}|${name}`);
+        let p = byId.get(id);
+        if (!p) {
+          p = { player: name.trim(), team, passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0, tdKeys: new Set() };
+          byId.set(id, p);
+        }
+        const stats: unknown[] = Array.isArray(a?.stats) ? a.stats : [];
+        const st = new Map(keys.map((k, i) => [String(k), stats[i]]));
+        if (cat.name === "passing") p.passYds = statNum(st.get("passingYards"));
+        if (cat.name === "rushing") p.rushYds = statNum(st.get("rushingYards"));
+        if (cat.name === "receiving") {
+          p.recYds = statNum(st.get("receivingYards"));
+          p.receptions = statNum(st.get("receptions"));
+        }
+        for (const k of TD_KEYS) {
+          if (st.has(k) && !p.tdKeys.has(k)) {
+            p.tds += Math.max(0, statNum(st.get(k)));
+            p.tdKeys.add(k);
+          }
+        }
+      }
+    }
+  }
+  return [...byId.values()].map(({ tdKeys: _k, ...p }) => p);
+}
+
+/** The ESPN game with these two teams (full names) starting within 12 hours of `start`. */
+export function findEspnGame(games: EspnGame[], homeTeam: string, awayTeam: string, start: string): EspnGame | undefined {
+  const home = key(homeTeam);
+  const away = key(awayTeam);
+  const t = Date.parse(start);
+  return games.find((g) => g.scores.has(home) && g.scores.has(away) && home !== away && Math.abs(Date.parse(g.start) - t) <= 12 * 3_600_000);
 }

@@ -234,7 +234,7 @@ jobs:
               raise SystemExit(1)
           PY
 
-          for f in pull-lines pull-scores place-slip publish-rules add-member; do
+          for f in pull-lines pull-scores place-slip publish-rules add-member import-props; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/$f" \
               -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" -d '{}')
             echo "Function $f answered $code without signing in"

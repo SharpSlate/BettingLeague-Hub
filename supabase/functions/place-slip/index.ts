@@ -18,14 +18,15 @@ import { currentUser, env, serviceClient, siteOrigins } from "../_shared/env.ts"
 import { dbErrorCode, friendlyMessage, json, preflight } from "../_shared/http.ts";
 import { pullLines, refreshForUndo } from "../_shared/jobs.ts";
 import { checkPlacement, type CurrentLine, type GameInfo, type PlacementInput } from "../_shared/placement.ts";
+import { isProp, PROP_MARKETS } from "../_shared/rules/props.ts";
 import type { BetType, Leg, RuleSet } from "../_shared/rules/types.ts";
 import { isStale } from "../_shared/schedule.ts";
 import { SupabaseStore } from "../_shared/supabase-store.ts";
 import { undoSlips } from "../_shared/undo.ts";
 
 const TYPES: BetType[] = ["straight", "parlay", "teaser"];
-const MARKETS = ["spread", "total", "moneyline"];
-const SIDES = ["home", "away", "over", "under"];
+const MARKETS: string[] = ["spread", "total", "moneyline", ...PROP_MARKETS];
+const SIDES = ["home", "away", "over", "under", "yes"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parse(body: unknown): (PlacementInput & { clientRef: string | null }) | null {
@@ -38,7 +39,13 @@ function parse(body: unknown): (PlacementInput & { clientRef: string | null }) |
   for (const l of b.legs as Record<string, unknown>[]) {
     if (typeof l?.gameId !== "string" || !MARKETS.includes(l.market as string) || !SIDES.includes(l.side as string)) return null;
     if (!(l.point === null || typeof l.point === "number") || typeof l.price !== "number") return null;
-    legs.push({ gameId: l.gameId, market: l.market as Leg["market"], side: l.side as Leg["side"], point: l.point as number | null, price: l.price });
+    // A player prop names its player; the game's own markets don't.
+    const prop = isProp(l.market as string);
+    if (prop ? !(typeof l.player === "string" && l.player.length >= 1 && l.player.length <= 80) : l.player != null) return null;
+    legs.push({
+      gameId: l.gameId, market: l.market as Leg["market"], side: l.side as Leg["side"], point: l.point as number | null, price: l.price,
+      ...(prop ? { player: l.player as string } : {}),
+    });
   }
   const teaserPoints = typeof b.teaserPoints === "number" ? b.teaserPoints : null;
   if (b.clientRef !== undefined && b.clientRef !== null && !(typeof b.clientRef === "string" && UUID.test(b.clientRef))) return null;
@@ -89,9 +96,9 @@ Deno.serve(async (req) => {
         // A retry of the same bet gets the bet back. The same ref on a different bet, or on
         // one that's since been undone or voided, isn't a retry. (place_slip_internal
         // checks the same things.)
-        const priorLegs = (await db.from("slip_legs").select("game_id, market, side").eq("slip_id", prior.id)).data ?? [];
-        const have = new Set(priorLegs.map((l: any) => `${l.game_id}|${l.market}|${l.side}`));
-        const want = new Set(input.legs.map((l) => `${l.gameId.toLowerCase()}|${l.market}|${l.side}`));
+        const priorLegs = (await db.from("slip_legs").select("game_id, market, side, player").eq("slip_id", prior.id)).data ?? [];
+        const have = new Set(priorLegs.map((l: any) => `${l.game_id}|${l.market}|${l.side}|${l.player ?? ""}`));
+        const want = new Set(input.legs.map((l) => `${l.gameId.toLowerCase()}|${l.market}|${l.side}|${l.player ?? ""}`));
         const same = prior.entry_id === input.entryId.toLowerCase() && prior.placed_by === user.id && prior.type === input.type
           && (prior.teaser_points === null ? null : Number(prior.teaser_points)) === (input.type === "teaser" ? input.teaserPoints : null)
           && Number(prior.stake_cents) === input.stakeCents && prior.leg_count === input.legs.length
@@ -121,14 +128,39 @@ Deno.serve(async (req) => {
     const games = new Map<string, GameInfo>(
       gameRows.map((g: any) => [g.id, { id: g.id, locksAt: locksAt(g), status: g.status, week: g.week }]),
     );
-    const loadLines = async (): Promise<CurrentLine[]> =>
-      ((await db.from("current_lines").select("game_id, market, side, point, price, source").in("game_id", gameIds)).data ?? []).map((l: any) => ({
-        gameId: l.game_id, market: l.market, side: l.side, point: l.point === null ? null : Number(l.point), price: l.price, source: l.source,
-      }));
+    const hasProps = input.legs.some((l) => isProp(l.market));
+    const hasGameLines = input.legs.some((l) => !isProp(l.market));
+    const loadLines = async (): Promise<CurrentLine[]> => {
+      const out: CurrentLine[] = [];
+      if (hasGameLines) {
+        const r = await db.from("current_lines").select("game_id, market, side, point, price, source").in("game_id", gameIds);
+        if (r.error) throw new Error(`lines: ${r.error.message}`);
+        for (const l of r.data ?? []) {
+          out.push({ gameId: l.game_id, market: l.market, side: l.side, point: l.point === null ? null : Number(l.point), price: l.price, source: l.source, player: null });
+        }
+      }
+      if (hasProps) {
+        const players = [...new Set(input.legs.filter((l) => isProp(l.market)).map((l) => l.player!))];
+        const r = await db.from("current_props").select("game_id, market, player, side, point, price, source")
+          .in("game_id", gameIds).in("player", players);
+        if (r.error) throw new Error(`props: ${r.error.message}`);
+        for (const l of r.data ?? []) {
+          out.push({ gameId: l.game_id, market: l.market, side: l.side, point: l.point === null ? null : Number(l.point), price: l.price, source: l.source, player: l.player });
+        }
+      }
+      return out;
+    };
     const ctx = { availableCents: Number(bal.available_cents), bankCents: Number(bal.bank_cents) };
+    // How fresh the props are: when the latest import was pulled at the books.
+    let props = { pulledAt: null as Date | null, maxAgeMinutes: 0 };
+    if (hasProps) {
+      const last = (await db.from("prop_imports").select("pulled_at").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle()).data;
+      const age = (await db.from("league_settings").select("prop_max_age_minutes").single()).data;
+      props = { pulledAt: last ? new Date(last.pulled_at) : null, maxAgeMinutes: Number(age?.prop_max_age_minutes ?? 0) };
+    }
 
     let lines = await loadLines();
-    let check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date());
+    let check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date(), props);
     // A slip that breaks a rule or is on a game that has started fails without a pull.
     if (!check.ok && check.kind === "invalid" && check.problems.some((p) => p.code !== "line_unavailable")) {
       return json(req, origins, 422, { error: "invalid", problems: check.problems });
@@ -142,7 +174,8 @@ Deno.serve(async (req) => {
     }
     const settings = await store.settings();
     const before = await store.lastGoodLinesPull();
-    if (isStale(before, new Date(), settings.refreshOnBetSeconds)) {
+    // Props come from the owner's own pulls, so a slip of props alone never pulls lines.
+    if (hasGameLines && isStale(before, new Date(), settings.refreshOnBetSeconds)) {
       const pulled = await pullLines(store, env("ODDS_API_KEY"), fetch, "bet", new Date(), user.id);
       // Too stale to bet on and another bet's refresh is on its way: wait a moment for it
       // rather than refusing this bet as stale. (No wait when a limit stopped the refresh.)
@@ -154,7 +187,7 @@ Deno.serve(async (req) => {
         }
       }
       lines = await loadLines();
-      check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date());
+      check = checkPlacement(input, rules, ctx, week.week, games, lines, new Date(), props);
     }
     if (!check.ok) {
       return check.kind === "moved"

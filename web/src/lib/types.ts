@@ -1,6 +1,6 @@
 // What the pages work with. Two backends implement Api: Supabase (the real site)
 // and an in-memory demo with sample data.
-import type { BetType, Leg, LegResult, Market, Problem, RuleSet, Side, SlipResult } from "@rules";
+import type { BetType, Leg, LegResult, Market, Problem, PropMarket, RuleSet, Side, SlipResult } from "@rules";
 
 export type GameStatus = "scheduled" | "live" | "final" | "postponed" | "void";
 
@@ -65,6 +65,10 @@ export interface League {
   creditsRemaining: number | null;
   /** Off until the site's owner turns the odds feed on; until then nothing calls the Odds API. */
   oddsPullsEnabled: boolean;
+  /** When the latest player props were pulled at the books (from the owner's own pulls). */
+  propsPulledAt: string | null;
+  /** Props older than this can't be bet on. */
+  propMaxAgeMinutes: number;
 }
 
 export interface Team {
@@ -75,6 +79,17 @@ export interface Team {
 
 export interface LineView {
   market: Market;
+  side: Side;
+  point: number | null;
+  price: number;
+  source: string;
+  asOf: string;
+}
+
+/** One side of a player prop the league offers. */
+export interface PropView {
+  market: PropMarket;
+  player: string;
   side: Side;
   point: number | null;
   price: number;
@@ -94,6 +109,7 @@ export interface GameView {
   homeScore: number | null;
   awayScore: number | null;
   lines: LineView[];
+  props: PropView[];
 }
 
 export interface StandingRow {
@@ -149,6 +165,8 @@ export interface LegView {
   teasedPoint: number | null;
   book: string;
   result: LegResult;
+  /** A player prop's player; null for a game's own markets. */
+  player: string | null;
 }
 
 export interface SlipView {
@@ -220,6 +238,14 @@ export interface AdminUser {
   displayName: string;
   isCommissioner: boolean;
   entryNames: string[];
+}
+
+export interface PlayerStatsInput {
+  passYds: number;
+  rushYds: number;
+  recYds: number;
+  receptions: number;
+  tds: number;
 }
 
 export interface PlacementRequest {
@@ -324,6 +350,8 @@ export interface Api {
   adminClearLine(gameId: string, market: Market, reason: string): Promise<void>;
   adminSetGameStatus(gameId: string, status: "scheduled" | "postponed" | "void", kickoffAt: string | null, reason: string): Promise<void>;
   adminSetFinalScore(gameId: string, home: number, away: number, reason: string): Promise<void>;
+  /** A player's stats on a final game, for his props, or null stats when he didn't play. */
+  adminSetPlayerStats(gameId: string, player: string, stats: PlayerStatsInput | null, reason: string): Promise<void>;
   adminVoidSlip(slipId: string, reason: string): Promise<void>;
   adminRunJob(job: "pull-lines" | "pull-scores"): Promise<string>;
   adminPublishRules(document: RuleSet, effectiveWeek: number, note: string): Promise<number>;

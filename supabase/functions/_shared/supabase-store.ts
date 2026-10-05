@@ -1,7 +1,8 @@
 // The jobs' Store, backed by Supabase with the service role (bypasses RLS).
 // Typed structurally so it doesn't import supabase-js itself.
-import type { GameResult, PendingSlip, Settlement } from "./grading.ts";
-import type { Settings, Store, Trigger } from "./jobs.ts";
+import type { BoxPlayer } from "./espn.ts";
+import type { Boxes, GameResult, PendingSlip, Settlement, StatRow } from "./grading.ts";
+import type { BoxNeeded, Settings, Store, Trigger } from "./jobs.ts";
 import type { NormalizedEvent, NormalizedScore } from "./odds-api.ts";
 import type { RuleSet } from "./rules/types.ts";
 
@@ -112,7 +113,7 @@ export class SupabaseStore implements Store {
   async pendingSlips(): Promise<PendingSlip[]> {
     const slips = await must<any[]>(
       this.db.from("slips")
-        .select("id, type, stake_cents, teaser_points, rule_set_version, slip_legs(leg_no, game_id, market, side, point, price)")
+        .select("id, type, stake_cents, teaser_points, rule_set_version, slip_legs(leg_no, game_id, market, side, point, price, player)")
         .eq("status", "pending"),
       "pending slips",
     );
@@ -138,14 +139,21 @@ export class SupabaseStore implements Store {
           side: l.side,
           point: l.point === null ? null : Number(l.point),
           price: l.price,
+          ...(l.player ? { player: l.player } : {}),
         })),
     }));
   }
 
   async games(ids: string[]) {
-    const rows = await must<any[]>(this.db.from("games").select("id, status, home_score, away_score, updated_at").in("id", ids), "games");
+    const rows = await must<any[]>(
+      this.db.from("games").select("id, status, home_score, away_score, updated_at, home:teams!games_home_team_fkey(short_name), away:teams!games_away_team_fkey(short_name)").in("id", ids),
+      "games",
+    );
     return new Map<string, GameResult>(
-      rows.map((g) => [g.id, { id: g.id, status: g.status, homeScore: g.home_score, awayScore: g.away_score, version: String(g.updated_at) }]),
+      rows.map((g) => [g.id, {
+        id: g.id, status: g.status, homeScore: g.home_score, awayScore: g.away_score, version: String(g.updated_at),
+        ...(g.home && g.away ? { label: `${g.away.short_name} at ${g.home.short_name}` } : {}),
+      }]),
     );
   }
 
@@ -160,5 +168,31 @@ export class SupabaseStore implements Store {
 
   advanceWeek() {
     return must<number | null>(this.db.rpc("advance_week_internal"), "advance week");
+  }
+
+  async gamesNeedingBoxes(): Promise<BoxNeeded[]> {
+    const rows = await must<any[]>(this.db.rpc("games_needing_boxes_internal"), "games needing box scores");
+    return (rows ?? []).map((r) => ({ gameId: r.game_id, kickoffAt: String(r.kickoff_at), homeName: r.home_name, awayName: r.away_name }));
+  }
+
+  ingestBox(gameId: string, espnId: string, players: BoxPlayer[]) {
+    return must<number>(this.db.rpc("ingest_box_internal", { p_game: gameId, p_espn_id: espnId, p_players: players }), "store box score");
+  }
+
+  async playerStats(gameIds: string[]): Promise<Boxes> {
+    const loaded = await must<{ game_id: string }[]>(this.db.from("game_boxes").select("game_id").in("game_id", gameIds), "box scores");
+    const out: Boxes = new Map(loaded.map((b) => [b.game_id, [] as StatRow[]]));
+    if (!out.size) return out;
+    const rows = await must<any[]>(
+      this.db.from("player_stats").select("game_id, player, source, played, pass_yds, rush_yds, rec_yds, receptions, tds").in("game_id", [...out.keys()]),
+      "player stats",
+    );
+    for (const r of rows) {
+      out.get(r.game_id)?.push({
+        player: r.player, source: r.source, played: r.played,
+        stats: { passYds: r.pass_yds, rushYds: r.rush_yds, recYds: r.rec_yds, receptions: r.receptions, tds: r.tds },
+      });
+    }
+    return out;
   }
 }

@@ -1,9 +1,12 @@
 import { americanToDecimal, decimalToAmerican, multiply, ONE, payoutCents, type Ratio } from "./odds.ts";
 import type { Leg, Market, RuleSet, SlipInput } from "./types.ts";
 
-/** The price a straight or parlay leg pays, given the book's price and the pricing rule. */
+/**
+ * The price a straight or parlay leg pays, given the book's price and the pricing rule.
+ * Flat pricing covers spreads and totals; moneylines and player props pay the book's price.
+ */
 export function effectivePrice(market: Market, bookPrice: number, rules: RuleSet): number {
-  if (rules.pricing.straight === "flat" && market !== "moneyline") return rules.pricing.flatPrice;
+  if (rules.pricing.straight === "flat" && (market === "spread" || market === "total")) return rules.pricing.flatPrice;
   return bookPrice;
 }
 
@@ -16,7 +19,7 @@ export function teaserPrice(rules: RuleSet, points: number, legs: number): numbe
 
 /** Moves a leg's point by the teaser points in the bettor's favor. */
 export function teasedPoint(leg: Leg, points: number): number {
-  if (leg.point === null || leg.market === "moneyline") throw new Error("a moneyline can't be teased");
+  if (leg.point === null || (leg.market !== "spread" && leg.market !== "total")) throw new Error("only spreads and totals can be teased");
   if (leg.market === "spread") return leg.point + points;
   return leg.side === "over" ? leg.point - points : leg.point + points;
 }

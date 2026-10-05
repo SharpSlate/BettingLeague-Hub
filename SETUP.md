@@ -104,6 +104,13 @@ Anyone signed in can start a league from the league menu (**Start or join a leag
 
 Commissioners have the powers the single-league site gave its admins, for their own league only: rules, entries and managers, bank adjustments, imports, opening and closing weeks, voiding bets, and making other members commissioners.
 
+## 9. Player props (optional)
+
+Props come from the owner's own prop pulls, not from this site's Odds API key. After each run of the owner's **SharpSlate NFL Props** task, a step on the owner's PC (`sync/hub_props.py` in OneStopShop) sends the main lines to this site's `import-props` function. Nothing here needs setting up:
+- The sender presents a key, kept on the owner's PC in OneStopShop's `.env.hub` (`HUB_PROPS_URL`, `HUB_PROPS_KEY`). The database keeps only its SHA-256, in `app.prop_import_key`. To change the key, put a new one in `.env.hub` and its hash in that table (SQL editor: `update app.prop_import_key set sha256 = '<hash>';`).
+- Props only show for games already on the board, so they wait for the odds feed (step 7).
+- A league offers them once its commissioner turns them on (**Admin → Rules → Player props**, from a week that hasn't opened). **Site feeds** shows when props were last pulled; a failed import shows under **Recent problems**.
+
 ## During the season
 
 Site admins:
@@ -112,6 +119,7 @@ Site admins:
 - **A postponed game:** set it to **Postponed**. Its bets ride in every league. A league's week won't close by itself while the game is unplayed; its commissioner uses **Open next week** to move on.
 - **Something looks stuck:** **Site feeds → Recent problems** lists failed pulls, bets the grader couldn't settle, and games that need a hand.
 - **Betting closed early on a game that hasn't started:** mark it **Postponed**, **Pull lines**, then set it back to **Scheduled**.
+- **A player prop graded void by mistake:** **Recent problems** names any player with props who wasn't in ESPN's box score (his props were graded void as did not play). If he played, enter his stats with **Games & lines → Set a player's stats**; the game's bets are graded again within 10 minutes.
 
 Commissioners:
 - **The last week of the season:** after its last game, **Close the season** on **Admin → Week**.

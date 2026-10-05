@@ -1,7 +1,8 @@
 import { americanToDecimal, isValidAmerican } from "./odds.ts";
-import type { Market, Problem, RuleSet } from "./types.ts";
+import { PROP_MARKETS } from "./props.ts";
+import type { GameMarket, Problem, RuleSet } from "./types.ts";
 
-const MARKETS: Market[] = ["spread", "total", "moneyline"];
+const MARKETS: GameMarket[] = ["spread", "total", "moneyline"];
 
 /** A whole number of cents, at least 1 cent, e.g. 1 or 2.5 units but not 1.005. */
 function wholeCents(units: number): boolean {
@@ -25,7 +26,7 @@ export function validateRuleSet(r: RuleSet): Problem[] {
   const add = (code: string, message: string) => problems.push({ code, message });
   const { straight, parlay, teaser } = r.betTypes;
 
-  const badMarket = (list: Market[]) => list.some((m) => !MARKETS.includes(m));
+  const badMarket = (list: GameMarket[]) => list.some((m) => !MARKETS.includes(m));
   if (badMarket(straight.markets) || badMarket(parlay.markets) || badMarket(teaser.markets)) {
     add("markets", "Markets must be spread, total or moneyline.");
   }
@@ -83,6 +84,26 @@ export function validateRuleSet(r: RuleSet): Problem[] {
   if (!["game_kickoff", "week_first_kickoff"].includes(r.lock)) add("lock", "Unknown lock rule.");
   if (!(num(r.bank.startUnits) && num(r.bank.bonusUnits) && r.bank.startUnits >= 0 && r.bank.bonusUnits >= 0)) {
     add("bank", "Starting bank and bonus must be numbers, 0 or more.");
+  }
+  // Rule sets from before props existed have no props section, which means no props.
+  const p = r.props;
+  if (p !== undefined) {
+    if (typeof p?.enabled !== "boolean") add("props", "Say whether the league offers player props.");
+    if (!Array.isArray(p?.markets) || p.markets.some((m) => !PROP_MARKETS.includes(m)) || new Set(p.markets).size !== p.markets.length) {
+      add("props_markets", "Prop markets must be anytime TD, receptions, rushing, receiving or passing yards, each listed once.");
+    } else if (p.enabled && p.markets.length === 0) {
+      add("props_markets", "Pick at least one prop market, or turn props off.");
+    }
+    if (!(Number.isInteger(p?.maxPerGame) && p.maxPerGame >= 1 && p.maxPerGame <= 3)) {
+      add("props_per_game", "Picks per game with a prop must be 1, 2 or 3.");
+    }
+    if (!(num(p?.maxStakePct) && p.maxStakePct > 0 && p.maxStakePct <= 100)) {
+      add("props_stake", "The prop stake limit must be above 0 and at most 100 percent of the maximum stake.");
+    } else if (p.enabled && wholeCents(s.minUnits) && wholeCents(s.maxUnits) && wholeCents(s.incrementUnits)) {
+      const step = Math.round(s.incrementUnits * 100);
+      const cap = Math.floor(Math.floor((Math.round(s.maxUnits * 100) * p.maxStakePct) / 100) / step) * step;
+      if (cap < Math.round(s.minUnits * 100)) add("props_stake", "The prop stake limit comes out below the minimum stake. Raise it.");
+    }
   }
   return problems;
 }
