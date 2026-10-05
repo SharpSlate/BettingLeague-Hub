@@ -35,7 +35,7 @@ jobs:
           end = dt.datetime.now(dt.timezone.utc)
           start = end - dt.timedelta(hours=2)
           sql = "select timestamp, event_message from auth_logs order by timestamp desc limit 300"
-          q = urllib.parse.urlencode({"sql": sql, "iso_timestamp_start": start.isoformat(), "iso_timestamp_end": end.isoformat()})
+          q = urllib.parse.urlencode({"sql": sql, "iso_timestamp_start": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "iso_timestamp_end": end.strftime("%Y-%m-%dT%H:%M:%SZ")})
           req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{os.environ['PROJECT_REF']}/analytics/endpoints/logs?{q}",
                                        headers={"Authorization": "Bearer " + os.environ["SUPABASE_ACCESS_TOKEN"]})
           try:
