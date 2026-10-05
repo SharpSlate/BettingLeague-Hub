@@ -5,7 +5,7 @@ import type { RuleSet } from "@rules";
 import { authErrorText } from "./auth.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry,
-  PlacementRequest, PlaceResult,
+  PlacementRequest, PlaceResult, PlayerStatsInput,
   RuleVersion, SlipView, SplashImport, StandingRow, Team, UndoResult, WeekInfo,
 } from "./types.ts";
 
@@ -30,7 +30,7 @@ function leg(l: any, teams: Map<string, Team>): LegView {
   const g = l.games;
   return {
     legNo: l.leg_no, gameId: l.game_id, market: l.market, side: l.side, point: n(l.point), price: l.price,
-    teasedPoint: n(l.teased_point), book: l.book, result: l.result,
+    teasedPoint: n(l.teased_point), book: l.book, result: l.result, player: l.player ?? null,
     game: {
       home: teams.get(g.home_team)!, away: teams.get(g.away_team)!, kickoffAt: g.kickoff_at, locksAt: locksAt(g), status: g.status,
       homeScore: g.home_score, awayScore: g.away_score,
@@ -139,12 +139,13 @@ export class SupabaseApi implements Api {
   }
 
   async league(): Promise<League> {
-    const [settings, mine, open, pull, credits] = await Promise.all([
+    const [settings, mine, open, pull, credits, props] = await Promise.all([
       this.db.from("league_settings").select("*").single(),
       this.myLeagues(),
       this.db.from("league_weeks").select("*, weeks(*)").eq("league_id", this.lid).eq("status", "open").maybeSingle(),
       this.db.from("line_pulls").select("at").eq("kind", "lines").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle(),
       this.db.from("line_pulls").select("credits_remaining").not("credits_remaining", "is", null).order("at", { ascending: false }).limit(1).maybeSingle(),
+      this.db.from("prop_imports").select("pulled_at").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     const s = check(settings);
     const l = mine.find((x) => x.id === this.lid);
@@ -168,6 +169,8 @@ export class SupabaseApi implements Api {
       lastPullAt: pull.data?.at ?? null,
       creditsRemaining: credits.data?.credits_remaining ?? null,
       oddsPullsEnabled: s.odds_pulls_enabled === true,
+      propsPulledAt: props.data?.pulled_at ?? null,
+      propMaxAgeMinutes: s.prop_max_age_minutes ?? 1080,
     };
   }
 
@@ -193,15 +196,22 @@ export class SupabaseApi implements Api {
     const [teams, gamesRes] = await Promise.all([this.teams(), this.db.from("games").select("*").eq("week", weekNo).order("kickoff_at")]);
     const games = check(gamesRes) as any[];
     const byAbbr = new Map(teams.map((t) => [t.abbr, t]));
-    const lines = games.length
-      ? (check(await this.db.from("current_lines").select("*").in("game_id", games.map((g) => g.id))) as any[])
-      : [];
+    const ids = games.map((g) => g.id);
+    const [lines, props] = games.length
+      ? await Promise.all([
+        this.db.from("current_lines").select("*").in("game_id", ids).then((r) => check(r) as any[]),
+        this.db.from("current_props").select("*").in("game_id", ids).order("player").then((r) => check(r) as any[]),
+      ])
+      : [[], []];
     return games.map((g) => ({
       id: g.id, week: g.week, kickoffAt: g.kickoff_at, locksAt: locksAt(g),
       home: byAbbr.get(g.home_team)!, away: byAbbr.get(g.away_team)!,
       status: g.status, homeScore: g.home_score, awayScore: g.away_score,
       lines: lines.filter((l) => l.game_id === g.id).map((l) => ({
         market: l.market, side: l.side, point: n(l.point), price: l.price, source: l.source, asOf: l.as_of,
+      })),
+      props: props.filter((p) => p.game_id === g.id).map((p) => ({
+        market: p.market, player: p.player, side: p.side, point: n(p.point), price: p.price, source: p.source, asOf: p.as_of,
       })),
     }));
   }
@@ -382,6 +392,12 @@ export class SupabaseApi implements Api {
   }
   async adminSetFinalScore(gameId: string, home: number, away: number, reason: string) {
     check(await this.db.rpc("admin_set_final_score", { p_game: gameId, p_home: home, p_away: away, p_reason: reason }));
+  }
+  async adminSetPlayerStats(gameId: string, player: string, stats: PlayerStatsInput | null, reason: string) {
+    check(await this.db.rpc("admin_set_player_stats", {
+      p_game: gameId, p_player: player, p_played: stats !== null, p_pass_yds: stats?.passYds ?? 0, p_rush_yds: stats?.rushYds ?? 0,
+      p_rec_yds: stats?.recYds ?? 0, p_receptions: stats?.receptions ?? 0, p_tds: stats?.tds ?? 0, p_reason: reason,
+    }));
   }
   async adminVoidSlip(slipId: string, reason: string) {
     check(await this.db.rpc("admin_void_slip", { p_slip: slipId, p_reason: reason }));

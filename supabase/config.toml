@@ -88,3 +88,6 @@ verify_jwt = false
 
 [functions.add-member]
 verify_jwt = false
+
+[functions.import-props]
+verify_jwt = false

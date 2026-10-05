@@ -200,6 +200,7 @@ function SiteStatus() {
             <dt>Last line pull</dt><dd>{ago(lg.lastPullAt)}</dd>
             <dt>Odds API credits</dt><dd className="num">{lg.creditsRemaining?.toLocaleString() ?? "unknown"}</dd>
             <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min ({lg.pullNearKickoffMinutes} in the {lg.nearKickoffHours} hours before a kickoff)</dd>
+            <dt>Player props</dt><dd>{lg.propsPulledAt ? `Pulled ${ago(lg.propsPulledAt)}` : "None yet"}: sent from the owner's own prop pulls (no credits), and can't be bet once more than {Math.round(lg.propMaxAgeMinutes / 60)} hours old</dd>
           </dl>
         ) : <Loading />}
       </div>
@@ -239,7 +240,7 @@ function Problems({ problems, empty }: { problems: ReturnType<typeof useLoad<imp
   );
 }
 
-const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game", fair_play: "Fair play" };
+const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game", fair_play: "Fair play", props: "Player props import" };
 
 function Status({ reload }: { reload: () => void }) {
   const api = useApi();
@@ -509,6 +510,7 @@ function Games({ openWeek }: { openWeek: number | null }) {
   const [line, setLine] = useState({ market: "spread" as Market, pa: "", ra: "-110", pb: "", rb: "-110", offered: true, reason: "" });
   const [status, setStatus] = useState({ status: "postponed", kickoff: "", reason: "" });
   const [score, setScore] = useState({ home: "", away: "", reason: "" });
+  const [stats, setStats] = useState({ player: "", dnp: false, passYds: "0", rushYds: "0", recYds: "0", receptions: "0", tds: "0", reason: "" });
   if (!week) return weeks.loading ? <Loading /> : <Empty>The season hasn't started.</Empty>;
   const cur = (m: Market) => g?.lines.filter((l) => l.market === m) ?? [];
   const num = (s: string) => (s.trim() === "" ? null : Number(s));
@@ -578,6 +580,41 @@ function Games({ openWeek }: { openWeek: number | null }) {
             <div className="row"><Field label={`${g.away.shortName} (away)`}><input className="input num" required value={score.away} onChange={(e) => setScore({ ...score, away: e.target.value })} /></Field><Field label={`${g.home.shortName} (home)`}><input className="input num" required value={score.home} onChange={(e) => setScore({ ...score, home: e.target.value })} /></Field></div>
             <Field label="Reason"><input className="input" required minLength={3} value={score.reason} onChange={(e) => setScore({ ...score, reason: e.target.value })} /></Field>
           </Action>
+          {g.status === "final" ? (
+            <Action title="Set a player's stats" submit="Save stats"
+              note="Player props are graded from ESPN's box score. If a player is missing from it or it's wrong, enter his stats here; bets on his props are graded again on the next run (within 10 minutes). Use his name as the bets show it."
+              onSubmit={async () => {
+                const whole = (label: string, t: string, min = 0) => {
+                  const n = Number(t.trim().replace(/^[\u2212\u2013]/, "-"));
+                  if (t.trim() === "" || !Number.isInteger(n) || n < min) throw new Error(`${label} must be a whole number${min === 0 ? ", 0 or more" : ""}.`);
+                  return n;
+                };
+                const input = stats.dnp ? null : {
+                  passYds: whole("Passing yards", stats.passYds, -99), rushYds: whole("Rushing yards", stats.rushYds, -99),
+                  recYds: whole("Receiving yards", stats.recYds, -99), receptions: whole("Receptions", stats.receptions), tds: whole("Touchdowns", stats.tds),
+                };
+                if (!stats.player.trim()) throw new Error("Enter the player's name.");
+                await api.adminSetPlayerStats(g.id, stats.player.trim(), input, stats.reason);
+                return `Saved. Bets on ${stats.player.trim()}'s props will be graded again on the next run.`;
+              }}>
+              <Field label="Player"><input className="input" required value={stats.player} onChange={(e) => setStats({ ...stats, player: e.target.value })} placeholder="Josh Allen" /></Field>
+              <label className="row small"><input type="checkbox" checked={stats.dnp} onChange={(e) => setStats({ ...stats, dnp: e.target.checked })} /> He didn't play (his props are void)</label>
+              {!stats.dnp ? (
+                <>
+                  <div className="row">
+                    <Field label="Passing yds"><input className="input num" value={stats.passYds} onChange={(e) => setStats({ ...stats, passYds: e.target.value })} /></Field>
+                    <Field label="Rushing yds"><input className="input num" value={stats.rushYds} onChange={(e) => setStats({ ...stats, rushYds: e.target.value })} /></Field>
+                    <Field label="Receiving yds"><input className="input num" value={stats.recYds} onChange={(e) => setStats({ ...stats, recYds: e.target.value })} /></Field>
+                  </div>
+                  <div className="row">
+                    <Field label="Receptions"><input className="input num" value={stats.receptions} onChange={(e) => setStats({ ...stats, receptions: e.target.value })} /></Field>
+                    <Field label="TDs scored (not thrown)"><input className="input num" value={stats.tds} onChange={(e) => setStats({ ...stats, tds: e.target.value })} /></Field>
+                  </div>
+                </>
+              ) : null}
+              <Field label="Reason"><input className="input" required minLength={3} value={stats.reason} onChange={(e) => setStats({ ...stats, reason: e.target.value })} /></Field>
+            </Action>
+          ) : null}
         </div>
       )}
     </div>

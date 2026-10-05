@@ -1,6 +1,7 @@
 import { americanToDecimal, multiply, ONE, payoutCents, type Ratio } from "./odds.ts";
 import { teasedPoint, teaserPrice } from "./price.ts";
-import type { BetType, FinalScore, Leg, LegResult, RuleSet, SlipResult } from "./types.ts";
+import { isProp, propStat } from "./props.ts";
+import type { BetType, FinalScore, Leg, LegResult, PlayerStats, RuleSet, SlipResult } from "./types.ts";
 
 /** Points are whole or half, so grading compares doubled integers to avoid rounding. */
 const h = (x: number) => Math.round(x * 2);
@@ -11,6 +12,7 @@ const h = (x: number) => Math.round(x * 2);
  */
 export function gradeLeg(leg: Leg, score: FinalScore | "void", teaserPoints?: number | null): Exclude<LegResult, "pending"> {
   if (score === "void") return "void";
+  if (isProp(leg.market)) throw new Error("a player prop is graded from the box score");
   const { homeScore: home, awayScore: away } = score;
   let diff: number;
   if (leg.market === "moneyline") {
@@ -24,6 +26,20 @@ export function gradeLeg(leg: Leg, score: FinalScore | "void", teaserPoints?: nu
       diff = leg.side === "over" ? total - h(point) : h(point) - total;
     }
   }
+  return diff > 0 ? "won" : diff === 0 ? "push" : "lost";
+}
+
+/**
+ * Grades a player prop from the player's final stats. "void" when his game was voided
+ * or he didn't play, as the books do. An exact tie on the line is a push.
+ */
+export function gradePropLeg(leg: Leg, stats: PlayerStats | "void"): Exclude<LegResult, "pending"> {
+  if (stats === "void") return "void";
+  if (!isProp(leg.market)) throw new Error("not a player prop");
+  const value = propStat(leg.market, stats);
+  if (leg.market === "anytime_td") return value >= 1 ? "won" : "lost";
+  if (leg.point === null) throw new Error("a stat prop needs its line");
+  const diff = leg.side === "over" ? h(value) - h(leg.point) : h(leg.point) - h(value);
   return diff > 0 ? "won" : diff === 0 ? "push" : "lost";
 }
 

@@ -66,17 +66,36 @@ export function teamFor(g: Pick<GameView, "home" | "away">, side: Side): Team {
   return side === "home" ? g.home : g.away;
 }
 
-/** "Chiefs −3", "Over 47.5", "Bills ML" — the pick itself, without the price. */
-export function pickLabel(g: Pick<GameView, "home" | "away">, market: Market, side: Side, pt: number | null): string {
+/** A stat prop's short name after its number: "Over 245.5 pass yds". */
+export const PROP_UNIT: Record<string, string> = {
+  receptions: "receptions",
+  rush_yds: "rush yds",
+  rec_yds: "rec yds",
+  pass_yds: "pass yds",
+};
+
+/**
+ * "Chiefs −3", "Over 47.5", "Bills ML", "Josh Allen anytime TD", "Josh Allen Over 245.5
+ * pass yds" — the pick itself, without the price.
+ */
+export function pickLabel(g: Pick<GameView, "home" | "away">, market: Market, side: Side, pt: number | null, player?: string | null): string {
+  if (market === "anytime_td") return `${player ?? "?"} anytime TD`;
+  if (PROP_UNIT[market]) return `${player ?? "?"} ${side === "over" ? "Over" : "Under"} ${pt} ${PROP_UNIT[market]}`;
   if (market === "total") return `${side === "over" ? "Over" : "Under"} ${pt}`;
   const t = teamFor(g, side).shortName;
   return market === "moneyline" ? `${t} ML` : `${t} ${point(pt ?? 0)}`;
 }
 
-export function legLabel(g: Pick<GameView, "home" | "away"> | undefined, leg: Pick<LegView, "market" | "side" | "point" | "teasedPoint">): string {
+/** A line's number as the slip shows it: "+3", "47.5", or nothing for a moneyline or an anytime TD. */
+export function lineNumber(market: Market, pt: number | null): string {
+  if (market === "moneyline" || market === "anytime_td" || pt === null) return "";
+  return market === "spread" ? point(pt) : String(pt);
+}
+
+export function legLabel(g: Pick<GameView, "home" | "away"> | undefined, leg: Pick<LegView, "market" | "side" | "point" | "teasedPoint" | "player">): string {
   if (!g) return "Hidden until kickoff";
   const shown = leg.teasedPoint ?? leg.point;
-  const base = pickLabel(g, leg.market, leg.side, shown);
+  const base = pickLabel(g, leg.market, leg.side, shown, leg.player);
   return leg.teasedPoint !== null && leg.teasedPoint !== undefined ? `${base} (teased from ${leg.market === "total" ? leg.point : point(leg.point ?? 0)})` : base;
 }
 

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
-import { clock, odds, point, toCents, units } from "../lib/format.ts";
+import { clock, lineNumber, odds, point, toCents, units } from "../lib/format.ts";
 import { pushRuleText, undoText } from "../lib/rules-text.ts";
 import { matchupText, pickText, useSlip, type Pick } from "../lib/slip.tsx";
 import type { MyEntry } from "../lib/types.ts";
@@ -11,11 +11,11 @@ import { Segmented } from "./ui.tsx";
 const COMBO = "combo";
 
 function legOf(p: Pick): Leg {
-  return { gameId: p.gameId, market: p.market, side: p.side, point: p.point, price: p.price };
+  return { gameId: p.gameId, market: p.market, side: p.side, point: p.point, price: p.price, ...(p.player ? { player: p.player } : {}) };
 }
 
 function teasedLabel(p: Pick, pts: number): string {
-  if (p.market === "moneyline" || p.point === null) return `${pickText(p)} (can't be teased)`;
+  if ((p.market !== "spread" && p.market !== "total") || p.point === null) return `${pickText(p)} (can't be teased)`;
   return `${pickText(p, teasedPoint(legOf(p), pts))} (from ${p.market === "total" ? p.point : point(p.point)})`;
 }
 
@@ -107,8 +107,8 @@ export function SlipBody({ rules, entries, onPlaced }: {
             return {
               key: p.key,
               label: pickText(p),
-              from: `${p.market === "moneyline" ? "" : `${p.market === "total" ? p.point : point(p.point ?? 0)} `}${odds(p.price)}`,
-              to: `${p.market === "moneyline" ? "" : `${p.market === "total" ? m.point : point(m.point ?? 0)} `}${odds(m.price)}`,
+              from: `${lineNumber(p.market, p.point)} ${odds(p.price)}`.trim(),
+              to: `${lineNumber(p.market, m.point)} ${odds(m.price)}`.trim(),
               point: m.point,
               price: m.price,
             };

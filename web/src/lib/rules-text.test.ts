@@ -8,6 +8,7 @@ const league: League = {
   pullWindowStart: "08:00", pullWindowEnd: "01:00", pullEveryMinutes: 30, pullNearKickoffMinutes: 10, nearKickoffHours: 3,
   refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
   books: ["draftkings", "fanduel"], lastPullAt: null, creditsRemaining: null, oddsPullsEnabled: true,
+  propsPulledAt: null, propMaxAgeMinutes: 1080,
 };
 const text = (r: RuleSet, l: League | null = league) =>
   rulesPage(r, l).sections.flatMap((s) => [...s.items.map((i) => (typeof i === "string" ? i : `${i.lead} ${i.text}`)), s.example ?? ""]).join("\n");
