@@ -48,7 +48,8 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_PROJECT_REF` | the project ref |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | the publishable (anon) key |
-| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` |
+| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` (the site's own address once step 10 is done) |
+| `CLOUDFLARE_ACCOUNT_ID` | from step 10 (optional) |
 
 **Secrets** tab:
 
@@ -62,6 +63,7 @@ In **Settings → Secrets and variables → Actions**:
 | `SMTP_PASS` | its app password |
 | `GOOGLE_CLIENT_ID` | from step 3 (optional) |
 | `GOOGLE_CLIENT_SECRET` | from step 3 (optional) |
+| `CLOUDFLARE_API_TOKEN` | from step 10 (optional) |
 
 Then in **Settings → Pages**, set **Source** to **GitHub Actions**.
 
@@ -72,7 +74,7 @@ Merge the working branch into `main`. The **Deploy** workflow then:
 2. applies the database migrations;
 3. applies the sign-in settings and function secrets;
 4. deploys the functions;
-5. publishes the site to the repo's Pages address.
+5. publishes the site to the repo's Pages address (and to Cloudflare Pages once step 10 is done).
 
 You can watch it under the repo's **Actions** tab. After this, every merge to `main` redeploys.
 
@@ -113,6 +115,17 @@ Props come from the owner's own prop pulls, not from this site's Odds API key. A
 - Props can be bet for 2 hours after each pull, and from 90 minutes before a kickoff only on a pull made after the teams name their inactive players. So the PC's prop task decides how much of the day props are open: on game days it should run about 75 minutes before each kickoff window (11:45am, 3:10pm and 7:05pm Eastern on Sundays; 7:00pm on Monday and Thursday nights).
 - Box scores: the site reads each game's box score from ESPN once it's final. If ESPN refuses the site's requests, the PC can send them instead: ESPN's summary of each final game (`site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=<id>`, its `header` and `boxscore`), posted as `{"source": "owner-pc", "summaries": [...]}` to the site's `import-boxes` function with the same `x-props-key` header as the props. Only games with props riding and no box score yet take one.
 - League emails (**Admin → Members → Email the league**) go out through the same Gmail as the reset codes (`SMTP_USER`, `SMTP_PASS`), under the league's name. To keep room for reset codes on that one account (Gmail takes about 500 recipients a day), a league can email at most 100 recipients a day and all leagues together 300, tests included (`league-email.ts`).
+
+## 10. The site's own address (optional)
+
+The site can live at **leagues.sharpslatesports.com** instead of the repo's Pages address. Cloudflare Pages serves it there: the domain's DNS is on Cloudflare, and the domain is verified on GitHub for the owner's personal account, which keeps GitHub Pages from serving its subdomains from this organization's repo.
+
+1. In Cloudflare, create an **API token** with one permission, *Account → Cloudflare Pages → Edit*, and note your **Account ID** (on the account's home page).
+2. Add them on step 4's page: the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`. The next deploy creates the Cloudflare Pages project `sharpslate-leagues` and publishes the site to it.
+3. In Cloudflare, open **Workers & Pages → sharpslate-leagues → Custom domains** and add `leagues.sharpslatesports.com`. Cloudflare adds its DNS record itself.
+4. Once Cloudflare shows the domain as **Active**, change the `SITE_URL` variable to `https://leagues.sharpslatesports.com/` and redeploy (**Actions → Deploy → Run workflow**). Password-reset emails, league emails and invite links then use the new address, and the GitHub Pages address sends its visitors there (an invite link keeps its code). Until then, every copy sends visitors to the `SITE_URL` address.
+
+Sign-ins belong to an address, so everyone signs in once more on the new one.
 
 ## During the season
 

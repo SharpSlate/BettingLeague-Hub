@@ -1,13 +1,14 @@
 # Deploys on every push to main: tests first, then the database, functions and
-# settings to Supabase, then the site to GitHub Pages.
+# settings to Supabase, then the site to GitHub Pages (and Cloudflare Pages, for the
+# site's own address, once that's set up: SETUP.md step 10).
 #
 # Repository variables (Settings > Secrets and variables > Actions > Variables):
-#   SUPABASE_PROJECT_REF, SUPABASE_URL, SUPABASE_ANON_KEY, SITE_URL
+#   SUPABASE_PROJECT_REF, SUPABASE_URL, SUPABASE_ANON_KEY, SITE_URL, CLOUDFLARE_ACCOUNT_ID
 # Repository secrets (same page, Secrets tab):
 #   SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD, ODDS_API_KEY, CRON_SECRET,
-#   SMTP_USER, SMTP_PASS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-# SMTP and Google are optional on the first deploy: whichever isn't set yet is
-# left off, and turns on the first deploy after its secrets are added. SMTP_USER is
+#   SMTP_USER, SMTP_PASS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, CLOUDFLARE_API_TOKEN
+# SMTP, Google and Cloudflare are optional on the first deploy: whichever isn't set yet is
+# left off, and turns on the first deploy after its settings are added. SMTP_USER is
 # the site's Yahoo or Gmail address and SMTP_PASS that mailbox's app password.
 name: Deploy
 
@@ -120,7 +121,9 @@ jobs:
           open(p, "w").write(s)
           PY
           fi
-          echo "SITE_ORIGIN=$(echo "$SITE_URL" | sed -E 's#^(https?://[^/]+).*#\1#')" >> "$GITHUB_ENV"
+          # The functions accept calls from the site's address and from the repo's GitHub
+          # Pages copy, which sends visitors on to the site's address once it has its own.
+          echo "SITE_ORIGIN=$(echo "$SITE_URL" | sed -E 's#^(https?://[^/]+).*#\1#'),https://sharpslate.github.io" >> "$GITHUB_ENV"
       - name: Link the project
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -173,6 +176,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      # "true" once the Cloudflare settings are added (SETUP.md step 10).
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -190,12 +196,30 @@ jobs:
           # "true" once the site's own email sender is set: its password-reset email carries a
           # 6-digit code. Until then Supabase's standard email carries a link.
           VITE_EMAIL_CODES: ${{ secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' }}
+          # The site's address. A copy opened anywhere else sends the visitor there.
+          VITE_SITE_URL: ${{ vars.SITE_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
       - id: deploy
         uses: actions/deploy-pages@v4
+      # The site's own address (leagues.sharpslatesports.com) is served by Cloudflare Pages:
+      # sharpslatesports.com is verified on GitHub for the owner's personal account, which
+      # keeps GitHub Pages from serving its subdomains from this organization's repo.
+      # Wrangler is pinned by version, like the Supabase CLI, since it's handed a token.
+      - name: Publish to Cloudflare Pages
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/wrangler" --no-audit --no-fund wrangler@4.147.0
+          wrangler="$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler"
+          # The first publish creates the project; later ones find it.
+          "$wrangler" pages project list | grep -qw sharpslate-leagues \
+            || "$wrangler" pages project create sharpslate-leagues --production-branch main
+          "$wrangler" pages deploy web/dist --project-name sharpslate-leagues --branch main --commit-dirty=true
 
   # Checks the live site from outside once it's published: the page and its bundle,
   # the sign-in settings, every function and the database functions are all there.
