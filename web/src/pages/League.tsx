@@ -1,31 +1,33 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import type { RuleSet } from "@rules";
 import { Empty, ErrorNote, Loading, PageHead, Segmented } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
 import { clock, day, kickoff, odds, units } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
 import { rulesPage, teaserBreakEvenText, type RuleItem } from "../lib/rules-text.ts";
-import type { AuditRow, GameView, WeekInfo } from "../lib/types.ts";
+import type { AuditRow, GameView, League as LeagueInfo, WeekInfo } from "../lib/types.ts";
 
-type Tab = "rules" | "schedule" | "entrants" | "log";
+type Tab = "schedule" | "entrants" | "log";
 
 export function League() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as Tab) || "rules";
+  // The rules used to be a tab here; old links still land on them.
+  if (params.get("tab") === "rules") return <Navigate to="/rules" replace />;
+  const tab = (params.get("tab") as Tab) || "schedule";
   return (
     <>
-      <PageHead title="League" sub="Rules, schedule, entrants, and every admin action." />
+      <PageHead title="League" sub="Schedule, entrants, and every admin action." />
       <div className="stack">
         <div className="scroll-x">
           <Segmented<Tab>
             label="Section"
             value={tab}
             onChange={(t) => setParams({ tab: t })}
-            options={[{ value: "rules", label: "Rules" }, { value: "schedule", label: "Schedule" }, { value: "entrants", label: "Entrants" }, { value: "log", label: "Admin log" }]}
+            options={[{ value: "schedule", label: "Schedule" }, { value: "entrants", label: "Entrants" }, { value: "log", label: "Admin log" }]}
           />
         </div>
-        {tab === "rules" ? <Rules /> : tab === "schedule" ? <Schedule /> : tab === "entrants" ? <Entrants /> : <Log />}
+        {tab === "schedule" ? <Schedule /> : tab === "entrants" ? <Entrants /> : <Log />}
       </div>
     </>
   );
@@ -58,17 +60,27 @@ function Item({ item }: { item: RuleItem }) {
   return typeof item === "string" ? <li>{item}</li> : <li><b>{item.lead}</b> {item.text}</li>;
 }
 
-function Rules() {
+/** The league's own rules page, written from its rule settings so it always matches what the site enforces. */
+export function Rules() {
   const api = useApi();
   const league = useLoad(() => api.league(), []);
+  return (
+    <>
+      <PageHead title="Rules" sub={`How ${league.data?.name ?? "this league"} plays, written from the commissioner's current settings.`} />
+      <RulesBody league={league.data ?? null} />
+    </>
+  );
+}
+
+function RulesBody({ league: lg }: { league: LeagueInfo | null }) {
+  const api = useApi();
   const versions = useLoad(() => api.ruleVersions(), []);
   const [pick, setPick] = useState<number | null>(null);
   if (versions.loading && !versions.data) return <Loading />;
-  const inForce = league.data?.openWeek?.ruleSetVersion ?? versions.data?.at(-1)?.version;
+  const inForce = lg?.openWeek?.ruleSetVersion ?? versions.data?.at(-1)?.version;
   const shown = versions.data?.find((v) => v.version === (pick ?? inForce)) ?? versions.data?.[0];
   if (!shown) return <Empty>No rules published yet.</Empty>;
-  const lg = league.data;
-  const page = rulesPage(shown.document, lg ?? null);
+  const page = rulesPage(shown.document, lg);
   const breakEven = teaserBreakEvenText(shown.document);
   // Scrolls rather than using #anchors, which the site's router would read as a page.
   const go = (id: string) => document.getElementById(`rules-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });

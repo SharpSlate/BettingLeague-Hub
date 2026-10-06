@@ -10,7 +10,7 @@ import type { LeagueSummary } from "./lib/types.ts";
 import { Admin } from "./pages/Admin.tsx";
 import { Board } from "./pages/Board.tsx";
 import { Entry } from "./pages/Entry.tsx";
-import { League } from "./pages/League.tsx";
+import { League, Rules } from "./pages/League.tsx";
 import { Join, Leagues } from "./pages/Leagues.tsx";
 import { MyBets } from "./pages/MyBets.tsx";
 import { Picks } from "./pages/Picks.tsx";
@@ -93,6 +93,7 @@ function LeagueApp({ league: summary, leagues, onChoose }: { league: LeagueSumma
             <Route path="/board" element={<Board />} />
             <Route path="/picks" element={<Picks />} />
             <Route path="/bets" element={<MyBets />} />
+            <Route path="/rules" element={<Rules />} />
             <Route path="/league" element={<League />} />
             <Route path="/entry/:id" element={<Entry />} />
             <Route path="/admin" element={<Admin />} />

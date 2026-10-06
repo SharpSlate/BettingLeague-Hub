@@ -252,7 +252,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
       <p className="rules-note">
         {mode === "teaser" ? pushRuleText(rules) : mode === "parlay" ? "A pushed leg drops out and the rest are multiplied." : "A push returns your stake."}{" "}
         {rules.lock === "game_kickoff" ? "Each leg locks at its game's kickoff." : "Betting closes at the week's first kickoff."} {undoText(rules)}{" "}
-        <Link to="/league" onClick={() => slip.setOpen(false)}>All the rules</Link>
+        <Link to="/rules" onClick={() => slip.setOpen(false)}>All the rules</Link>
       </p>
     </div>
   );
