@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import type { RuleSet } from "@rules";
 import { Empty, ErrorNote, Loading, PageHead, Segmented } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
 import { clock, day, kickoff, odds, units } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
+import { useMe } from "../lib/me.ts";
 import { rulesPage, teaserBreakEvenText, type RuleItem } from "../lib/rules-text.ts";
 import type { AuditRow, GameView, League as LeagueInfo, WeekInfo } from "../lib/types.ts";
 
@@ -75,6 +76,8 @@ export function Rules() {
 function RulesBody({ league: lg }: { league: LeagueInfo | null }) {
   const api = useApi();
   const versions = useLoad(() => api.ruleVersions(), []);
+  const notes = useLoad(() => api.leagueNotes(), []);
+  const me = useMe();
   const [pick, setPick] = useState<number | null>(null);
   if (versions.loading && !versions.data) return <Loading />;
   const inForce = lg?.openWeek?.ruleSetVersion ?? versions.data?.at(-1)?.version;
@@ -86,6 +89,15 @@ function RulesBody({ league: lg }: { league: LeagueInfo | null }) {
   const go = (id: string) => document.getElementById(`rules-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   return (
     <div className="stack rules">
+      {notes.data?.text ? (
+        <section className="card pad rule-section commish-notes" aria-labelledby="rules-notes">
+          <h2 id="rules-notes">From the commissioner</h2>
+          <p>{notes.data.text}</p>
+          {notes.data.updatedAt ? <p className="tiny muted">Updated {day(notes.data.updatedAt)}</p> : null}
+        </section>
+      ) : notes.data && me.isCommissioner ? (
+        <div className="card pad small muted">Add your league's own rules, like the buy-in and payouts, under <Link to="/admin">Admin</Link> → Rules. They'll show here for everyone.</div>
+      ) : null}
       <div className="card pad row wrap spread">
         <div>
           <b>Version {shown.version}</b>{shown.version === inForce ? <span className="chip pending" style={{ marginLeft: 8 }}>In force{lg?.openWeek ? ` for ${lg.openWeek.label}` : ""}</span> : null}
@@ -205,6 +217,7 @@ const ACTIONS: Record<string, string> = {
   commissioner_removed: "removed a commissioner",
   league_created: "started the league",
   league_updated: "changed the league's settings",
+  notes_updated: "updated the commissioner's notes",
   splash_import: "imported standings",
   bank_adjusted: "adjusted a bank",
   line_set: "set a line",

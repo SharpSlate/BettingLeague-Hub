@@ -376,6 +376,8 @@ h3 { font-size: 15px; font-weight: 700; }
   padding: 10px 12px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
   background: var(--accent-soft); font-size: 14px; line-height: 1.5;
 }
+.commish-notes { border-left: 4px solid var(--accent); }
+.commish-notes > p:first-of-type { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 .card.flat { background: var(--bg); }
 .rule-section .card.flat { max-width: 640px; }
 .glance { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }

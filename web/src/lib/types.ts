@@ -71,6 +71,12 @@ export interface League {
   propMaxAgeMinutes: number;
 }
 
+/** The commissioner's own house rules (buy-in, prizes...), shown at the top of the Rules page. */
+export interface LeagueNotes {
+  text: string;
+  updatedAt: string | null;
+}
+
 export interface Team {
   abbr: string;
   name: string;
@@ -338,6 +344,7 @@ export interface Api {
   slips(q: { entryId?: string; mine?: boolean; week?: number; settled?: boolean; limit?: number }): Promise<SlipView[]>;
   hiddenActivity(): Promise<HiddenPick[]>;
   ruleVersions(): Promise<RuleVersion[]>;
+  leagueNotes(): Promise<LeagueNotes>;
   weeks(): Promise<WeekInfo[]>;
   entrants(): Promise<Entrant[]>;
   auditLog(limit?: number): Promise<AuditRow[]>;
@@ -349,6 +356,8 @@ export interface Api {
 
   adminUpdateLeague(name: string, selfEntry: boolean, newInvite: boolean): Promise<void>;
   adminSetCommissioner(userId: string, on: boolean): Promise<void>;
+  /** Replaces the commissioner's notes (up to 4,000 characters; blank clears them). */
+  adminSetNotes(text: string): Promise<void>;
   adminRemoveMember(userId: string): Promise<void>;
   adminUsers(): Promise<AdminUser[]>;
   /** Failed pulls and grading problems from the last 3 days, newest first. */
