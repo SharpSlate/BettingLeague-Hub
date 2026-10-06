@@ -423,7 +423,7 @@ function EmailLeague({ users }: { users: AdminUser[] }) {
   const mailto = `mailto:?bcc=${users.filter((u) => u.email).map((u) => encodeURIComponent(u.email)).join(",")}&subject=${encodeURIComponent(f.subject)}&body=${encodeURIComponent(f.message)}`;
   return (
     <Action title="Email the league" submit={f.test ? "Send me a test" : armed ? `Yes, email all ${count} members` : `Email all ${count} members`}
-      note="Goes from the site's email address (the one that sends password reset codes) under the league's name, with every member hidden in Bcc. Replies come to you. Each real send is noted in the admin log (the subject only)."
+      note="Goes from the site's email address (the one that sends password reset codes) under the league's name, with every member hidden in Bcc. Replies come to you. Each send, tests included, is noted in the admin log (the subject only). A league can email up to 100 recipients a day, tests included, so the site's account can still send password reset codes."
       onSubmit={async () => {
         if (!f.subject.trim() || !f.message.trim()) throw new Error("Write a subject and a message.");
         if (!f.test && !armed) {

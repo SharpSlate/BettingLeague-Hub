@@ -6,6 +6,22 @@ export const MAX_MESSAGE = 10_000;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * Daily limits on league emails, counted in recipients over the last 24 hours. Every
+ * league sends through the site's one Gmail, which also sends password reset codes and
+ * takes about 500 recipients a day, so one busy league can't use it up and the site's
+ * total leaves room for the codes.
+ */
+export const LEAGUE_DAILY_RECIPIENTS = 100;
+export const SITE_DAILY_RECIPIENTS = 300;
+
+/** The error code that refuses a send of `recipients` given what's gone out in the last 24 hours, or null. */
+export function overDailyLimit(recipients: number, leagueSent: number, siteSent: number): "league_daily_limit" | "site_daily_limit" | null {
+  if (leagueSent + recipients > LEAGUE_DAILY_RECIPIENTS) return "league_daily_limit";
+  if (siteSent + recipients > SITE_DAILY_RECIPIENTS) return "site_daily_limit";
+  return null;
+}
+
 export interface LeagueEmailRequest {
   subject: string;
   message: string;

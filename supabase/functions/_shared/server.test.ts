@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { matchFeedBoxes } from "./box-feed.ts";
 import { findPlayer, gradePending, type Boxes, type GameBox, type GameResult, type Hold, type PendingSlip, type StatRow } from "./grading.ts";
-import { composeLeagueEmail, readLeagueEmail } from "./league-email.ts";
+import { composeLeagueEmail, LEAGUE_DAILY_RECIPIENTS, overDailyLimit, readLeagueEmail, SITE_DAILY_RECIPIENTS } from "./league-email.ts";
 import { loadBoxes, pullLines, refreshForUndo, runScores, type BoxNeeded, type Settings, type Store } from "./jobs.ts";
 import { normalizeOdds, normalizeScores, oddsUrl, readUsage, scoresUrl, type NormalizedEvent, type NormalizedScore } from "./odds-api.ts";
 import { confirmFinals, espnDays, espnSummaryUrl, espnUrl, findEspnGame, parseBox, parseEspn, type BoxPlayer } from "./espn.ts";
@@ -949,6 +949,13 @@ describe("emailing the league", () => {
     const m = composeLeagueEmail({ subject: "Week 6", message: "Lines are up.", testOnly: true }, o);
     expect([m.bcc, m.subject]).toEqual([["ben@example.com"], "[Test] Week 6"]);
     expect(composeLeagueEmail({ subject: "s", message: "m", testOnly: true }, { ...o, senderEmail: null }).bcc).toEqual([]);
+  });
+  it("one league can't use up the site's email, and the site leaves room for reset codes", () => {
+    expect(overDailyLimit(20, 80, 200)).toBeNull();
+    expect(overDailyLimit(21, 80, 200)).toBe("league_daily_limit");
+    expect(overDailyLimit(LEAGUE_DAILY_RECIPIENTS + 1, 0, 0)).toBe("league_daily_limit");
+    expect(overDailyLimit(10, 0, SITE_DAILY_RECIPIENTS - 5)).toBe("site_daily_limit");
+    expect(SITE_DAILY_RECIPIENTS).toBeLessThanOrEqual(300);
   });
 });
 
