@@ -4,8 +4,39 @@ import type { Market, PlayerStats, PropMarket, PropRules, RuleSet, Side } from "
 
 export const PROP_MARKETS: PropMarket[] = ["anytime_td", "receptions", "rush_yds", "rec_yds", "pass_yds"];
 
-/** What the props settings are when a commissioner first turns them on. */
-export const DEFAULT_PROPS: PropRules = { enabled: false, markets: [...PROP_MARKETS], maxPerGame: 2, maxStakePct: 50 };
+/**
+ * What the props settings are when a commissioner first turns them on: one prop per game
+ * in a parlay (two from one game, like a quarterback's yards and his receiver's, tend to
+ * hit together, and a parlay pays as if they didn't), a stake of at most 2% of the
+ * league's maximum, and at most 3 props in a parlay.
+ */
+export const DEFAULT_PROPS: PropRules = { enabled: false, markets: [...PROP_MARKETS], maxPerGame: 1, maxStakePct: 2, maxPerParlay: 3 };
+
+/**
+ * Teams name their inactive players this long before kickoff, and prop lines move on it.
+ * From then on a game's props can only be bet on lines pulled after that point.
+ */
+export const PROP_INACTIVES_MINUTES = 90;
+
+/**
+ * Why a game's props can't be bet right now, or null when they can: "stale" when the
+ * latest props are older than the league allows (or there are none), "inactives" when
+ * the game is within PROP_INACTIVES_MINUTES of locking and the latest props were pulled
+ * before that. place_slip_internal checks the same.
+ */
+export function propsClosed(
+  locksAt: Date | string,
+  pulledAt: Date | string | null | undefined,
+  now: Date | number,
+  maxAgeMinutes: number,
+): "stale" | "inactives" | null {
+  if (!pulledAt) return "stale";
+  const pulled = new Date(pulledAt).getTime();
+  const t = typeof now === "number" ? now : now.getTime();
+  if (!Number.isFinite(pulled) || t - pulled > maxAgeMinutes * 60_000) return "stale";
+  const cutoff = new Date(locksAt).getTime() - PROP_INACTIVES_MINUTES * 60_000;
+  return t >= cutoff && pulled < cutoff ? "inactives" : null;
+}
 
 export function isProp(market: Market | string): market is PropMarket {
   return (PROP_MARKETS as string[]).includes(market);

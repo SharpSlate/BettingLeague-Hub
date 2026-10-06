@@ -2,17 +2,21 @@
 // server. It uses the same shared rules code as the real site, so the slip
 // checks, payouts and grading are the real ones. Everything resets on reload.
 import {
-  checkAcrossBets, DAY_ONE_RULES, DEFAULT_PROPS, isProp, oppositeSides, requiredMinimumCents,
+  checkAcrossBets, DAY_ONE_RULES, DEFAULT_PROPS, isProp, oppositeSides, propsClosed, requiredMinimumCents,
   type BetType, type Leg, type PlayerStats, type PropMarket, type RuleSet,
 } from "@rules";
-import { gradePending, type Boxes, type GameResult, type PendingSlip, type StatRow } from "../../../supabase/functions/_shared/grading.ts";
+import { gradePending, type Boxes, type GameResult, type Hold, type PendingSlip, type StatRow } from "../../../supabase/functions/_shared/grading.ts";
+import { readLeagueEmail } from "../../../supabase/functions/_shared/league-email.ts";
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
 import { MIN_PASSWORD } from "./auth.ts";
 import { TEAMS, team } from "./teams.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry, PlacementRequest,
-  PlaceResult, PlayerStatsInput, RuleVersion, SlipView, SplashImport, StandingRow, UndoResult, WeekInfo,
+  PlaceResult, PlayerStatsInput, PropHold, RuleVersion, SlipView, SplashImport, StandingRow, UndoResult, WeekInfo,
 } from "./types.ts";
+
+/** How old player props can be and still be bet (league_settings.prop_max_age_minutes). */
+const PROP_MAX_AGE_MINUTES = 120;
 
 const H = 3_600_000;
 const D = 24 * H;
@@ -141,11 +145,11 @@ function seed(now: number) {
     ...props(now - 2 * D, "CeeDee Lamb", [["receptions", 6.5, -120, -110], ["rec_yds", 82.5, -115, -115], ["anytime_td", null, 125]]),
   ];
   // Thursday's box score, as read from ESPN.
-  const boxes: Boxes = new Map([["g-thu", [
+  const boxes: Boxes = new Map([["g-thu", { loaded: true, rows: [
     { player: "Dak Prescott", source: "espn", played: true, stats: stats(288, 6, 0, 0, 0) },
     { player: "CeeDee Lamb", source: "espn", played: true, stats: stats(0, 0, 104, 8, 1) },
     { player: "Javonte Williams", source: "espn", played: true, stats: stats(0, 61, 12, 2, 1) },
-  ] satisfies StatRow[]]]);
+  ] satisfies StatRow[] }]]);
 
   let n = 0;
   const leg = (gameId: string, market: Leg["market"], side: Leg["side"], extra: Partial<DLeg> = {}): DLeg => {
@@ -175,6 +179,10 @@ function seed(now: number) {
     // A player prop, graded from the box score: Lamb had 104 receiving yards.
     slip("e-crab", YOU, OPEN_WEEK, "straight", 100_000, [leg("g-thu", "rec_yds", "over", { player: "CeeDee Lamb", result: "won" })],
       { quotedAmerican: -115, potentialPayoutCents: 186_957, status: "won", payoutCents: 186_957, placedAt: now - 2 * D, settledAt: now - 22 * H }),
+    // A prop on a player who isn't in Thursday's box score: it waits for an admin (Admin >
+    // Week & feeds > Player props waiting) rather than being refunded.
+    slip("e-canton", "u-mo", OPEN_WEEK, "straight", 50_000, [{ legNo: 0, gameId: "g-thu", market: "receptions", side: "over", point: 1.5, price: 120, teasedPoint: null, book: "draftkings", result: "pending", player: "Jalen Tolbert" }],
+      { quotedAmerican: 120, potentialPayoutCents: 110_000, placedAt: now - 2 * D }),
     // Live now, so revealed.
     slip("e-canton", "u-mo", OPEN_WEEK, "straight", 400_000, [leg("g-live", "moneyline", "away")], { quotedAmerican: 190, potentialPayoutCents: 1_160_000, placedAt: now - 20 * H }),
     slip("e-crab", YOU, OPEN_WEEK, "parlay", 50_000, [leg("g-live", "total", "over"), leg("g-7", "spread", "away")], { quotedAmerican: 264, potentialPayoutCents: 182_231, placedAt: now - 10 * H }),
@@ -191,10 +199,10 @@ function seed(now: number) {
       { teaserPoints: 6, potentialPayoutCents: 954_545, placedAt: now - 5 * H }),
     slip("e-vernon", "u-lou", OPEN_WEEK, "straight", 200_000, [leg("g-4", "total", "under")], { potentialPayoutCents: 381_818, placedAt: now - 2 * H }),
     slip("e-fedhill", "u-tess", OPEN_WEEK, "parlay", 100_000, [leg("g-5", "moneyline", "home"), leg("g-6", "total", "over")], { quotedAmerican: 263, potentialPayoutCents: 362_712, placedAt: now - 40 * 60_000 }),
-    // Two props from one game: the most a parlay may take by default.
-    // 500 units x 47/27 x 43/23 = 1,627.21.
-    slip("e-oldbay", YOU, OPEN_WEEK, "parlay", 50_000, [leg("g-3", "anytime_td", "yes", { player: "Jahmyr Gibbs" }), leg("g-3", "rec_yds", "over", { player: "Amon-Ra St. Brown" })],
-      { quotedAmerican: 225, potentialPayoutCents: 162_721, placedAt: now - 90 * 60_000 }),
+    // Props from two games: by default a parlay takes one prop per game.
+    // 500 units x 11/5 x 43/23 = 2,056.52.
+    slip("e-oldbay", YOU, OPEN_WEEK, "parlay", 50_000, [leg("g-1", "anytime_td", "yes", { player: "Josh Allen" }), leg("g-3", "rec_yds", "over", { player: "Amon-Ra St. Brown" })],
+      { quotedAmerican: 311, potentialPayoutCents: 205_652, placedAt: now - 90 * 60_000 }),
   ];
   // Stakes and payouts in the ledger, as the database would have them.
   for (const s of slips) {
@@ -215,7 +223,8 @@ function seed(now: number) {
   return {
     users, entries, games, slips, audit, boxes,
     rules: [{ version: 1, effectiveWeek: 1, document: rules, note: "Day-one rules, with player props on.", createdAt: new Date(now - 10 * D).toISOString() }] as RuleVersion[],
-    lastPullAt: now - 7 * 60_000, propsPulledAt: now - 3 * H, credits: 91_240,
+    lastPullAt: now - 7 * 60_000, propsPulledAt: now - 50 * 60_000, credits: 91_240,
+    holds: [] as (Hold & { bets: number })[],
   };
 }
 
@@ -289,7 +298,7 @@ export class DemoApi implements Api {
       refreshOnBetSeconds: 120, betRefreshMemberMinutes: 5,
       books: ["draftkings", "fanduel"], lastPullAt: new Date(this.s.lastPullAt).toISOString(), creditsRemaining: this.s.credits,
       oddsPullsEnabled: true,
-      propsPulledAt: new Date(this.s.propsPulledAt).toISOString(), propMaxAgeMinutes: 1080,
+      propsPulledAt: new Date(this.s.propsPulledAt).toISOString(), propMaxAgeMinutes: PROP_MAX_AGE_MINUTES,
     };
   }
   async teams() { return TEAMS; }
@@ -435,8 +444,16 @@ export class DemoApi implements Api {
     const lines = this.s.games.flatMap((g) => (g.status === "scheduled"
       ? [...g.lines.map((l) => ({ gameId: g.id, ...l, player: null })), ...g.props.map((l) => ({ gameId: g.id, ...l }))]
       : []));
+    // As the server does: within 90 minutes of kickoff, a game's props need lines pulled after its inactives came out.
+    const waiting = req.legs.flatMap((l, i) => {
+      const g = games.get(l.gameId);
+      return isProp(l.market) && g && propsClosed(g.locksAt, new Date(this.s.propsPulledAt), Date.now(), PROP_MAX_AGE_MINUTES) === "inactives" ? [i] : [];
+    });
+    if (waiting.length) {
+      return { ok: false, kind: "invalid", problems: waiting.map((leg) => ({ code: "props_inactives", message: "This game's inactive players have been announced since its props were last updated, so its props can't be bet until the next update.", leg })) };
+    }
     const check = checkPlacement({ ...req }, rules, { availableCents: this.available(e), bankCents: this.bank(e) }, OPEN_WEEK, games, lines, new Date(),
-      { pulledAt: new Date(this.s.propsPulledAt), maxAgeMinutes: 1080 });
+      { pulledAt: new Date(this.s.propsPulledAt), maxAgeMinutes: PROP_MAX_AGE_MINUTES });
     if (!check.ok) {
       return check.kind === "moved"
         ? { ok: false, kind: "moved", message: "A line moved. Check the new number.", lines: check.lines }
@@ -482,6 +499,8 @@ export class DemoApi implements Api {
     const s = this.s.slips.find((x) => x.id === slipId);
     if (!s || !this.mine(s.entryId)) throw new Error("not_found");
     if (s.status !== "pending") throw new Error("not_pending");
+    // As undo_slip_internal does: a bet with a player prop is final once placed.
+    if (s.legs.some((l) => l.player)) throw new Error("undo_props");
     if (Date.now() > s.placedAt + rules.undoMinutes * 60_000) throw new Error("undo_window_passed");
     if (this.revealed(s)) throw new Error("game_started");
     // As undo_slip_internal does: no undo once a line on the bet has moved (a teaser's
@@ -676,7 +695,16 @@ export class DemoApi implements Api {
       id: s.id, type: s.type, stakeCents: s.stakeCents, teaserPoints: s.teaserPoints, rules, legs: s.legs,
     }));
     const games = new Map<string, GameResult>(this.s.games.map((g) => [g.id, { id: g.id, status: g.status, homeScore: g.homeScore, awayScore: g.awayScore }]));
-    for (const st of gradePending(pending, games, undefined, this.s.boxes)) {
+    const holds = new Map<string, Hold & { slips: Set<string> }>();
+    const onHold = (slipId: string, h: Hold) => {
+      const k = `${h.gameId}|${h.player}`;
+      const cur = holds.get(k) ?? { ...h, slips: new Set<string>() };
+      cur.slips.add(slipId);
+      holds.set(k, cur);
+    };
+    const settled = gradePending(pending, games, undefined, this.s.boxes, onHold);
+    this.s.holds = [...holds.values()].map(({ slips, ...h }) => ({ ...h, bets: slips.size }));
+    for (const st of settled) {
       const s = this.s.slips.find((x) => x.id === st.slipId)!;
       s.status = st.result;
       s.payoutCents = st.payoutCents;
@@ -691,12 +719,31 @@ export class DemoApi implements Api {
     if (g.status !== "final") throw new Error("game_not_final");
     const name = player.trim();
     if (!name) throw new Error("bad_player");
-    const rows = (this.s.boxes.get(gameId) ?? []).filter((r) => !(r.source === "admin" && r.player.toLowerCase() === name.toLowerCase()));
-    rows.push({ player: name, source: "admin", played: stats !== null, stats: stats ?? { passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0 } });
-    this.s.boxes.set(gameId, rows);
+    // An admin's row grades that player only; it doesn't make the game's box score.
+    const box = this.s.boxes.get(gameId) ?? { loaded: false, rows: [] };
+    box.rows = box.rows.filter((r) => !(r.source === "admin" && r.player.toLowerCase() === name.toLowerCase()));
+    box.rows.push({ player: name, source: "admin", played: stats !== null, stats: stats ?? { passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0 } });
+    this.s.boxes.set(gameId, box);
     const regraded = this.reopen(gameId, reason);
     this.audit("player_stats_set", "game", gameId, { player: name, played: stats !== null, ...stats, betsRegraded: regraded }, reason);
     this.grade();
+  }
+  async adminPropHolds(): Promise<PropHold[]> {
+    this.grade();
+    return this.s.holds.map((h) => {
+      const g = this.game(h.gameId);
+      return {
+        gameId: h.gameId, label: `${team(g.away).shortName} at ${team(g.home).shortName}`, kickoffAt: new Date(g.kickoffAt).toISOString(),
+        player: h.player, why: h.why, candidate: h.candidate ?? null, bets: h.bets, since: new Date(g.kickoffAt + 4 * H).toISOString(),
+      };
+    });
+  }
+  async adminEmailLeague(subject: string, message: string, testOnly: boolean) {
+    await wait(300);
+    const read = readLeagueEmail({ subject, message, testOnly });
+    if ("error" in read) throw new Error(read.error);
+    // The demo sends nothing: it says who it would have gone to.
+    return { sent: testOnly ? 1 : this.s.users.length };
   }
   async adminVoidSlip(slipId: string, reason: string) {
     const s = this.s.slips.find((x) => x.id === slipId)!;

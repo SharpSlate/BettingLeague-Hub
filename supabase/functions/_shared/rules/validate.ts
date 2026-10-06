@@ -178,11 +178,16 @@ function checkSameGame(legs: Leg[], rules: SameGameRules, type: "parlay" | "teas
 }
 
 /**
- * Props in a parlay: one pick per player, no prop beside its game's own lines, and at
- * most props.maxPerGame legs from a game that has a prop on the slip. (A teaser can't
- * take props at all; checkPropLeg says so.)
+ * Props in a parlay: one pick per player, no prop beside its game's own lines, at most
+ * props.maxPerGame legs from a game that has a prop on the slip, and at most
+ * props.maxPerParlay props in all. (A teaser can't take props at all; checkPropLeg
+ * says so.)
  */
 function checkSameGameProps(legs: Leg[], where: string, props: PropRules | null, add: Add): void {
+  const allProps = legs.flatMap((leg, i) => (isProp(leg.market) ? [i] : []));
+  if (props?.maxPerParlay !== undefined && allProps.length > props.maxPerParlay) {
+    add("too_many_props", props.maxPerParlay === 1 ? `Only one player prop ${where}.` : `At most ${props.maxPerParlay} player props ${where}.`, allProps[props.maxPerParlay]);
+  }
   const players = new Map<string, number>();
   legs.forEach((leg, i) => {
     if (!isProp(leg.market) || typeof leg.player !== "string") return;

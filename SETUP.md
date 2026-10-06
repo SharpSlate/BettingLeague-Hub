@@ -109,7 +109,10 @@ Commissioners have the powers the single-league site gave its admins, for their 
 Props come from the owner's own prop pulls, not from this site's Odds API key. After each run of the owner's **SharpSlate NFL Props** task, a step on the owner's PC (`sync/hub_props.py` in OneStopShop) sends the main lines to this site's `import-props` function. Nothing here needs setting up:
 - The sender presents a key, kept on the owner's PC in OneStopShop's `.env.hub` (`HUB_PROPS_URL`, `HUB_PROPS_KEY`). The database keeps only its SHA-256, in `app.prop_import_key`. To change the key, put a new one in `.env.hub` and its hash in that table (SQL editor: `update app.prop_import_key set sha256 = '<hash>';`).
 - Props only show for games already on the board, so they wait for the odds feed (step 7).
-- A league offers them once its commissioner turns them on (**Admin → Rules → Player props**, from a week that hasn't opened). **Site feeds** shows when props were last pulled; a failed import shows under **Recent problems**.
+- A league offers them once its commissioner turns them on (**Admin → Rules → Player props**, from a week that hasn't opened). The defaults for a new league are the recommended safeguards: 1 prop per game in a parlay, a stake cap of 2% of the maximum, at most 3 props in a parlay. **Site feeds** shows when props were last pulled; a failed import shows under **Recent problems**.
+- Props can be bet for 2 hours after each pull, and from 90 minutes before a kickoff only on a pull made after the teams name their inactive players. So the PC's prop task decides how much of the day props are open: on game days it should run about 75 minutes before each kickoff window (11:45am, 3:10pm and 7:05pm Eastern on Sundays; 7:00pm on Monday and Thursday nights).
+- Box scores: the site reads each game's box score from ESPN once it's final. If ESPN refuses the site's requests, the PC can send them instead: ESPN's summary of each final game (`site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=<id>`, its `header` and `boxscore`), posted as `{"source": "owner-pc", "summaries": [...]}` to the site's `import-boxes` function with the same `x-props-key` header as the props. Only games with props riding and no box score yet take one.
+- League emails (**Admin → Members → Email the league**) go out through the same Gmail as the reset codes (`SMTP_USER`, `SMTP_PASS`), under the league's name.
 
 ## During the season
 
@@ -119,9 +122,10 @@ Site admins:
 - **A postponed game:** set it to **Postponed**. Its bets ride in every league. A league's week won't close by itself while the game is unplayed; its commissioner uses **Open next week** to move on.
 - **Something looks stuck:** **Site feeds → Recent problems** lists failed pulls, bets the grader couldn't settle, and games that need a hand.
 - **Betting closed early on a game that hasn't started:** mark it **Postponed**, **Pull lines**, then set it back to **Scheduled**.
-- **A player prop graded void by mistake:** **Recent problems** names any player with props who wasn't in ESPN's box score (his props were graded void as did not play). If he played, enter his stats with **Games & lines → Set a player's stats**; the game's bets are graded again within 10 minutes.
+- **Player props waiting for you:** a player with props who isn't in the box score holds his bets in every league until you answer at the top of **Site feeds**: **Didn't play** (his props are void), **Played, no stats** (his overs lose), or his stats. A player the books took down once inactives were announced is voided on his own, and **Recent problems** says so; if he played after all, enter his stats with **Games & lines → Set a player's stats**.
 
 Commissioners:
 - **The last week of the season:** after its last game, **Close the season** on **Admin → Week**.
 - **An entry changes hands:** **Members → Entry managers.** Make the new manager first, then remove the old one.
+- **Email the league:** **Members → Email the league** sends to every member, in Bcc, with replies to you. Send yourself a test first. If it can't send, **Or open it in my own email app** puts everyone in Bcc in your own email.
 - **Fair play:** **Admin → Week → Recent problems** flags two entries of the league that share a manager and took opposite sides of a game, once both picks are public.

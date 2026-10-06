@@ -69,8 +69,13 @@ function PropButton({ game, prop, disabled }: { game: GameView; prop: PropView |
   );
 }
 
-/** The game's player props, by market, when the league offers them. */
-function Props({ game, markets, stale, now }: { game: GameView; markets: PropMarket[]; stale: boolean; now: number }) {
+/**
+ * The game's player props, by market, when the league offers them. closed says why they
+ * can't be bet right now: too old ("stale"), or pulled before the game's inactive players
+ * were announced ("inactives").
+ */
+function Props({ game, markets, closed, now }: { game: GameView; markets: PropMarket[]; closed: "stale" | "inactives" | null; now: number }) {
+  const stale = closed !== null;
   const groups = PROP_MARKETS.filter((m) => markets.includes(m))
     .map((m) => ({ market: m, players: [...new Set(game.props.filter((p) => p.market === m).map((p) => p.player))] }))
     .filter((g) => g.players.length);
@@ -83,7 +88,9 @@ function Props({ game, markets, stale, now }: { game: GameView; markets: PropMar
         Player props <span className="muted">· {groups.reduce((a, g) => a + g.players.length, 0)}</span>
       </summary>
       <div className="tiny muted" style={{ margin: "6px 0" }}>
-        {stale ? "These are out of date and can't be bet until the next update." : `Pulled ${ago(asOf, now)}.`}
+        {closed === "inactives"
+          ? "This game's inactive players have been announced since these were pulled, so they can't be bet until the next update."
+          : closed === "stale" ? "These are out of date and can't be bet until the next update." : `Pulled ${ago(asOf, now)}.`}
       </div>
       {groups.map(({ market, players }) => (
         <div key={market} className="prop-grid">
@@ -116,7 +123,7 @@ function Props({ game, markets, stale, now }: { game: GameView; markets: PropMar
   );
 }
 
-export function GameCard({ game, now, rules, propsStale = false }: { game: GameView; now: number; rules?: RuleSet; propsStale?: boolean }) {
+export function GameCard({ game, now, rules, propsClosed = null }: { game: GameView; now: number; rules?: RuleSet; propsClosed?: "stale" | "inactives" | null }) {
   // Picks show once a game kicks off (its kickoff passes, or its scores start coming in).
   const kicked = game.status === "live" || game.status === "final" || new Date(game.kickoffAt).getTime() <= now;
   const started = game.status !== "scheduled" || kicked;
@@ -186,7 +193,7 @@ export function GameCard({ game, now, rules, propsStale = false }: { game: GameV
         </div>
       )}
       {!locked && rules && activeProps(rules) && game.props.length ? (
-        <Props game={game} markets={activeProps(rules)!.markets} stale={propsStale} now={now} />
+        <Props game={game} markets={activeProps(rules)!.markets} closed={propsClosed} now={now} />
       ) : null}
     </article>
   );

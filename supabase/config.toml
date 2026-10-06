@@ -91,3 +91,9 @@ verify_jwt = false
 
 [functions.import-props]
 verify_jwt = false
+
+[functions.import-boxes]
+verify_jwt = false
+
+[functions.email-league]
+verify_jwt = false

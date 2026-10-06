@@ -1,9 +1,10 @@
 // The jobs' Store, backed by Supabase with the service role (bypasses RLS).
 // Typed structurally so it doesn't import supabase-js itself.
 import type { BoxPlayer } from "./espn.ts";
-import type { Boxes, GameResult, PendingSlip, Settlement, StatRow } from "./grading.ts";
+import type { Boxes, GameResult, Hold, PendingSlip, Settlement, StatRow } from "./grading.ts";
 import type { BoxNeeded, Settings, Store, Trigger } from "./jobs.ts";
 import type { NormalizedEvent, NormalizedScore } from "./odds-api.ts";
+import { playerKey } from "./rules/props.ts";
 import type { RuleSet } from "./rules/types.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -180,19 +181,39 @@ export class SupabaseStore implements Store {
   }
 
   async playerStats(gameIds: string[]): Promise<Boxes> {
-    const loaded = await must<{ game_id: string }[]>(this.db.from("game_boxes").select("game_id").in("game_id", gameIds), "box scores");
-    const out: Boxes = new Map(loaded.map((b) => [b.game_id, [] as StatRow[]]));
-    if (!out.size) return out;
+    if (!gameIds.length) return new Map();
+    // A box score read from ESPN or sent from the owner's PC. (An "admin" row is from
+    // before an admin's stats stopped counting as the game's box score.)
+    const loaded = await must<{ game_id: string; source: string }[]>(
+      this.db.from("game_boxes").select("game_id, source").in("game_id", gameIds), "box scores");
+    const out: Boxes = new Map(loaded.filter((b) => b.source !== "admin").map((b) => [b.game_id, { loaded: true, rows: [] as StatRow[] }]));
     const rows = await must<any[]>(
-      this.db.from("player_stats").select("game_id, player, source, played, pass_yds, rush_yds, rec_yds, receptions, tds").in("game_id", [...out.keys()]),
+      this.db.from("player_stats").select("game_id, player, source, played, pass_yds, rush_yds, rec_yds, receptions, tds").in("game_id", gameIds),
       "player stats",
     );
     for (const r of rows) {
-      out.get(r.game_id)?.push({
-        player: r.player, source: r.source, played: r.played,
+      // ESPN's rows count once the box score is in; an admin's always do.
+      if (r.source !== "admin" && !out.has(r.game_id)) continue;
+      const box = out.get(r.game_id) ?? { loaded: false, rows: [] as StatRow[] };
+      box.rows.push({
+        player: r.player, source: r.source === "admin" ? "admin" : "espn", played: r.played,
         stats: { passYds: r.pass_yds, rushYds: r.rush_yds, recYds: r.rec_yds, receptions: r.receptions, tds: r.tds },
       });
+      out.set(r.game_id, box);
+    }
+    const loadedIds = [...out].filter(([, b]) => b.loaded).map(([id]) => id);
+    if (loadedIds.length) {
+      const gone = await must<{ game_id: string; player: string }[]>(
+        this.db.rpc("props_left_board_internal", { p_games: loadedIds }), "props ruled out");
+      for (const g of gone ?? []) {
+        const box = out.get(g.game_id);
+        if (box) (box.ruledOut ??= new Set()).add(playerKey(g.player));
+      }
     }
     return out;
+  }
+
+  async recordPropHolds(holds: (Hold & { bets: number })[]) {
+    await must(this.db.rpc("record_prop_holds_internal", { p_holds: holds }), "props waiting");
   }
 }

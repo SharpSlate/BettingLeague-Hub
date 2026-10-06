@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DAY_ONE_RULES, type RuleSet } from "@rules";
+import { DAY_ONE_RULES, DEFAULT_PROPS, type RuleSet } from "@rules";
 import { rulesPage, teaserBreakEvenText, undoText } from "./rules-text.ts";
 import type { League } from "./types.ts";
 
@@ -98,5 +98,18 @@ describe("the Rules page says what the rules enforce", () => {
     expect(text(r)).not.toMatch(/\bA +can't|same game\./);
     expect(page.glance.find((g) => g.label === "Combining")!.value).toBe("Straight bets only");
     expect(text(r)).not.toMatch(/parlay|teaser/i);
+  });
+
+  it("explains the props safeguards when props are on", () => {
+    const r: RuleSet = { ...DAY_ONE_RULES, props: { ...DEFAULT_PROPS, enabled: true } };
+    const t = text(r, { ...league, propMaxAgeMinutes: 120 });
+    expect(t).toContain("a parlay can take at most 1 pick from a game with a prop on the slip and at most 3 props in all.");
+    expect(t).toContain("Props can be bet for 2 hours after each update.");
+    expect(t).toContain("Teams name their inactive players 90 minutes before kickoff");
+    expect(t).toContain("No undo. A bet with a player prop is final once placed.");
+    expect(t).toContain("if he plays without recording a stat, his over loses.");
+    expect(t).toContain("A bet with a player prop can stake at most 5,000 units (2% of the usual maximum).");
+    expect(undoText(r)).toBe("You can undo within 5 minutes if the line hasn't moved, except a bet with a player prop.");
+    expect(rulesPage(r, league).glance.find((g) => g.label === "Player props")).toEqual({ label: "Player props", value: "On", detail: "at most 1 per game in a parlay; no undo" });
   });
 });

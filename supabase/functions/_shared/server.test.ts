@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { findPlayer, gradePending, type Boxes, type GameResult, type PendingSlip, type StatRow } from "./grading.ts";
+import { matchFeedBoxes } from "./box-feed.ts";
+import { findPlayer, gradePending, type Boxes, type GameBox, type GameResult, type Hold, type PendingSlip, type StatRow } from "./grading.ts";
+import { composeLeagueEmail, readLeagueEmail } from "./league-email.ts";
 import { loadBoxes, pullLines, refreshForUndo, runScores, type BoxNeeded, type Settings, type Store } from "./jobs.ts";
 import { normalizeOdds, normalizeScores, oddsUrl, readUsage, scoresUrl, type NormalizedEvent, type NormalizedScore } from "./odds-api.ts";
 import { confirmFinals, espnDays, espnSummaryUrl, espnUrl, findEspnGame, parseBox, parseEspn, type BoxPlayer } from "./espn.ts";
@@ -286,11 +288,13 @@ class FakeStore implements Store {
   async gamesNeedingBoxes() { return this.needBoxes; }
   async ingestBox(gameId: string, espnId: string, players: BoxPlayer[]) {
     this.ingestedBoxes.push({ gameId, espnId, players });
-    this.boxes.set(gameId, players.map((p) => ({ player: p.player, source: "espn" as const, played: true, stats: p })));
+    this.boxes.set(gameId, { loaded: true, rows: players.map((p) => ({ player: p.player, source: "espn" as const, played: true, stats: p })) });
     this.needBoxes = this.needBoxes.filter((g) => g.gameId !== gameId);
     return players.length;
   }
   async playerStats(ids: string[]) { return new Map([...this.boxes].filter(([k]) => ids.includes(k))); }
+  holds: (Hold & { bets: number })[] | null = null;
+  async recordPropHolds(holds: (Hold & { bets: number })[]) { this.holds = holds; }
 }
 
 function fakeFetch(body: unknown, status = 200, headers: Record<string, string> = { "x-requests-remaining": "90000", "x-requests-last": "3" }) {
@@ -718,36 +722,58 @@ describe("player props: box scores", () => {
 describe("player props: matching players", () => {
   const st = (s: Partial<PlayerStats>): PlayerStats => ({ passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0, ...s });
   const espn = (player: string, s: Partial<PlayerStats> = {}): StatRow => ({ player, source: "espn", played: true, stats: st(s) });
+  const box = (rows: StatRow[], more: Partial<GameBox> = {}): GameBox => ({ loaded: true, rows, ...more });
   it("by name, ignoring suffixes, punctuation and accents", () => {
-    expect(findPlayer([espn("Kenneth Walker", { rushYds: 80 })], "Kenneth Walker III")).toEqual(st({ rushYds: 80 }));
-    expect(findPlayer([espn("D.J. Moore", { recYds: 50 })], "DJ Moore")).toEqual(st({ recYds: 50 }));
+    expect(findPlayer(box([espn("Kenneth Walker", { rushYds: 80 })]), "Kenneth Walker III")).toEqual({ kind: "stats", stats: st({ rushYds: 80 }) });
+    expect(findPlayer(box([espn("D.J. Moore", { recYds: 50 })]), "DJ Moore")).toEqual({ kind: "stats", stats: st({ recYds: 50 }) });
   });
-  it("by first initial and last name when the books shorten a first name", () => {
-    expect(findPlayer([espn("Gabriel Davis", { recYds: 40 }), espn("Mike Evans")], "Gabe Davis")).toEqual(st({ recYds: 40 }));
-    expect(findPlayer([espn("Gabriel Davis"), espn("Greg Davis")], "Gabe Davis")).toBe("ambiguous");
+  it("a player with the same first initial and last name waits for an admin to confirm, with his stats", () => {
+    expect(findPlayer(box([espn("Gabriel Davis", { recYds: 40 }), espn("Mike Evans")]), "Gabe Davis"))
+      .toEqual({ kind: "hold", why: "name", candidate: { player: "Gabriel Davis", stats: st({ recYds: 40 }) } });
+    expect(findPlayer(box([espn("Gabriel Davis"), espn("Greg Davis")]), "Gabe Davis")).toEqual({ kind: "hold", why: "ambiguous" });
   });
   it("two players with his exact name can't be told apart", () => {
-    expect(findPlayer([espn("Josh Allen"), espn("Josh Allen", { tds: 1 })], "Josh Allen")).toBe("ambiguous");
+    expect(findPlayer(box([espn("Josh Allen"), espn("Josh Allen", { tds: 1 })]), "Josh Allen")).toEqual({ kind: "hold", why: "ambiguous" });
   });
-  it("missing when he isn't in the box score", () => {
-    expect(findPlayer([espn("Josh Allen")], "Patrick Mahomes")).toBe("missing");
+  it("a player missing from the box score waits for an admin: he may have played without a stat", () => {
+    expect(findPlayer(box([espn("Josh Allen")]), "Patrick Mahomes")).toEqual({ kind: "hold", why: "missing" });
   });
-  it("a site admin's row wins, including one saying he didn't play", () => {
+  it("unless his props came off the board once inactives were out: then he was ruled out, and it's void", () => {
+    expect(findPlayer(box([espn("Josh Allen")], { ruledOut: new Set(["patrick mahomes"]) }), "Patrick Mahomes II")).toEqual({ kind: "void", why: "ruled_out" });
+    // Someone in the box score played, whatever the board did.
+    expect(findPlayer(box([espn("Josh Allen", { passYds: 9 })], { ruledOut: new Set(["josh allen"]) }), "Josh Allen")).toEqual({ kind: "stats", stats: st({ passYds: 9 }) });
+  });
+  it("waits while the box score isn't in", () => {
+    expect(findPlayer(undefined, "Josh Allen")).toEqual({ kind: "wait" });
+    expect(findPlayer({ loaded: false, rows: [] }, "Josh Allen")).toEqual({ kind: "wait" });
+  });
+  it("an admin's row wins, box score or not, including one saying he didn't play", () => {
     const admin = (played: boolean, s: Partial<PlayerStats> = {}): StatRow => ({ player: "josh allen", source: "admin", played, stats: st(s) });
-    expect(findPlayer([espn("Josh Allen", { passYds: 100 }), admin(true, { passYds: 300 })], "Josh Allen")).toEqual(st({ passYds: 300 }));
-    expect(findPlayer([espn("Josh Allen"), espn("Josh Allen"), admin(true, { tds: 2 })], "Josh Allen")).toEqual(st({ tds: 2 }));
-    expect(findPlayer([espn("Josh Allen", { passYds: 100 }), admin(false)], "Josh Allen")).toBe("void");
+    expect(findPlayer(box([espn("Josh Allen", { passYds: 100 }), admin(true, { passYds: 300 })]), "Josh Allen")).toEqual({ kind: "stats", stats: st({ passYds: 300 }) });
+    expect(findPlayer(box([espn("Josh Allen"), espn("Josh Allen"), admin(true, { tds: 2 })]), "Josh Allen")).toEqual({ kind: "stats", stats: st({ tds: 2 }) });
+    expect(findPlayer(box([espn("Josh Allen", { passYds: 100 }), admin(false)]), "Josh Allen")).toEqual({ kind: "void", why: "admin" });
+    // An admin's row alone grades its player only.
+    expect(findPlayer({ loaded: false, rows: [admin(true, { passYds: 250 })] }, "Josh Allen")).toEqual({ kind: "stats", stats: st({ passYds: 250 }) });
+    expect(findPlayer({ loaded: false, rows: [admin(true, { passYds: 250 })] }, "James Cook")).toEqual({ kind: "wait" });
   });
 });
 
 describe("player props: grading", () => {
   const RULES: RuleSet = { ...DAY_ONE_RULES, props: { ...DEFAULT_PROPS, enabled: true } };
-  const box = (rows: [string, Partial<PlayerStats>][]): StatRow[] =>
-    rows.map(([player, s]) => ({ player, source: "espn", played: true, stats: { passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0, ...s } }));
+  const box = (rows: [string, Partial<PlayerStats>][], more: Partial<GameBox> = {}): GameBox => ({
+    loaded: true,
+    rows: rows.map(([player, s]) => ({ player, source: "espn", played: true, stats: { passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0, ...s } })),
+    ...more,
+  });
   const slip = (id: string, legs: PendingSlip["legs"], type: PendingSlip["type"] = "straight"): PendingSlip =>
     ({ id, type, stakeCents: 10_000, teaserPoints: null, rules: RULES, legs });
   const allenTd = { legNo: 1, gameId: "a", market: "anytime_td" as const, side: "yes" as const, point: null, price: 120, player: "Josh Allen" };
   const games = new Map([["a", final("a", 20, 27)], ["b", final("b", 10, 3)]]);
+  const graded = (slips: PendingSlip[], boxes: Boxes) => {
+    const holds: [string, Hold][] = [];
+    const out = gradePending(slips, games, undefined, boxes, (id, h) => holds.push([id, h]));
+    return { out, holds };
+  };
 
   it("waits for the box score, then grades from it", () => {
     expect(gradePending([slip("s", [allenTd])], games)).toEqual([]);
@@ -756,19 +782,39 @@ describe("player props: grading", () => {
       { slipId: "s", result: "won", payoutCents: 22_000, legResults: [{ legNo: 1, result: "won" }], gameVersions: [] },
     ]);
   });
-  it("voids a player who isn't in the box score, says so, and drops him from a parlay", () => {
+  it("holds a player who isn't in the box score for an admin instead of refunding his bet", () => {
     const boxes: Boxes = new Map([["a", box([["Patrick Mahomes", {}]])], ["b", box([])]]);
     const p = slip("p", [allenTd, { legNo: 2, gameId: "b", market: "spread", side: "home", point: -3, price: -110 }], "parlay");
-    const [out] = gradePending([p], games, undefined, boxes);
-    expect(out).toMatchObject({ result: "won", payoutCents: 19_091, legResults: [{ legNo: 1, result: "void" }, { legNo: 2, result: "won" }] });
-    expect(out!.missingPlayers).toEqual([{ gameId: "a", player: "Josh Allen", why: "missing" }]);
+    const { out, holds } = graded([p], boxes);
+    expect(out).toEqual([]);
+    expect(holds).toEqual([["p", { gameId: "a", player: "Josh Allen", why: "missing" }]]);
+  });
+  it("voids a player whose props came off the board once inactives were out, and says so; in a parlay the leg drops out", () => {
+    const boxes: Boxes = new Map([["a", box([["Patrick Mahomes", {}]], { ruledOut: new Set(["josh allen"]) })], ["b", box([])]]);
+    const p = slip("p", [allenTd, { legNo: 2, gameId: "b", market: "spread", side: "home", point: -3, price: -110 }], "parlay");
+    const { out, holds } = graded([p], boxes);
+    expect(out[0]).toMatchObject({ result: "won", payoutCents: 19_091, legResults: [{ legNo: 1, result: "void" }, { legNo: 2, result: "won" }] });
+    expect(out[0]!.ruledOut).toEqual([{ gameId: "a", player: "Josh Allen" }]);
+    expect(holds).toEqual([]);
+  });
+  it("a parlay already lost on another leg doesn't wait on anyone", () => {
+    const boxes: Boxes = new Map([["a", box([["Patrick Mahomes", {}]])]]);
+    const p = slip("p", [allenTd, { legNo: 2, gameId: "b", market: "spread", side: "away", point: 3, price: -110 }], "parlay");
+    const { out, holds } = graded([p], boxes);
+    expect(out[0]).toMatchObject({ result: "lost", payoutCents: 0 });
+    expect(holds).toEqual([]);
+  });
+  it("says why a final game's props wait when its box score couldn't be loaded", () => {
+    expect(graded([slip("s", [allenTd])], new Map()).holds).toEqual([]);
+    expect(graded([slip("s", [allenTd])], new Map([["a", { loaded: false, rows: [], failed: true }]])).holds)
+      .toEqual([["s", { gameId: "a", player: "Josh Allen", why: "no_box" }]]);
   });
   it("a void game voids its props without waiting for a box score", () => {
     const [out] = gradePending([slip("s", [allenTd])], new Map([["a", { id: "a", status: "void", homeScore: null, awayScore: null } as GameResult]]));
     expect(out).toMatchObject({ result: "void", payoutCents: 10_000 });
   });
 
-  it("reads box scores for final games with props riding, then grades and tells the admins who was missing", async () => {
+  it("reads box scores for final games with props riding, then grades and lists who's waiting for an admin", async () => {
     const store = new FakeStore();
     store.needBoxes = [{ gameId: "a", kickoffAt: "2026-10-11T17:00:00Z", homeName: "Kansas City Chiefs", awayName: "Buffalo Bills" }];
     store.gameMap.set("a", { ...final("a", 20, 27), label: "Bills at Chiefs" });
@@ -791,26 +837,118 @@ describe("player props: grading", () => {
     };
     const r = await runScores(store, "KEY", f, "schedule");
     expect(store.ingestedBoxes.map((b) => [b.gameId, b.espnId, b.players.length])).toEqual([["a", "401770001", 8]]);
-    expect(store.settled.sort()).toEqual(["ghost", "td"]);
+    expect(store.settled).toEqual(["td"]);
     expect(r.errors).toEqual([]);
+    expect(store.holds).toEqual([{ gameId: "a", player: "Joe Nobody", why: "missing", bets: 1 }]);
+    expect(store.pulls.filter((p) => p.error.startsWith("props:"))).toEqual([]);
+    expect(calls.some((u) => u.includes("the-odds-api"))).toBe(false);
+  });
+  it("counts each held player once with the bets waiting on him, and clears the list when nothing waits", async () => {
+    const store = new FakeStore();
+    store.gameMap.set("a", { ...final("a", 20, 27), label: "Bills at Chiefs" });
+    store.boxes.set("a", box([["Josh Allen", { tds: 1 }]]));
+    const ghost = { ...allenTd, player: "Joe Nobody" };
+    store.pending = [slip("x", [ghost]), slip("y", [ghost]), slip("z", [{ ...ghost, player: "Gabe Davis" }])];
+    await runScores(store, "KEY", fakeFetch([]), "schedule");
+    expect(store.holds).toEqual([
+      { gameId: "a", player: "Joe Nobody", why: "missing", bets: 2 },
+      { gameId: "a", player: "Gabe Davis", why: "missing", bets: 1 },
+    ]);
+    store.pending = [];
+    await runScores(store, "KEY", fakeFetch([]), "schedule");
+    expect(store.holds).toEqual([]);
+  });
+  it("tells the admins about a player graded void because he was ruled out", async () => {
+    const store = new FakeStore();
+    store.gameMap.set("a", { ...final("a", 20, 27), label: "Bills at Chiefs" });
+    store.boxes.set("a", box([["Josh Allen", { tds: 1 }]], { ruledOut: new Set(["joe nobody"]) }));
+    store.pending = [slip("x", [{ ...allenTd, player: "Joe Nobody" }])];
+    await runScores(store, "KEY", fakeFetch([]), "schedule");
+    expect(store.settled).toEqual(["x"]);
     expect(store.pulls).toContainEqual({
       kind: "scores", trigger: "schedule", ok: false,
-      error: "props: Joe Nobody (Bills at Chiefs) isn't in ESPN's box score, so his props were graded void as did not play. If he played, enter his stats on the Admin page.",
+      error: "props: Joe Nobody (Bills at Chiefs) isn't in the box score and his props came off the board once inactives were announced, so they were graded void as did not play. If he played, enter his stats under Player props waiting.",
     });
-    expect(calls.some((u) => u.includes("the-odds-api"))).toBe(false);
   });
   it("leaves props waiting, and says why, when ESPN can't be read", async () => {
     const store = new FakeStore();
     const need: BoxNeeded[] = [{ gameId: "a", kickoffAt: "2026-10-11T17:00:00Z", homeName: "Kansas City Chiefs", awayName: "Buffalo Bills" }];
     const down = async () => new Response("down", { status: 503 });
-    expect(await loadBoxes(store, need, down, "America/New_York")).toEqual([
-      "box scores: couldn't read ESPN's scoreboard for 20261011 (Error: HTTP 503)",
-    ]);
+    expect(await loadBoxes(store, need, down, "America/New_York")).toEqual({
+      problems: ["box scores: couldn't read ESPN's scoreboard for 20261011 (Error: HTTP 503)"],
+      failed: new Set(["a"]),
+    });
     expect(store.ingestedBoxes).toEqual([]);
     const empty = async () => new Response(JSON.stringify({ events: [] }), { status: 200 });
-    expect(await loadBoxes(store, need, empty, "America/New_York")).toEqual([
-      "box scores: ESPN doesn't list Buffalo Bills at Kansas City Chiefs, so its props can't be graded yet. Enter its players' stats on the Admin page if this lasts.",
-    ]);
+    expect(await loadBoxes(store, need, empty, "America/New_York")).toEqual({
+      problems: ["box scores: ESPN doesn't list Buffalo Bills at Kansas City Chiefs, so its props can't be graded yet. Enter its players' stats under Player props waiting if this lasts."],
+      failed: new Set(["a"]),
+    });
+  });
+  it("lists a final game's props as waiting on its box score while ESPN can't be read", async () => {
+    const store = new FakeStore();
+    store.needBoxes = [{ gameId: "a", kickoffAt: "2026-10-11T17:00:00Z", homeName: "Kansas City Chiefs", awayName: "Buffalo Bills" }];
+    store.gameMap.set("a", { ...final("a", 20, 27), label: "Bills at Chiefs" });
+    store.pending = [slip("td", [allenTd])];
+    const r = await runScores(store, "KEY", async () => new Response("no", { status: 403 }), "schedule");
+    expect(r.errors).toEqual(["box scores: couldn't read ESPN's scoreboard for 20261011 (Error: HTTP 403)"]);
+    expect(store.holds).toEqual([{ gameId: "a", player: "Josh Allen", why: "no_box", bets: 1 }]);
+    expect(store.settled).toEqual([]);
+  });
+});
+
+describe("player props: box scores sent from the owner's PC", () => {
+  const need: BoxNeeded[] = [
+    { gameId: "a", kickoffAt: "2026-10-11T17:00:00Z", homeName: "Kansas City Chiefs", awayName: "Buffalo Bills" },
+    { gameId: "b", kickoffAt: "2026-10-11T20:25:00Z", homeName: "Detroit Lions", awayName: "Green Bay Packers" },
+  ];
+  const summary = (completed: boolean, home = "Kansas City Chiefs", away = "Buffalo Bills", date = "2026-10-11T17:00Z") => ({
+    ...fixture("espn-summary.json"),
+    header: { id: "401770001", competitions: [{ date, status: { type: { completed } }, competitors: [
+      { homeAway: "home", team: { displayName: home }, score: "20" },
+      { homeAway: "away", team: { displayName: away }, score: "27" },
+    ] }] },
+  });
+  it("matches each summary to the game waiting for it, once ESPN shows it final", () => {
+    const out = matchFeedBoxes([summary(true)], need);
+    expect(out.map((b) => [b.gameId, b.espnId, b.players.length])).toEqual([["a", "401770001", 8]]);
+    expect(out[0]!.players.find((p) => p.player === "Josh Allen")).toMatchObject({ passYds: 262, tds: 1 });
+  });
+  it("skips a game still on, another week's game, other games, and anything malformed", () => {
+    expect(matchFeedBoxes([summary(false)], need)).toEqual([]);
+    expect(matchFeedBoxes([summary(true, "Kansas City Chiefs", "Buffalo Bills", "2026-10-18T17:00Z")], need)).toEqual([]);
+    expect(matchFeedBoxes([summary(true, "Dallas Cowboys", "New York Giants")], need)).toEqual([]);
+    expect(matchFeedBoxes([null, "x", {}, { header: {} }, { header: { competitions: [] } }], need)).toEqual([]);
+    expect(matchFeedBoxes([{ ...summary(true), boxscore: {} }], need)).toEqual([]);
+  });
+});
+
+describe("emailing the league", () => {
+  it("needs a subject and a message, within limits", () => {
+    expect(readLeagueEmail({ subject: " Week 6 ", message: " Lines are up.\r\n" })).toEqual({ subject: "Week 6", message: "Lines are up.", testOnly: false });
+    expect(readLeagueEmail({ subject: "Hi\nthere", message: "x", testOnly: true })).toEqual({ subject: "Hi there", message: "x", testOnly: true });
+    expect(readLeagueEmail({ subject: "", message: "x" })).toEqual({ error: "subject_required" });
+    expect(readLeagueEmail({ subject: "x".repeat(151), message: "x" })).toEqual({ error: "subject_too_long" });
+    expect(readLeagueEmail({ subject: "x", message: "  " })).toEqual({ error: "message_required" });
+    expect(readLeagueEmail({ subject: "x", message: "x".repeat(10_001) })).toEqual({ error: "message_too_long" });
+    expect(readLeagueEmail(null)).toEqual({ error: "subject_required" });
+  });
+  const o = {
+    leagueName: "BALTIMORE DEGENERATES", leagueAddress: "league@example.com", senderName: "Ben", senderEmail: "Ben@Example.com",
+    members: ["ben@example.com", "a@example.com", "A@example.com", "not-an-email", ""], siteUrl: "https://example.github.io/League/",
+  };
+  it("goes from the league's address to itself, every member in Bcc once, replies to the sender", () => {
+    const m = composeLeagueEmail({ subject: "Week 6", message: "Lines are up.", testOnly: false }, o);
+    expect(m).toEqual({
+      from: "\"BALTIMORE DEGENERATES\" <league@example.com>", to: "league@example.com", bcc: ["ben@example.com", "a@example.com"],
+      replyTo: "ben@example.com", subject: "Week 6",
+      text: "Lines are up.\n\n--\nSent by Ben from the BALTIMORE DEGENERATES site: https://example.github.io/League/.\nReply to this email to reach Ben.\n",
+    });
+  });
+  it("a test goes to the sender alone", () => {
+    const m = composeLeagueEmail({ subject: "Week 6", message: "Lines are up.", testOnly: true }, o);
+    expect([m.bcc, m.subject]).toEqual([["ben@example.com"], "[Test] Week 6"]);
+    expect(composeLeagueEmail({ subject: "s", message: "m", testOnly: true }, { ...o, senderEmail: null }).bcc).toEqual([]);
   });
 });
 
