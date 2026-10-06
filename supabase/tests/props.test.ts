@@ -190,13 +190,20 @@ describe("betting on props", () => {
     await setProps(PROPS_ON);
   });
 
-  it("a bet of props alone undoes without a fresh pull of the game lines, unless its prop moved", async () => {
+  it("a bet with a player prop can't be undone, even mixed with a game line", async () => {
     const leg = propLeg(gDet, "rec_yds", "Amon-Ra St. Brown", "under", 78.5, -115);
     const a = await place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 10_000, legs: [leg] as never });
-    expect((await db.q(service, "select public.undo_slip_internal($1, $2, true) as since", [a, carol]))[0].since).toBeNull();
-    await undo(db, a, carol);
-    expect(await status(a)).toBe("undone");
-    const b = await place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 10_000, legs: [leg] as never });
+    await fails(db.q(service, "select public.undo_slip_internal($1, $2, true)", [a, carol]), "undo_props");
+    await fails(undo(db, a, carol), "undo_props");
+    expect(await status(a)).toBe("pending");
+    const mixed = await place(db, { entry: daveEntry, user: dave, type: "parlay", stakeCents: 10_000, legs: [
+      propLeg(gKc, "anytime_td", "James Cook", "yes", null, -110), { gameId: gDet, market: "total", side: "over", point: 47.5, price: -110 },
+    ] as never });
+    await fails(undo(db, mixed, dave), "undo_props");
+    // A bet of game lines alone still undoes as before.
+    const spread = await place(db, { entry: daveEntry, user: dave, type: "straight", stakeCents: 10_000, legs: [{ gameId: gDet, market: "spread", side: "home", point: -2.5, price: -110 }] as never });
+    await undo(db, spread, dave);
+    expect(await status(spread)).toBe("undone");
     await importProps([
       ...ou("KCBUF", "player_pass_yds", "Josh Allen", 240.5),
       ...ou("KCBUF", "player_pass_yds", "Patrick Mahomes", 252.5, "fanduel"),
@@ -204,7 +211,39 @@ describe("betting on props", () => {
       td("KCBUF", "James Cook", -110),
       ...ou("DETGB", "player_reception_yds", "Amon-Ra St. Brown", 74.5),
     ]);
-    await fails(undo(db, b, carol), "undo_line_moved");
+  });
+
+  it("props can be bet only on a pull from the last 2 hours", async () => {
+    expect((await db.su("select prop_max_age_minutes from public.league_settings"))[0].prop_max_age_minutes).toBe(120);
+    const bet = () => place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 10_000, legs: [propLeg(gKc, "anytime_td", "Josh Allen", "yes", null, 120)] as never });
+    const [latest] = await db.su("select id, pulled_at from public.prop_imports where ok order by at desc limit 1");
+    await db.su("update public.prop_imports set pulled_at = now() - interval '121 minutes' where id = $1", [latest.id]);
+    await fails(bet(), "props_stale");
+    await db.su("update public.prop_imports set pulled_at = now() - interval '110 minutes' where id = $1", [latest.id]);
+    await bet();
+    await db.su("update public.prop_imports set pulled_at = $2 where id = $1", [latest.id, latest.pulled_at]);
+  });
+
+  it("within 90 minutes of kickoff, only on props pulled after the inactives came out", async () => {
+    const [{ latest }] = await db.su("select max(pulled_at) as latest from public.prop_imports where ok");
+    const [orig] = await db.su("select kickoff_at, feed_commence from public.games where id = $1", [gKc]);
+    // Inactives (kickoff minus 90 minutes) came out a minute after the latest pull.
+    const kickoff = new Date(new Date(latest).getTime() + 91 * 60_000);
+    await db.su("update public.games set kickoff_at = $2, feed_commence = $2 where id = $1", [gKc, kickoff]);
+    const bet = () => place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 10_000, legs: [propLeg(gKc, "anytime_td", "James Cook", "yes", null, -110)] as never });
+    await fails(bet(), "props_inactives");
+    // The next pull is after the inactives: betting reopens.
+    await importProps([
+      ...ou("KCBUF", "player_pass_yds", "Josh Allen", 240.5),
+      ...ou("KCBUF", "player_pass_yds", "Patrick Mahomes", 252.5, "fanduel"),
+      td("KCBUF", "Josh Allen", 120),
+      td("KCBUF", "James Cook", -110),
+      ...ou("DETGB", "player_reception_yds", "Amon-Ra St. Brown", 74.5),
+    ]);
+    await bet();
+    // Game lines don't care.
+    await place(db, { entry: daveEntry, user: dave, type: "straight", stakeCents: 10_000, legs: [{ gameId: gKc, market: "total", side: "under", point: 47.5, price: -110 }] as never });
+    await db.su("update public.games set kickoff_at = $2, feed_commence = $3 where id = $1", [gKc, orig.kickoff_at, orig.feed_commence]);
   });
 });
 
@@ -270,8 +309,9 @@ describe("the rules' props section", () => {
     const d = await doc();
     return db.q(service, "select public.publish_rule_set_internal($1, $2, $3::jsonb, 6, 'props') as v", [owner, league, JSON.stringify({ ...d, props })]);
   };
-  it("new leagues start with props off", async () => {
-    expect((await db.su("select document -> 'props' as p from public.rule_sets where version = 1"))[0].p).toEqual({ ...PROPS_ON, enabled: false });
+  it("new leagues start with props off, at the recommended limits", async () => {
+    expect((await db.su("select document -> 'props' as p from public.rule_sets where version = 1"))[0].p)
+      .toEqual({ ...PROPS_ON, enabled: false, maxPerGame: 1, maxStakePct: 2, maxPerParlay: 3 });
   });
   it("a published props section must be whole and in range", async () => {
     await fails(publish({ ...PROPS_ON, maxPerGame: 4 }), "bad_rules");
@@ -280,5 +320,129 @@ describe("the rules' props section", () => {
     await fails(publish({ ...PROPS_ON, markets: ["player_pass_tds"] }), "bad_rules");
     await fails(publish({ ...PROPS_ON, enabled: "yes" }), "bad_rules");
     await publish({ ...PROPS_ON, maxPerGame: 3, maxStakePct: 25 });
+  });
+});
+
+describe("props waiting for an admin", () => {
+  const candidate = { player: "Gabriel Davis", stats: { passYds: 0, rushYds: 0, recYds: 40, receptions: 3, tds: 0 } };
+  it("the grader's list replaces the last one, keeps when each started, and only admins can read it", async () => {
+    await db.q(service, "select public.record_prop_holds_internal($1::jsonb)", [JSON.stringify([
+      { gameId: gKc, player: "Joe Nobody", why: "missing", bets: 2 },
+      { gameId: gKc, player: "Gabe Davis", why: "name", candidate, bets: 1 },
+      { gameId: gKc, player: "Odd Reason", why: "nope", bets: 1 },
+      { gameId: "00000000-0000-0000-0000-000000000000", player: "No Game", why: "missing", bets: 1 },
+    ])]);
+    expect(await db.q(member(owner), "select label, player, why, candidate, bets from public.admin_prop_holds()")).toEqual([
+      { label: "Bills at Chiefs", player: "Gabe Davis", why: "name", candidate, bets: 1 },
+      { label: "Bills at Chiefs", player: "Joe Nobody", why: "missing", candidate: null, bets: 2 },
+    ]);
+    await fails(db.q(member(carol), "select * from public.admin_prop_holds()"), "admin_only");
+    await fails(db.q(member(owner), "select public.record_prop_holds_internal('[]'::jsonb)"), "permission denied");
+    await fails(db.q(member(carol), "select * from public.prop_holds"), "permission denied");
+    const [first] = await db.su("select since from public.prop_holds where player = 'Joe Nobody'");
+    await db.q(service, "select public.record_prop_holds_internal($1::jsonb)", [JSON.stringify([{ gameId: gKc, player: "Joe Nobody", why: "missing", bets: 3 }])]);
+    expect(await db.su("select player, bets, since from public.prop_holds")).toEqual([{ player: "Joe Nobody", bets: 3, since: first.since }]);
+  });
+
+  it("an admin's answer clears that player's hold", async () => {
+    await db.q(member(owner), "select public.admin_set_player_stats($1, 'joe nobody', false, 0, 0, 0, 0, 0, 'Inactive')", [gKc]);
+    expect(await db.su("select count(*)::int as n from public.prop_holds")).toEqual([{ n: 0 }]);
+  });
+});
+
+describe("box scores sent from the owner's PC", () => {
+  it("checks the owner's key", async () => {
+    expect((await db.q(service, "select public.prop_key_ok_internal($1) as ok", [KEY]))[0].ok).toBe(true);
+    expect((await db.q(service, "select public.prop_key_ok_internal('nope') as ok"))[0].ok).toBe(false);
+    expect((await db.q(service, "select public.prop_key_ok_internal(null) as ok"))[0].ok).toBe(false);
+    await fails(db.q(member(owner), "select public.prop_key_ok_internal('x')"), "permission denied");
+  });
+
+  it("an admin's stats for one player don't make the game's box score, which can still come from the PC", async () => {
+    await db.su("update public.games set kickoff_at = now() - interval '3 hours' where id = $1", [gDet]);
+    await db.q(member(owner), "select public.admin_set_final_score($1, 24, 17, 'Final')", [gDet]);
+    const waiting = async () => (await db.q(service, "select game_id from public.games_needing_boxes_internal()")).map((r) => r.game_id);
+    expect(await waiting()).toContain(gDet);
+    await db.q(member(owner), "select public.admin_set_player_stats($1, 'Jared Goff', true, 280, 3, 0, 0, 0, 'ESPN is down')", [gDet]);
+    expect(await db.su("select count(*)::int as n from public.game_boxes where game_id = $1", [gDet])).toEqual([{ n: 0 }]);
+    expect(await waiting()).toContain(gDet);
+    const players = [{ player: "Jared Goff", team: "DET", passYds: 281, rushYds: 3, recYds: 0, receptions: 0, tds: 0 }];
+    await fails(db.q(service, "select public.ingest_box_internal($1, '401770002', $2::jsonb, 'admin')", [gDet, JSON.stringify(players)]), "bad_source");
+    await fails(db.q(member(owner), "select public.ingest_box_internal($1, '401770002', $2::jsonb, 'feed')", [gDet, JSON.stringify(players)]), "permission denied");
+    expect((await db.q(service, "select public.ingest_box_internal($1, '401770002', $2::jsonb, 'feed') as n", [gDet, JSON.stringify(players)]))[0].n).toBe(1);
+    expect(await db.su("select source from public.game_boxes where game_id = $1", [gDet])).toEqual([{ source: "feed" }]);
+    expect(await waiting()).not.toContain(gDet);
+    // The admin's row stands beside the box score (it grades Goff's props first).
+    expect(await db.su("select source, pass_yds from public.player_stats where game_id = $1 order by source", [gDet])).toEqual([
+      { source: "admin", pass_yds: 280 }, { source: "espn", pass_yds: 281 },
+    ]);
+  });
+});
+
+describe("a later game: ruled-out players, price checks, the props-per-parlay cap", () => {
+  let g: string;
+  const boardOf = async (game: string) =>
+    (await db.q(member(carol), "select market, player, side, point::float as point, price, source from public.current_props where game_id = $1 order by market, player, side", [game]));
+
+  it("a player whose props came off the board once inactives were out (while the game's others stayed) was ruled out", async () => {
+    await ingest(db, [event("NYGDAL", hoursFromNow(1), "Dallas Cowboys", "New York Giants", [{ book: "draftkings", outcomes: standardLines(-3) }])]);
+    g = await gameId(db, "NYGDAL");
+    await importProps([...ou("NYGDAL", "player_reception_yds", "CeeDee Lamb", 80.5), td("NYGDAL", "Malik Nabers", 150)]);
+    const [{ latest }] = await db.su("select max(pulled_at) as latest from public.prop_imports where ok");
+    // The inactives come out between that pull and the next.
+    const kickoff = new Date(new Date(latest).getTime() + 90 * 60_000 + 30_000);
+    await db.su("update public.games set kickoff_at = $2, feed_commence = $2 where id = $1", [g, kickoff]);
+    const gone = async () => (await db.q(service, "select player from public.props_left_board_internal($1::uuid[])", [[g]])).map((r) => r.player);
+    expect(await gone()).toEqual([]);
+    await importProps([td("NYGDAL", "Malik Nabers", 150)]);
+    expect(await gone()).toEqual(["CeeDee Lamb"]);
+    await fails(db.q(member(owner), "select * from public.props_left_board_internal($1::uuid[])", [[g]]), "permission denied");
+  });
+
+  it("a price no book posts for a main line leaves that book's prop off the board, for the next book's", async () => {
+    await importProps([
+      // DraftKings' over at +400 against a -110 under: a feed error. FanDuel's is used.
+      ...ou("NYGDAL", "player_reception_yds", "CeeDee Lamb", 80.5, "draftkings", 400, -110),
+      ...ou("NYGDAL", "player_reception_yds", "CeeDee Lamb", 79.5, "fanduel", -115, -105),
+      // Only one book, and out of range: off the board.
+      ...ou("NYGDAL", "player_receptions", "Jake Ferguson", 4.5, "draftkings", -350, 260),
+      // Both sides plus money: no book's margin is below zero.
+      ...ou("NYGDAL", "player_rush_yds", "Rico Dowdle", 55.5, "draftkings", 110, 110),
+      ...ou("NYGDAL", "player_pass_yds", "Dak Prescott", 245.5),
+      td("NYGDAL", "Malik Nabers", 150),
+      td("NYGDAL", "Dak Prescott", 3000),
+    ]);
+    expect(await boardOf(g)).toEqual([
+      { market: "anytime_td", player: "Malik Nabers", side: "yes", point: null, price: 150, source: "draftkings" },
+      { market: "pass_yds", player: "Dak Prescott", side: "over", point: 245.5, price: -115, source: "draftkings" },
+      { market: "pass_yds", player: "Dak Prescott", side: "under", point: 245.5, price: -115, source: "draftkings" },
+      { market: "rec_yds", player: "CeeDee Lamb", side: "over", point: 79.5, price: -115, source: "fanduel" },
+      { market: "rec_yds", player: "CeeDee Lamb", side: "under", point: 79.5, price: -105, source: "fanduel" },
+    ]);
+  });
+
+  it("a parlay takes at most props.maxPerParlay props", async () => {
+    const legs = [
+      propLeg(g, "anytime_td", "Malik Nabers", "yes", null, 150),
+      propLeg(g, "rec_yds", "CeeDee Lamb", "over", 79.5, -115),
+      propLeg(g, "pass_yds", "Dak Prescott", "under", 245.5, -115),
+    ];
+    const parlay = () => place(db, { entry: carolEntry, user: carol, type: "parlay", stakeCents: 10_000, legs: legs as never });
+    await setProps({ ...PROPS_ON, maxPerGame: 3, maxPerParlay: 2 });
+    await fails(parlay(), "too_many_props");
+    await setProps({ ...PROPS_ON, maxPerGame: 3, maxPerParlay: 3 });
+    await parlay();
+    await setProps(PROPS_ON);
+  });
+
+  it("a published props.maxPerParlay must be 1 to 10", async () => {
+    const [d] = await db.su("select document from public.rule_sets where league_id = $1 order by version desc limit 1", [league]);
+    const publish = (props: unknown) =>
+      db.q(service, "select public.publish_rule_set_internal($1, $2, $3::jsonb, 6, 'props') as v", [owner, league, JSON.stringify({ ...d.document, props })]);
+    await fails(publish({ ...PROPS_ON, maxPerParlay: 0 }), "bad_rules");
+    await fails(publish({ ...PROPS_ON, maxPerParlay: 11 }), "bad_rules");
+    await fails(publish({ ...PROPS_ON, maxPerParlay: 2.5 }), "bad_rules");
+    await fails(publish({ ...PROPS_ON, maxPerParlay: "3" }), "bad_rules");
+    await publish({ ...PROPS_ON, maxPerGame: 1, maxStakePct: 2, maxPerParlay: 3 });
   });
 });

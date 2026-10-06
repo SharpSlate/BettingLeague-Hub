@@ -97,6 +97,9 @@ export function validateRuleSet(r: RuleSet): Problem[] {
     if (!(Number.isInteger(p?.maxPerGame) && p.maxPerGame >= 1 && p.maxPerGame <= 3)) {
       add("props_per_game", "Picks per game with a prop must be 1, 2 or 3.");
     }
+    if (p?.maxPerParlay !== undefined && !(Number.isInteger(p.maxPerParlay) && p.maxPerParlay >= 1 && p.maxPerParlay <= 10)) {
+      add("props_per_parlay", "Props in one parlay must be a whole number from 1 to 10.");
+    }
     if (!(num(p?.maxStakePct) && p.maxStakePct > 0 && p.maxStakePct <= 100)) {
       add("props_stake", "The prop stake limit must be above 0 and at most 100 percent of the maximum stake.");
     } else if (p.enabled && wholeCents(s.minUnits) && wholeCents(s.maxUnits) && wholeCents(s.incrementUnits)) {

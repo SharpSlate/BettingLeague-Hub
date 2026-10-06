@@ -248,6 +248,23 @@ export interface PlayerStatsInput {
   tds: number;
 }
 
+/**
+ * A player prop the grader can't settle without an admin: the player isn't in the box
+ * score (missing), two players there have his name (ambiguous), only a player with the
+ * same first initial and last name is (name, with that player's stats), or the box
+ * score hasn't come in (no_box).
+ */
+export interface PropHold {
+  gameId: string;
+  label: string;
+  kickoffAt: string;
+  player: string;
+  why: "missing" | "ambiguous" | "name" | "no_box";
+  candidate: { player: string; stats: PlayerStatsInput } | null;
+  bets: number;
+  since: string;
+}
+
 export interface PlacementRequest {
   entryId: string;
   type: BetType;
@@ -352,6 +369,10 @@ export interface Api {
   adminSetFinalScore(gameId: string, home: number, away: number, reason: string): Promise<void>;
   /** A player's stats on a final game, for his props, or null stats when he didn't play. */
   adminSetPlayerStats(gameId: string, player: string, stats: PlayerStatsInput | null, reason: string): Promise<void>;
+  /** Player props waiting for an admin to say whether (and how) their player played. */
+  adminPropHolds(): Promise<PropHold[]>;
+  /** Emails every member from the league's address (or just the sender, as a test). */
+  adminEmailLeague(subject: string, message: string, testOnly: boolean): Promise<{ sent: number }>;
   adminVoidSlip(slipId: string, reason: string): Promise<void>;
   adminRunJob(job: "pull-lines" | "pull-scores"): Promise<string>;
   adminPublishRules(document: RuleSet, effectiveWeek: number, note: string): Promise<number>;

@@ -60,6 +60,8 @@ export interface PropRules {
   maxPerGame: number;
   /** A bet with a prop can stake at most this percent of the league's maximum stake. */
   maxStakePct: number;
+  /** At most this many props in one parlay (1 to 10). Absent in rule sets from before it: no limit. */
+  maxPerParlay?: number;
 }
 
 export interface RuleSet {

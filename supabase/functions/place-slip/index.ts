@@ -18,7 +18,7 @@ import { currentUser, env, serviceClient, siteOrigins } from "../_shared/env.ts"
 import { dbErrorCode, friendlyMessage, json, preflight } from "../_shared/http.ts";
 import { pullLines, refreshForUndo } from "../_shared/jobs.ts";
 import { checkPlacement, type CurrentLine, type GameInfo, type PlacementInput } from "../_shared/placement.ts";
-import { isProp, PROP_MARKETS } from "../_shared/rules/props.ts";
+import { isProp, PROP_MARKETS, propsClosed } from "../_shared/rules/props.ts";
 import type { BetType, Leg, RuleSet } from "../_shared/rules/types.ts";
 import { isStale } from "../_shared/schedule.ts";
 import { SupabaseStore } from "../_shared/supabase-store.ts";
@@ -157,6 +157,19 @@ Deno.serve(async (req) => {
       const last = (await db.from("prop_imports").select("pulled_at").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle()).data;
       const age = (await db.from("league_settings").select("prop_max_age_minutes").single()).data;
       props = { pulledAt: last ? new Date(last.pulled_at) : null, maxAgeMinutes: Number(age?.prop_max_age_minutes ?? 0) };
+    }
+
+    // Within 90 minutes of a game's kickoff its inactive players are out, and its props can
+    // only be bet on lines pulled after that (place_slip_internal checks the same).
+    if (hasProps) {
+      const now = new Date();
+      const waiting = input.legs.flatMap((l, i) => {
+        const g = games.get(l.gameId.toLowerCase()) ?? games.get(l.gameId);
+        return isProp(l.market) && g && propsClosed(g.locksAt, props.pulledAt, now, props.maxAgeMinutes) === "inactives" ? [i] : [];
+      });
+      if (waiting.length) {
+        return json(req, origins, 422, { error: "invalid", problems: waiting.map((leg) => ({ code: "props_inactives", message: friendlyMessage("props_inactives"), leg })) });
+      }
     }
 
     let lines = await loadLines();

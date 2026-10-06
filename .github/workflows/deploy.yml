@@ -147,9 +147,16 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
         run: |
-          supabase secrets set --project-ref "$PROJECT_REF" \
-            "ODDS_API_KEY=$ODDS_API_KEY" "CRON_SECRET=$CRON_SECRET" "SITE_ORIGIN=$SITE_ORIGIN"
+          args=("ODDS_API_KEY=$ODDS_API_KEY" "CRON_SECRET=$CRON_SECRET" "SITE_ORIGIN=$SITE_ORIGIN" "SITE_URL=$SITE_URL")
+          # The league's Gmail, for an admin's email to the league (email-league). Optional,
+          # like the sign-in codes that use the same account.
+          if [ -n "$SMTP_USER" ] && [ -n "$SMTP_PASS" ]; then
+            args+=("SMTP_USER=$SMTP_USER" "SMTP_PASS=$SMTP_PASS")
+          fi
+          supabase secrets set --project-ref "$PROJECT_REF" "${args[@]}"
       - name: Deploy Edge Functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

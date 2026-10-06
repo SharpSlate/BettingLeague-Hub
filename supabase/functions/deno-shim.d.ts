@@ -7,3 +7,10 @@ declare namespace Deno {
 declare module "npm:@supabase/supabase-js@2" {
   export * from "@supabase/supabase-js";
 }
+declare module "npm:nodemailer@6.9.16" {
+  interface Transport {
+    sendMail(message: { from: string; to: string; bcc: string[]; replyTo?: string; subject: string; text: string }): Promise<unknown>;
+  }
+  const nodemailer: { createTransport(options: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }): Transport };
+  export default nodemailer;
+}

@@ -396,8 +396,9 @@ h3 { font-size: 15px; font-weight: 700; }
 .feed-item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
 .feed-item:last-child { border-bottom: 0; }
 .feed-item .when { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.grid-2 { display: grid; gap: 12px; }
-@media (min-width: 800px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+/* minmax(0, ...) so a wide table inside (it scrolls on its own) can't stretch the page past a phone's width. */
+.grid-2 { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 800px) { .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .form { display: grid; gap: 10px; }
 .form .row > * { flex: 1; }
 details.card > summary { cursor: pointer; list-style: none; padding: 12px 14px; font-weight: 750; }

@@ -5,7 +5,7 @@ import type { RuleSet } from "@rules";
 import { authErrorText } from "./auth.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry,
-  PlacementRequest, PlaceResult, PlayerStatsInput,
+  PlacementRequest, PlaceResult, PlayerStatsInput, PropHold,
   RuleVersion, SlipView, SplashImport, StandingRow, Team, UndoResult, WeekInfo,
 } from "./types.ts";
 
@@ -398,6 +398,22 @@ export class SupabaseApi implements Api {
       p_game: gameId, p_player: player, p_played: stats !== null, p_pass_yds: stats?.passYds ?? 0, p_rush_yds: stats?.rushYds ?? 0,
       p_rec_yds: stats?.recYds ?? 0, p_receptions: stats?.receptions ?? 0, p_tds: stats?.tds ?? 0, p_reason: reason,
     }));
+  }
+  async adminPropHolds(): Promise<PropHold[]> {
+    const rows = check(await this.db.rpc("admin_prop_holds")) as any[];
+    return rows.map((r) => ({
+      gameId: r.game_id, label: r.label, kickoffAt: r.kickoff_at, player: r.player, why: r.why, bets: num(r.bets), since: r.since,
+      candidate: r.candidate && typeof r.candidate.player === "string"
+        ? { player: r.candidate.player, stats: {
+          passYds: num(r.candidate.stats?.passYds), rushYds: num(r.candidate.stats?.rushYds), recYds: num(r.candidate.stats?.recYds),
+          receptions: num(r.candidate.stats?.receptions), tds: num(r.candidate.stats?.tds),
+        } }
+        : null,
+    }));
+  }
+  async adminEmailLeague(subject: string, message: string, testOnly: boolean) {
+    const data = await this.invoke("email-league", { leagueId: this.lid, subject, message, testOnly });
+    return { sent: num(data?.sent) };
   }
   async adminVoidSlip(slipId: string, reason: string) {
     check(await this.db.rpc("admin_void_slip", { p_slip: slipId, p_reason: reason }));

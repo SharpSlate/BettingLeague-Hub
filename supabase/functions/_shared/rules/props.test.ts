@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DAY_ONE_RULES } from "./defaults.ts";
 import { gradeLeg, gradePropLeg, gradeSlip } from "./grade.ts";
 import { effectivePrice, quoteSlip, teasedPoint } from "./price.ts";
-import { activeProps, DEFAULT_PROPS, playerKey, propSides } from "./props.ts";
+import { activeProps, DEFAULT_PROPS, playerKey, PROP_INACTIVES_MINUTES, propsClosed, propSides } from "./props.ts";
 import { validateRuleSet } from "./ruleset.ts";
 import type { Leg, PlayerStats, PropMarket, RuleSet, SlipInput } from "./types.ts";
 import { checkAcrossBets, oppositeSides, propStakeCapCents, validateSlip, type ValidationContext } from "./validate.ts";
@@ -56,34 +56,50 @@ describe("player props: which legs are allowed", () => {
 });
 
 describe("player props in a parlay", () => {
-  it("up to the per-game limit (2 by default) from one game", () => {
-    expect(codes(parlay([prop("Josh Allen", "anytime_td", "yes", null), prop("James Cook", "rush_yds", "over", 71.5)]))).toEqual([]);
-    const three = [prop("Josh Allen", "anytime_td", "yes", null), prop("James Cook", "rush_yds", "over", 71.5), prop("Patrick Mahomes", "pass_yds", "over", 254.5)];
-    expect(codes(parlay(three))).toEqual(["same_game_props"]);
-    expect(validateSlip(parlay(three), ON, rich)[0]!.leg).toBe(2);
-    expect(codes(parlay(three), { ...ON, props: { ...ON.props!, maxPerGame: 3 } })).toEqual([]);
-    expect(codes(parlay(three.slice(0, 2)), { ...ON, props: { ...ON.props!, maxPerGame: 1 } })).toEqual(["same_game_props"]);
+  const perGame = (n: number): RuleSet => ({ ...ON, props: { ...ON.props!, maxPerGame: n } });
+  it("one prop per game by default: two from one game tend to hit together", () => {
+    expect(DEFAULT_PROPS).toMatchObject({ maxPerGame: 1, maxStakePct: 2, maxPerParlay: 3 });
+    const two = [prop("Josh Allen", "anytime_td", "yes", null), prop("James Cook", "rush_yds", "over", 71.5)];
+    expect(codes(parlay(two))).toEqual(["same_game_props"]);
+    expect(codes(parlay([two[0]!, prop("Jared Goff", "pass_yds", "over", 262.5, "g2")]))).toEqual([]);
   });
-  it("props from different games don't count against each other", () => {
+  it("up to the per-game limit the league sets from one game", () => {
+    expect(codes(parlay([prop("Josh Allen", "anytime_td", "yes", null), prop("James Cook", "rush_yds", "over", 71.5)]), perGame(2))).toEqual([]);
+    const three = [prop("Josh Allen", "anytime_td", "yes", null), prop("James Cook", "rush_yds", "over", 71.5), prop("Patrick Mahomes", "pass_yds", "over", 254.5)];
+    expect(codes(parlay(three), perGame(2))).toEqual(["same_game_props"]);
+    expect(validateSlip(parlay(three), perGame(2), rich)[0]!.leg).toBe(2);
+    expect(codes(parlay(three), perGame(3))).toEqual([]);
+  });
+  it("props from different games don't count against each other's game limit", () => {
     expect(codes(parlay([
       prop("Josh Allen", "anytime_td", "yes", null, "g1"), prop("James Cook", "rush_yds", "over", 71.5, "g1"),
       prop("Jared Goff", "pass_yds", "over", 262.5, "g2"), prop("Josh Jacobs", "rush_yds", "under", 68.5, "g2"),
-    ]))).toEqual([]);
+    ]), { ...perGame(2), props: { ...perGame(2).props!, maxPerParlay: 4 } })).toEqual([]);
+  });
+  it("at most props.maxPerParlay props on a slip (3 by default); no limit in rule sets from before it", () => {
+    const four = ["g1", "g2", "g3", "g4"].map((g, i) => prop(`Player ${i}`, "anytime_td", "yes", null, g));
+    expect(codes(parlay(four.slice(0, 3)))).toEqual([]);
+    expect(codes(parlay(four))).toEqual(["too_many_props"]);
+    expect(validateSlip(parlay(four), ON, rich)[0]).toEqual({ code: "too_many_props", message: "At most 3 player props in one parlay.", leg: 3 });
+    // Game lines don't count against it.
+    expect(codes(parlay([...four.slice(0, 3), spread("home", -3, "g9")]))).toEqual([]);
+    const { maxPerParlay: _gone, ...noCap } = ON.props!;
+    expect(codes(parlay(four), { ...ON, props: noCap })).toEqual([]);
   });
   it("a prop can't share a parlay with its own game's spread, total or moneyline", () => {
     expect(codes(parlay([prop("Josh Allen", "anytime_td", "yes", null), spread("home", -3)]))).toEqual(["same_game_prop_line"]);
     expect(codes(parlay([prop("Josh Allen", "anytime_td", "yes", null), spread("home", -3, "g2")]))).toEqual([]);
   });
   it("one pick per player", () => {
-    expect(codes(parlay([prop("Josh Allen", "anytime_td", "yes", null), prop("Josh Allen", "rush_yds", "over", 34.5)]))).toEqual(["same_player"]);
+    expect(codes(parlay([prop("Josh Allen", "anytime_td", "yes", null), prop("Josh Allen", "rush_yds", "over", 34.5)]), perGame(2))).toEqual(["same_player"]);
   });
-  it("a bet with a prop stakes at most the props cap (half the maximum by default)", () => {
-    expect(propStakeCapCents(ON)).toBe(12_500_000);
+  it("a bet with a prop stakes at most the props cap (2% of the maximum by default)", () => {
+    expect(propStakeCapCents(ON)).toBe(500_000);
     expect(propStakeCapCents(DAY_ONE_RULES)).toBeNull();
     const leg = prop("Josh Allen", "pass_yds", "over", 245.5);
-    expect(codes(straight(leg, 12_500_000))).toEqual([]);
-    expect(codes(straight(leg, 12_500_100))).toEqual(["stake_max"]);
-    expect(codes(straight(spread("home", -3), 12_500_100))).toEqual([]);
+    expect(codes(straight(leg, 500_000))).toEqual([]);
+    expect(codes(straight(leg, 500_100))).toEqual(["stake_max"]);
+    expect(codes(straight(spread("home", -3), 500_100))).toEqual([]);
     // Rounded down to a whole stake step.
     const steps: RuleSet = { ...ON, stake: { ...ON.stake, maxUnits: 1_001, incrementUnits: 10 }, props: { ...ON.props!, maxStakePct: 50 } };
     expect(propStakeCapCents(steps)).toBe(50_000);
@@ -131,6 +147,24 @@ describe("player props: prices and grading", () => {
   });
 });
 
+describe("propsClosed: when a game's props can be bet", () => {
+  const kickoff = new Date("2026-10-11T17:00:00Z");
+  const at = (iso: string) => new Date(iso);
+  it("only on props pulled within the league's limit", () => {
+    expect(propsClosed(kickoff, null, at("2026-10-11T12:00:00Z"), 120)).toBe("stale");
+    expect(propsClosed(kickoff, at("2026-10-11T10:00:00Z"), at("2026-10-11T12:00:00Z"), 120)).toBeNull();
+    expect(propsClosed(kickoff, at("2026-10-11T10:00:00Z"), at("2026-10-11T12:00:01Z"), 120)).toBe("stale");
+  });
+  it("from 90 minutes before kickoff (inactives), only on props pulled after that", () => {
+    expect(PROP_INACTIVES_MINUTES).toBe(90);
+    const before = at("2026-10-11T15:00:00Z");
+    expect(propsClosed(kickoff, before, at("2026-10-11T15:29:59Z"), 120)).toBeNull();
+    expect(propsClosed(kickoff, before, at("2026-10-11T15:30:00Z"), 120)).toBe("inactives");
+    expect(propsClosed(kickoff, at("2026-10-11T15:30:00Z"), at("2026-10-11T16:30:00Z"), 120)).toBeNull();
+    expect(propsClosed(kickoff.toISOString(), "2026-10-11T15:45:00Z", Date.parse("2026-10-11T16:59:00Z"), 120)).toBeNull();
+  });
+});
+
 describe("playerKey", () => {
   it("matches names across sources", () => {
     expect(playerKey("Aaron Jones Sr.")).toBe("aaron jones");
@@ -155,6 +189,15 @@ describe("validateRuleSet: props", () => {
     expect(bad({ markets: ["pass_yds", "pass_yds"] })).toEqual(["props_markets"]);
     expect(bad({ markets: [] })).toEqual(["props_markets"]);
     expect(bad({ markets: [], enabled: false })).toEqual([]);
+  });
+  it("takes 1 to 10 props in a parlay, or none set (no limit)", () => {
+    expect(bad({ maxPerParlay: 1 })).toEqual([]);
+    expect(bad({ maxPerParlay: 10 })).toEqual([]);
+    expect(bad({ maxPerParlay: 0 })).toEqual(["props_per_parlay"]);
+    expect(bad({ maxPerParlay: 11 })).toEqual(["props_per_parlay"]);
+    expect(bad({ maxPerParlay: 2.5 })).toEqual(["props_per_parlay"]);
+    const { maxPerParlay: _gone, ...noCap } = ON.props!;
+    expect(validateRuleSet({ ...ON, props: noCap })).toEqual([]);
   });
   it("takes 1 to 3 picks per game and a stake cap above 0 up to 100%", () => {
     expect(bad({ maxPerGame: 0 })).toEqual(["props_per_game"]);

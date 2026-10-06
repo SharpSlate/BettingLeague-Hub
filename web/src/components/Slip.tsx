@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
+import { isProp, quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
 import { clock, lineNumber, odds, point, toCents, units } from "../lib/format.ts";
 import { pushRuleText, undoText } from "../lib/rules-text.ts";
@@ -19,8 +19,11 @@ function teasedLabel(p: Pick, pts: number): string {
   return `${pickText(p, teasedPoint(legOf(p), pts))} (from ${p.market === "total" ? p.point : point(p.point)})`;
 }
 
-/** What a submit did: which bets went in, out of how many, and whether one failed (its reason stays on the slip). */
-export interface PlacedResult { ids: string[]; total: number; failed: boolean }
+/**
+ * What a submit did: which bets went in (and which of them can be undone: a bet with a
+ * player prop can't), out of how many, and whether one failed (its reason stays on the slip).
+ */
+export interface PlacedResult { ids: string[]; undoIds: string[]; total: number; failed: boolean }
 
 export function SlipBody({ rules, entries, onPlaced }: {
   rules: RuleSet | undefined;
@@ -83,6 +86,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
     if (!plan || allProblems.length || !entry || busy) return;
     slip.setStatus({ busy: true });
     const placed: string[] = [];
+    const undoable: string[] = [];
     let failed = false;
     try {
       for (const item of plan.items) {
@@ -95,6 +99,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         }
         if (r.ok) {
           placed.push(r.slipId);
+          if (!item.input.legs.some((l) => isProp(l.market))) undoable.push(r.slipId);
           slip.forgetRef(item.key);
           if (mode === "straight") slip.remove(item.key);
           continue;
@@ -131,7 +136,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         slip.clear();
         slip.setStatus({ attempted: false });
       }
-      onPlaced({ ids: placed, total: plan.items.length, failed });
+      onPlaced({ ids: placed, undoIds: undoable, total: plan.items.length, failed });
     }
   }
 
