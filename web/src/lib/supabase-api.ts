@@ -2,9 +2,10 @@
 // Security; bets and admin work go through database functions and Edge Functions.
 import { createClient, FunctionsHttpError, type SupabaseClient } from "@supabase/supabase-js";
 import type { RuleSet } from "@rules";
+import { authErrorText } from "./auth.ts";
 import type {
   AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry,
-  PlacementRequest, PlaceResult,
+  PlacementRequest, PlaceResult, PlayerStatsInput, PropHold,
   RuleVersion, SlipView, SplashImport, StandingRow, Team, UndoResult, WeekInfo,
 } from "./types.ts";
 
@@ -29,7 +30,7 @@ function leg(l: any, teams: Map<string, Team>): LegView {
   const g = l.games;
   return {
     legNo: l.leg_no, gameId: l.game_id, market: l.market, side: l.side, point: n(l.point), price: l.price,
-    teasedPoint: n(l.teased_point), book: l.book, result: l.result,
+    teasedPoint: n(l.teased_point), book: l.book, result: l.result, player: l.player ?? null,
     game: {
       home: teams.get(g.home_team)!, away: teams.get(g.away_team)!, kickoffAt: g.kickoff_at, locksAt: locksAt(g), status: g.status,
       homeScore: g.home_score, awayScore: g.away_score,
@@ -43,30 +44,59 @@ export class SupabaseApi implements Api {
   private teamCache: Promise<Team[]> | null = null;
   private leagueId: string | null = null;
 
+  /** A password-reset email signed the member in, and they haven't chosen a new password yet. */
+  private newPassword = false;
+
   constructor(url: string, anonKey: string) {
     this.db = createClient(url, anonKey, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
+    // Registered before the client reads a reset link from the address, so it never misses one.
+    this.db.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") this.newPassword = true;
+      if (event === "SIGNED_OUT") this.newPassword = false;
+    });
   }
 
   async getSession() {
     const { data } = await this.db.auth.getSession();
-    return data.session ? { userId: data.session.user.id } : null;
+    return data.session ? { userId: data.session.user.id, newPassword: this.newPassword } : null;
   }
   onAuthChange(cb: () => void) {
     const { data } = this.db.auth.onAuthStateChange(() => cb());
     return () => data.subscription.unsubscribe();
   }
-  async sendCode(email: string) {
-    // Sign-ups are open: a new email gets an account (and a profile named "Member",
-    // which the leagues page asks them to change) with its first code.
-    // The link in Supabase's standard email (before the site has its own sender) comes
-    // back here, in the browser that asked for it, to finish signing in.
-    const emailRedirectTo = window.location.origin + window.location.pathname;
-    const { error } = await this.db.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: true, emailRedirectTo } });
-    if (error) throw new Error(error.message);
+  async signIn(email: string, password: string) {
+    const { error } = await this.db.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) throw new Error(authErrorText(error));
   }
-  async verifyCode(email: string, code: string) {
-    const { error } = await this.db.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "email" });
-    if (error) throw new Error("That code didn't work. Check it, or send a new one.");
+  async signUp(email: string, password: string) {
+    // Sign-ups are open, and config.toml doesn't ask new accounts to confirm their email,
+    // so this signs them straight in (with a profile named "Member", which the leagues
+    // page asks them to change).
+    const { data, error } = await this.db.auth.signUp({ email: email.trim(), password });
+    if (error) throw new Error(authErrorText(error));
+    if (!data.session) throw new Error("Your account is made. Confirm it from the email we sent, then sign in.");
+  }
+  async sendPasswordReset(email: string) {
+    // The site's own sender emails a code (verifyResetCode). Supabase's standard email has a
+    // link instead, which comes back here, in the browser that asked for it, signed in.
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await this.db.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+    if (error) throw new Error(authErrorText(error));
+  }
+  async verifyResetCode(email: string, code: string) {
+    const { error } = await this.db.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "recovery" });
+    if (error) throw new Error(authErrorText(error));
+  }
+  async setPassword(password: string) {
+    // Cleared first: the change tells the site to look again, and it should find them done.
+    const resetting = this.newPassword;
+    this.newPassword = false;
+    const { error } = await this.db.auth.updateUser({ password });
+    // After a reset, choosing the old password again is fine: it's the password now.
+    if (error && !(resetting && error.code === "same_password")) {
+      this.newPassword = resetting;
+      throw new Error(authErrorText(error));
+    }
   }
   async signInWithGoogle() {
     const { error } = await this.db.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin + window.location.pathname } });
@@ -109,12 +139,13 @@ export class SupabaseApi implements Api {
   }
 
   async league(): Promise<League> {
-    const [settings, mine, open, pull, credits] = await Promise.all([
+    const [settings, mine, open, pull, credits, props] = await Promise.all([
       this.db.from("league_settings").select("*").single(),
       this.myLeagues(),
       this.db.from("league_weeks").select("*, weeks(*)").eq("league_id", this.lid).eq("status", "open").maybeSingle(),
       this.db.from("line_pulls").select("at").eq("kind", "lines").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle(),
       this.db.from("line_pulls").select("credits_remaining").not("credits_remaining", "is", null).order("at", { ascending: false }).limit(1).maybeSingle(),
+      this.db.from("prop_imports").select("pulled_at").eq("ok", true).order("at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     const s = check(settings);
     const l = mine.find((x) => x.id === this.lid);
@@ -138,6 +169,8 @@ export class SupabaseApi implements Api {
       lastPullAt: pull.data?.at ?? null,
       creditsRemaining: credits.data?.credits_remaining ?? null,
       oddsPullsEnabled: s.odds_pulls_enabled === true,
+      propsPulledAt: props.data?.pulled_at ?? null,
+      propMaxAgeMinutes: s.prop_max_age_minutes ?? 1080,
     };
   }
 
@@ -163,15 +196,22 @@ export class SupabaseApi implements Api {
     const [teams, gamesRes] = await Promise.all([this.teams(), this.db.from("games").select("*").eq("week", weekNo).order("kickoff_at")]);
     const games = check(gamesRes) as any[];
     const byAbbr = new Map(teams.map((t) => [t.abbr, t]));
-    const lines = games.length
-      ? (check(await this.db.from("current_lines").select("*").in("game_id", games.map((g) => g.id))) as any[])
-      : [];
+    const ids = games.map((g) => g.id);
+    const [lines, props] = games.length
+      ? await Promise.all([
+        this.db.from("current_lines").select("*").in("game_id", ids).then((r) => check(r) as any[]),
+        this.db.from("current_props").select("*").in("game_id", ids).order("player").then((r) => check(r) as any[]),
+      ])
+      : [[], []];
     return games.map((g) => ({
       id: g.id, week: g.week, kickoffAt: g.kickoff_at, locksAt: locksAt(g),
       home: byAbbr.get(g.home_team)!, away: byAbbr.get(g.away_team)!,
       status: g.status, homeScore: g.home_score, awayScore: g.away_score,
       lines: lines.filter((l) => l.game_id === g.id).map((l) => ({
         market: l.market, side: l.side, point: n(l.point), price: l.price, source: l.source, asOf: l.as_of,
+      })),
+      props: props.filter((p) => p.game_id === g.id).map((p) => ({
+        market: p.market, player: p.player, side: p.side, point: n(p.point), price: p.price, source: p.source, asOf: p.as_of,
       })),
     }));
   }
@@ -352,6 +392,28 @@ export class SupabaseApi implements Api {
   }
   async adminSetFinalScore(gameId: string, home: number, away: number, reason: string) {
     check(await this.db.rpc("admin_set_final_score", { p_game: gameId, p_home: home, p_away: away, p_reason: reason }));
+  }
+  async adminSetPlayerStats(gameId: string, player: string, stats: PlayerStatsInput | null, reason: string) {
+    check(await this.db.rpc("admin_set_player_stats", {
+      p_game: gameId, p_player: player, p_played: stats !== null, p_pass_yds: stats?.passYds ?? 0, p_rush_yds: stats?.rushYds ?? 0,
+      p_rec_yds: stats?.recYds ?? 0, p_receptions: stats?.receptions ?? 0, p_tds: stats?.tds ?? 0, p_reason: reason,
+    }));
+  }
+  async adminPropHolds(): Promise<PropHold[]> {
+    const rows = check(await this.db.rpc("admin_prop_holds")) as any[];
+    return rows.map((r) => ({
+      gameId: r.game_id, label: r.label, kickoffAt: r.kickoff_at, player: r.player, why: r.why, bets: num(r.bets), since: r.since,
+      candidate: r.candidate && typeof r.candidate.player === "string"
+        ? { player: r.candidate.player, stats: {
+          passYds: num(r.candidate.stats?.passYds), rushYds: num(r.candidate.stats?.rushYds), recYds: num(r.candidate.stats?.recYds),
+          receptions: num(r.candidate.stats?.receptions), tds: num(r.candidate.stats?.tds),
+        } }
+        : null,
+    }));
+  }
+  async adminEmailLeague(subject: string, message: string, testOnly: boolean) {
+    const data = await this.invoke("email-league", { leagueId: this.lid, subject, message, testOnly });
+    return { sent: num(data?.sent) };
   }
   async adminVoidSlip(slipId: string, reason: string) {
     check(await this.db.rpc("admin_void_slip", { p_slip: slipId, p_reason: reason }));

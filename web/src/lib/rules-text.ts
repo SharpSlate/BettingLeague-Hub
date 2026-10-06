@@ -1,6 +1,9 @@
 // The league rules in plain English, generated from a rule-set document, so the
 // Rules page and the bet slip always say exactly what the engine enforces.
-import { requiredMinimumCents, teaserPrice, type Market, type RuleSet, type SameGameRules } from "@rules";
+import {
+  activeProps, PROP_LABEL, PROP_MARKETS, propStakeCapCents, requiredMinimumCents, teaserPrice,
+  type GameMarket, type RuleSet, type SameGameRules,
+} from "@rules";
 import { odds, point, units } from "./format.ts";
 import type { League } from "./types.ts";
 
@@ -31,7 +34,7 @@ export interface RulesPage {
 const BOOKS: Record<string, string> = { draftkings: "DraftKings", fanduel: "FanDuel" };
 const bookName = (b: string) => BOOKS[b] ?? b;
 
-const marketList = (m: Market[]) =>
+const marketList = (m: GameMarket[]) =>
   m.map((x) => (x === "moneyline" ? "moneylines" : `${x}s`)).join(m.length > 2 ? ", " : " and ").replace(/, ([^,]*)$/, " and $1");
 
 /** "08:00" -> "8am", "13:30" -> "1:30pm". */
@@ -61,7 +64,7 @@ export function pushRuleText(r: RuleSet): string {
 /** The undo rule in a few words, for the bet slip. */
 export function undoText(r: RuleSet): string {
   if (r.undoMinutes <= 0) return "Bets are final once placed.";
-  return `You can undo within ${minutes(r.undoMinutes)}${r.undoAfterLineMove ? "" : " if the line hasn't moved"}.`;
+  return `You can undo within ${minutes(r.undoMinutes)}${r.undoAfterLineMove ? "" : " if the line hasn't moved"}${activeProps(r) ? ", except a bet with a player prop" : ""}.`;
 }
 
 /** What each leg must win, on average, for a teaser card at the first points option to break even. */
@@ -96,7 +99,7 @@ function sameGameItems(r: RuleSet): RuleItem[] {
   if ((!parlay.enabled || none(parlay.sameGame, false)) && (!teaser.enabled || none(teaser.sameGame, true))) {
     return [{
       lead: "One game, one leg.",
-      text: `A ${[parlay.enabled && "parlay", teaser.enabled && "teaser"].filter(Boolean).join(" or ")} can't include two legs from the same game. Legs from one game tend to win or lose together (a big favorite covering and the over, say), so multiplying their odds would overpay.`,
+      text: `A ${[parlay.enabled && "parlay", teaser.enabled && "teaser"].filter(Boolean).join(" or ")} can't include two legs from the same game. Legs from one game tend to win or lose together (a big favorite covering and the over, say), so multiplying their odds would overpay.${activeProps(r) && parlay.enabled ? " Player props have their own limit, below." : ""}`,
     }];
   }
   const items: RuleItem[] = [];
@@ -111,6 +114,46 @@ function sameGameItems(r: RuleSet): RuleItem[] {
     items.push({ lead: `${name} from one game.`, text });
   }
   return items;
+}
+
+/** The player props section, when the league offers them. */
+function propItems(r: RuleSet, league: League | null): RuleItem[] {
+  const p = activeProps(r);
+  if (!p) return [];
+  const books = league?.books ?? [];
+  const kinds = PROP_MARKETS.filter((m) => p.markets.includes(m)).map((m) => PROP_LABEL[m].toLowerCase().replace(" td", " TD"));
+  const list = kinds.join(", ").replace(/, ([^,]*)$/, " and $1");
+  const cap = propStakeCapCents(r);
+  const age = league ? league.propMaxAgeMinutes : null;
+  const multi = r.betTypes.parlay.enabled;
+  const perParlay = p.maxPerParlay !== undefined && p.maxPerParlay < r.betTypes.parlay.maxLegs
+    ? ` and at most ${p.maxPerParlay} ${p.maxPerParlay === 1 ? "prop" : "props"} in all`
+    : "";
+  return [
+    {
+      lead: "Which props.",
+      text: `${list[0]!.toUpperCase()}${list.slice(1)}, on the main line only (no alternate lines). Each player's line comes from ${books[0] ? `${bookName(books[0])}${books[1] ? `, or ${bookName(books[1])} when ${bookName(books[0])} doesn't have it` : ""}` : "the league's books"}, and pays the book's price. A price no book would post for a main line is treated as a feed error and left off the board.`,
+    },
+    {
+      lead: "Where they go.",
+      text: `${multi ? "Straight bets and parlays" : "Straight bets"}; props can't be teased.${multi ? ` In a parlay, a prop can't be combined with its own game's spread, total or moneyline, and a parlay can take at most ${p.maxPerGame} ${p.maxPerGame === 1 ? "pick" : "picks"} from a game with a prop on the slip${perParlay}. Picks from one game tend to win together (a quarterback's yards and his receiver's, say), and a parlay pays as if they didn't.` : ""} Only one pick per player on a slip.`,
+    },
+    ...(cap !== null && cap < r.stake.maxUnits * 100
+      ? [{ lead: "Smaller stakes.", text: `A bet with a player prop can stake at most ${units(cap)} units (${p.maxStakePct}% of the usual maximum). Prop lines move more and update less often than game lines.` }]
+      : []),
+    {
+      lead: "When they update.",
+      text: `When the league's prop pulls come in, not as often as game lines.${age !== null ? ` Props can be bet for ${age % 60 === 0 ? `${age / 60} hour${age === 60 ? "" : "s"}` : minutes(age)} after each update. Teams name their inactive players 90 minutes before kickoff, so from then on a game's props can only be bet on lines updated after that. A prop the books stop offering comes off the board.` : ""}`,
+    },
+    {
+      lead: "No undo.",
+      text: "A bet with a player prop is final once placed. Prop lines can't be re-checked on the spot, so undo could be used to take a prop back after news broke.",
+    },
+    {
+      lead: "Grading.",
+      text: `From the game's box score once it's final. An anytime TD wins if the player scores a rushing, receiving or return touchdown; touchdowns he throws don't count. If he doesn't play, the prop is void${multi ? " (in a parlay, the leg drops out)" : ""}, as at the books; if he plays without recording a stat, his over loses. A player missing from the box score is checked by a site admin before his bets are graded, unless the books took his props down once inactives were announced. If the box score is wrong, a site admin can correct his stats, and every bet on them is graded again.`,
+    },
+  ];
 }
 
 export function rulesPage(r: RuleSet, league: League | null): RulesPage {
@@ -148,6 +191,9 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
       value: r.undoMinutes > 0 ? `Within ${minutes(r.undoMinutes)}` : "Not allowed",
       detail: r.undoMinutes > 0 ? (r.undoAfterLineMove ? "before kickoff" : "if the line hasn't moved") : undefined,
     },
+    ...(activeProps(r)
+      ? [{ label: "Player props", value: "On", detail: `at most ${activeProps(r)!.maxPerGame} per game in a parlay; no undo` }]
+      : []),
     {
       label: "Picks shown",
       value: r.visibility === "kickoff_per_leg" ? "At kickoff" : r.visibility === "on_placement" ? "When placed" : "At the week's first kickoff",
@@ -207,7 +253,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     ? { lead: "Both sides.", text: "You may bet both sides of a game in separate bets." }
     : {
         lead: "No betting both sides.",
-        text: "Once you have a bet on one side of a game, you can't bet the other side, even in a separate bet: not the other team (by spread or moneyline, in any mix), and not the over and the under together. More on the same side is fine.",
+        text: `Once you have a bet on one side of a game, you can't bet the other side, even in a separate bet: not the other team (by spread or moneyline, in any mix), and not the over and the under together${activeProps(r) ? ", of the total or of a player's prop" : ""}. More on the same side is fine.`,
       });
   combining.push({ lead: "No doubles.", text: "The same pick can't be on a slip twice." });
 
@@ -223,7 +269,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     {
       lead: "Undo.",
       text: r.undoMinutes > 0
-        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, the daily limit on these pulls is used up, or the league's odds credits are running low), the bet stays"}. After that, bets are final.`
+        ? `You can undo a bet within ${minutes(r.undoMinutes)} of placing it, as long as none of its games has started${r.undoAfterLineMove ? "" : " and none of its lines has moved since"}, and its week is still open. The stake comes back. Undo is for fixing mistakes${r.undoAfterLineMove ? "" : ", not for taking a bet back after news moves the line. To check, the site pulls fresh lines when you ask; if it can't just then (the odds feed is down, the daily limit on these pulls is used up, or the league's odds credits are running low), the bet stays"}. After that, bets are final.${activeProps(r) ? " A bet with a player prop can't be undone at all." : ""}`
         : "Bets are final once placed.",
     },
     {
@@ -290,6 +336,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     { id: "bets", title: "The bets", intro: `${COUNT_WORDS[bets.length] ?? bets.length} kind${bets.length === 1 ? "" : "s"} of bet, all in play units.`, items: bets, example: teaserExample },
     { id: "lines", title: "Lines and prices", intro: "Where the numbers come from, and when they change.", items: lines },
     { id: "combining", title: "Combining picks", intro: "What can go on one slip, and what separate bets can't do together.", items: combining },
+    { id: "props", title: "Player props", intro: "Single players' stats, on the main line.", items: propItems(r, league) },
     { id: "timing", title: "Locks, undo and picks", intro: "When betting closes, and who sees what.", items: timing },
     { id: "grading", title: "Pushes, voids and corrections", items: grading },
     { id: "minimum", title: "Weekly minimum", intro: wm.pct > 0 && wm.penalty !== "none" ? "Every entry has to keep betting." : undefined, items: weekly, example: weeklyExample },

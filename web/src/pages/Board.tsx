@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { propsClosed } from "@rules";
 import { GameCard } from "../components/GameCard.tsx";
 import { SlipBody, type PlacedResult } from "../components/Slip.tsx";
 import { Empty, ErrorNote, errorText, Loading, PageHead } from "../components/ui.tsx";
@@ -51,14 +52,15 @@ export function Board() {
   // One request undoes them all, against one fresh pull of the lines, each bet on its
   // own: one that can't be undone (its line moved, say) doesn't stop the rest. Only the
   // bets worth another try (the lines couldn't be pulled just then) keep the Undo button.
+  // Bets with a player prop can't be undone, so they never get it.
   const undoAll = async () => {
     const shown = toast;
     if (!shown || undoing) return;
     setUndoing(shown);
-    const next = await api.undoSlips(shown.ids).then(
+    const next = await api.undoSlips(shown.undoIds).then(
       (results): Toast | null => {
         const left = afterUndo(results, errorText, shown.final);
-        return left && { ...shown, ids: left.retry, note: left.note, final: left.final };
+        return left && { ...shown, undoIds: left.retry, note: left.note, final: left.final };
       },
       (e): Toast => ({ ...shown, note: errorText(e) }),
     );
@@ -70,6 +72,10 @@ export function Board() {
 
   const body = <SlipBody rules={weekRules} entries={entries.data ?? []} onPlaced={onPlaced} />;
   const lg = league.data;
+  // Props come from the site owner's own pulls; too old, or pulled before a game's
+  // inactives came out (90 minutes before kickoff), and that game's props can't be bet.
+  const propsOn = Boolean(weekRules?.props?.enabled);
+  const propsState = (g: GameView) => (lg ? propsClosed(g.locksAt, lg.propsPulledAt, now, lg.propMaxAgeMinutes) : "stale");
 
   return (
     <>
@@ -77,7 +83,7 @@ export function Board() {
         title={lg?.openWeek ? `${lg.openWeek.label} board` : "Board"}
         sub={
           lg
-            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than ${duration(lg.refreshOnBetSeconds)} old (once every ${lg.betRefreshMemberMinutes} minutes per member, up to a daily limit). All times Eastern.`
+            ? `Lines from ${lg.books.map((b) => (b === "draftkings" ? "DraftKings" : b === "fanduel" ? "FanDuel" : b)).join(", then ")}, updated ${ago(lg.lastPullAt, now)}. Refreshed every ${lg.pullEveryMinutes} minutes, every ${lg.pullNearKickoffMinutes} in the ${lg.nearKickoffHours} hours before a kickoff, and before a bet when they're more than ${duration(lg.refreshOnBetSeconds)} old (once every ${lg.betRefreshMemberMinutes} minutes per member, up to a daily limit).${propsOn ? ` Player props ${lg.propsPulledAt ? `updated ${ago(lg.propsPulledAt, now)}` : "not loaded yet"}; they can be bet for ${duration(lg.propMaxAgeMinutes * 60)} after each update.` : ""} All times Eastern.`
             : undefined
         }
       />
@@ -91,7 +97,7 @@ export function Board() {
               <section key={d}>
                 <h2 className="day-label">{d}</h2>
                 <div className="games">
-                  {gs.map((g) => <GameCard key={g.id} game={g} now={now} rules={weekRules} />)}
+                  {gs.map((g) => <GameCard key={g.id} game={g} now={now} rules={weekRules} propsClosed={propsState(g)} />)}
                 </div>
               </section>
             ))}
@@ -133,7 +139,7 @@ export function Board() {
           <span>
             {toast.note ?? (toast.failed ? `${toast.ids.length} of ${toast.total} bets placed` : toast.ids.length > 1 ? `${toast.ids.length} bets placed` : "Bet placed")}
           </span>
-          {toast.ids.length ? <button className="btn small" disabled={undoing !== null} onClick={undoAll}>{undoing === toast ? "Undoing…" : "Undo"}</button> : null}
+          {toast.undoIds.length ? <button className="btn small" disabled={undoing !== null} onClick={undoAll}>{undoing === toast ? "Undoing…" : "Undo"}</button> : null}
           <button className="btn small" aria-label="Dismiss" onClick={() => setToast(null)}>×</button>
         </div>
       ) : null}

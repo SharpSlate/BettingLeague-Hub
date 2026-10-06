@@ -1,7 +1,7 @@
 // The commissioner's rules editor: every setting in the rule-set document, checked
 // with the same code the server uses, published as a new version from a future week.
 import { useMemo, useState } from "react";
-import { validateRuleSet, type RuleSet, type SameGameRules } from "@rules";
+import { DEFAULT_PROPS, PROP_LABEL, PROP_MARKETS, validateRuleSet, type PropRules, type RuleSet, type SameGameRules } from "@rules";
 import { errorText } from "../components/ui.tsx";
 import { useApi } from "../lib/api.ts";
 import { parseNumber } from "../lib/format.ts";
@@ -91,6 +91,9 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
 
   const edit = (fn: (d: RuleSet) => void) => setDoc((d) => { const n = clone(d); fn(n); return n; });
   const t = doc.betTypes.teaser;
+  // Rule sets from before props existed have no props section: that means off.
+  const props = doc.props ?? DEFAULT_PROPS;
+  const editProps = (fn: (p: PropRules) => void) => edit((d) => { d.props = clone(d.props ?? DEFAULT_PROPS); fn(d.props); });
   const problems = useMemo(() => {
     try { return validateRuleSet(doc); } catch { return [{ code: "malformed", message: "The rules are incomplete." }]; }
   }, [doc]);
@@ -175,6 +178,48 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
             <div><h3 style={{ marginBottom: 8 }}>From one game, teasers may combine</h3><SameGame teaser value={t.sameGame} onChange={(v) => edit((d) => { d.betTypes.teaser.sameGame = v; })} /></div>
           </div>
           <Check label="An entry may bet both sides of a game in separate bets (both teams, or the over and the under)" value={doc.acrossBets.oppositeSides} onChange={(b) => edit((d) => { d.acrossBets.oppositeSides = b; })} />
+        </div>
+      </details>
+
+      <details className="card">
+        <summary>Player props</summary>
+        <div className="body stack">
+          <Check label="Offer player props (main lines only; straight bets and parlays, never teasers)" value={props.enabled} onChange={(b) => editProps((p) => { p.enabled = b; })} />
+          {props.enabled ? (
+            <>
+              <div className="stack-sm">
+                {PROP_MARKETS.map((m) => (
+                  <Check key={m} label={PROP_LABEL[m]} value={props.markets.includes(m)}
+                    onChange={(b) => editProps((p) => { p.markets = PROP_MARKETS.filter((x) => (x === m ? b : p.markets.includes(x))); })} />
+                ))}
+              </div>
+              <div className="row">
+                <label className="field"><span>Most picks from one game in a parlay with a prop</span>
+                  <select className="input" value={props.maxPerGame} onChange={(e) => editProps((p) => { p.maxPerGame = Number(e.target.value); })}>
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                  </select>
+                </label>
+                <Num label="Max stake on a bet with a prop (% of max stake)" value={props.maxStakePct} onChange={(n) => editProps((p) => { p.maxStakePct = n; })} />
+                <label className="field"><span>Most props in one parlay</span>
+                  <select className="input" value={props.maxPerParlay ?? ""} onChange={(e) => editProps((p) => {
+                    if (e.target.value === "") delete p.maxPerParlay;
+                    else p.maxPerParlay = Number(e.target.value);
+                  })}>
+                    <option value="">No limit</option>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="tiny muted">
+                Always: one pick per player on a slip, no prop in a parlay with its own game's spread, total or moneyline, and no undo on a bet with a prop.
+                Props can only be bet on recently pulled lines (Week &amp; feeds says how recent), and within 90 minutes of kickoff only on lines pulled after inactives are announced.
+                A player who doesn't play voids his prop; one missing from the box score waits for an admin to check.
+                Recommended: 1 pick per game, a stake cap near 2%, and at most 3 props in a parlay.
+              </div>
+            </>
+          ) : null}
         </div>
       </details>
 

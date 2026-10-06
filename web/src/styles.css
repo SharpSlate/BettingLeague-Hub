@@ -134,7 +134,7 @@ h3 { font-size: 15px; font-weight: 700; }
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   height: calc(var(--tabbar) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface); border-top: 1px solid var(--border);
@@ -288,6 +288,12 @@ h3 { font-size: 15px; font-weight: 700; }
 .price:disabled { cursor: not-allowed; opacity: 0.45; }
 .game.locked .price { display: none; }
 .game-final { display: grid; gap: 6px; }
+.props { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.props > summary { cursor: pointer; font-size: 13px; font-weight: 750; }
+.prop-grid { display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, minmax(74px, 92px)); gap: 6px; align-items: center; margin-top: 8px; }
+.prop-grid .colhead { font-size: 11px; font-weight: 700; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: 0.05em; }
+.prop-grid .prop-head { text-align: left; }
+.prop-player { font-weight: 650; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- slip ---------- */
 
@@ -390,8 +396,9 @@ h3 { font-size: 15px; font-weight: 700; }
 .feed-item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
 .feed-item:last-child { border-bottom: 0; }
 .feed-item .when { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.grid-2 { display: grid; gap: 12px; }
-@media (min-width: 800px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+/* minmax(0, ...) so a wide table inside (it scrolls on its own) can't stretch the page past a phone's width. */
+.grid-2 { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 800px) { .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .form { display: grid; gap: 10px; }
 .form .row > * { flex: 1; }
 details.card > summary { cursor: pointer; list-style: none; padding: 12px 14px; font-weight: 750; }
@@ -406,6 +413,8 @@ details.card > .body { padding: 14px; }
 .signin .card { width: 100%; max-width: 440px; padding: 22px; display: grid; gap: 16px; }
 .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.pw-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; }
+.pw-foot label { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ---------- leagues ---------- */
 

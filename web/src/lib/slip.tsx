@@ -16,6 +16,8 @@ export interface Pick {
   side: Side;
   point: number | null;
   price: number;
+  /** A player prop's player. */
+  player?: string | null;
   /** Team short names, for labels. */
   home: string;
   away: string;
@@ -26,7 +28,7 @@ const teamsOf = (p: Pick) => ({ home: { abbr: "", name: "", shortName: p.home },
 
 /** "Chiefs −3", "Over 47.5", "Bills ML" at the pick's number (or another one, e.g. teased). */
 export function pickText(p: Pick, pt: number | null = p.point): string {
-  return pickLabel(teamsOf(p), p.market, p.side, pt);
+  return pickLabel(teamsOf(p), p.market, p.side, pt, p.player);
 }
 
 export const matchupText = (p: Pick) => `${p.away} at ${p.home}`;
@@ -46,7 +48,8 @@ export interface SlipState {
   refs: Record<string, { fingerprint: string; ref: string }>;
 }
 
-export const pickKey = (gameId: string, market: Market, side: Side) => `${gameId}:${market}:${side}`;
+export const pickKey = (gameId: string, market: Market, side: Side, player?: string | null) =>
+  player ? `${gameId}:${market}:${side}:${player}` : `${gameId}:${market}:${side}`;
 
 /** Where a league's slip is saved in this browser. */
 export const slipStorageKey = (leagueId: string) => `blh.slip.v1:${leagueId}`;

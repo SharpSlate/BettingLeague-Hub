@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
+import { isProp, quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
-import { clock, odds, point, toCents, units } from "../lib/format.ts";
+import { clock, lineNumber, odds, point, toCents, units } from "../lib/format.ts";
 import { pushRuleText, undoText } from "../lib/rules-text.ts";
 import { matchupText, pickText, useSlip, type Pick } from "../lib/slip.tsx";
 import type { MyEntry } from "../lib/types.ts";
@@ -11,16 +11,19 @@ import { Segmented } from "./ui.tsx";
 const COMBO = "combo";
 
 function legOf(p: Pick): Leg {
-  return { gameId: p.gameId, market: p.market, side: p.side, point: p.point, price: p.price };
+  return { gameId: p.gameId, market: p.market, side: p.side, point: p.point, price: p.price, ...(p.player ? { player: p.player } : {}) };
 }
 
 function teasedLabel(p: Pick, pts: number): string {
-  if (p.market === "moneyline" || p.point === null) return `${pickText(p)} (can't be teased)`;
+  if ((p.market !== "spread" && p.market !== "total") || p.point === null) return `${pickText(p)} (can't be teased)`;
   return `${pickText(p, teasedPoint(legOf(p), pts))} (from ${p.market === "total" ? p.point : point(p.point)})`;
 }
 
-/** What a submit did: which bets went in, out of how many, and whether one failed (its reason stays on the slip). */
-export interface PlacedResult { ids: string[]; total: number; failed: boolean }
+/**
+ * What a submit did: which bets went in (and which of them can be undone: a bet with a
+ * player prop can't), out of how many, and whether one failed (its reason stays on the slip).
+ */
+export interface PlacedResult { ids: string[]; undoIds: string[]; total: number; failed: boolean }
 
 export function SlipBody({ rules, entries, onPlaced }: {
   rules: RuleSet | undefined;
@@ -83,6 +86,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
     if (!plan || allProblems.length || !entry || busy) return;
     slip.setStatus({ busy: true });
     const placed: string[] = [];
+    const undoable: string[] = [];
     let failed = false;
     try {
       for (const item of plan.items) {
@@ -95,6 +99,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         }
         if (r.ok) {
           placed.push(r.slipId);
+          if (!item.input.legs.some((l) => isProp(l.market))) undoable.push(r.slipId);
           slip.forgetRef(item.key);
           if (mode === "straight") slip.remove(item.key);
           continue;
@@ -107,8 +112,8 @@ export function SlipBody({ rules, entries, onPlaced }: {
             return {
               key: p.key,
               label: pickText(p),
-              from: `${p.market === "moneyline" ? "" : `${p.market === "total" ? p.point : point(p.point ?? 0)} `}${odds(p.price)}`,
-              to: `${p.market === "moneyline" ? "" : `${p.market === "total" ? m.point : point(m.point ?? 0)} `}${odds(m.price)}`,
+              from: `${lineNumber(p.market, p.point)} ${odds(p.price)}`.trim(),
+              to: `${lineNumber(p.market, m.point)} ${odds(m.price)}`.trim(),
               point: m.point,
               price: m.price,
             };
@@ -131,7 +136,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         slip.clear();
         slip.setStatus({ attempted: false });
       }
-      onPlaced({ ids: placed, total: plan.items.length, failed });
+      onPlaced({ ids: placed, undoIds: undoable, total: plan.items.length, failed });
     }
   }
 
@@ -247,7 +252,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
       <p className="rules-note">
         {mode === "teaser" ? pushRuleText(rules) : mode === "parlay" ? "A pushed leg drops out and the rest are multiplied." : "A push returns your stake."}{" "}
         {rules.lock === "game_kickoff" ? "Each leg locks at its game's kickoff." : "Betting closes at the week's first kickoff."} {undoText(rules)}{" "}
-        <Link to="/league" onClick={() => slip.setOpen(false)}>All the rules</Link>
+        <Link to="/rules" onClick={() => slip.setOpen(false)}>All the rules</Link>
       </p>
     </div>
   );

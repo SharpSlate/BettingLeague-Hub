@@ -10,25 +10,27 @@ import type { LeagueSummary } from "./lib/types.ts";
 import { Admin } from "./pages/Admin.tsx";
 import { Board } from "./pages/Board.tsx";
 import { Entry } from "./pages/Entry.tsx";
-import { League } from "./pages/League.tsx";
+import { League, Rules } from "./pages/League.tsx";
 import { Join, Leagues } from "./pages/Leagues.tsx";
 import { MyBets } from "./pages/MyBets.tsx";
 import { Picks } from "./pages/Picks.tsx";
 import { Profile } from "./pages/Profile.tsx";
-import { SignIn } from "./pages/SignIn.tsx";
+import { NewPassword, SignIn } from "./pages/SignIn.tsx";
 import { Standings } from "./pages/Standings.tsx";
 
 export function App() {
   const api = useApi();
-  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  // "new-password": a password-reset email signed them in, so they choose a password first.
+  const [auth, setAuth] = useState<"out" | "in" | "new-password" | null>(null);
   useEffect(() => {
-    const check = () => api.getSession().then((s) => setSignedIn(!!s));
+    const check = () => api.getSession().then((s) => setAuth(!s ? "out" : s.newPassword ? "new-password" : "in"));
     check();
     return api.onAuthChange(check);
   }, [api]);
 
-  if (signedIn === null) return <Loading what="Starting" />;
-  if (!signedIn) return <SignIn />;
+  if (auth === null) return <Loading what="Starting" />;
+  if (auth === "out") return <SignIn />;
+  if (auth === "new-password") return <NewPassword onDone={() => setAuth("in")} />;
   return <SignedIn />;
 }
 
@@ -91,6 +93,7 @@ function LeagueApp({ league: summary, leagues, onChoose }: { league: LeagueSumma
             <Route path="/board" element={<Board />} />
             <Route path="/picks" element={<Picks />} />
             <Route path="/bets" element={<MyBets />} />
+            <Route path="/rules" element={<Rules />} />
             <Route path="/league" element={<League />} />
             <Route path="/entry/:id" element={<Entry />} />
             <Route path="/admin" element={<Admin />} />

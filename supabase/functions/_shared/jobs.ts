@@ -1,8 +1,9 @@
 // The scheduled jobs: pull lines, pull scores, grade, and advance the week.
 // They talk to the database through the Store interface (supabase-store.ts in
 // production, a fake in the tests) and to The Odds API through an injected fetch.
-import { confirmFinals } from "./espn.ts";
-import { gradePending, type GameResult, type PendingSlip, type Settlement } from "./grading.ts";
+import { confirmFinals, espnDays, espnSummaryUrl, espnUrl, findEspnGame, parseBox, parseEspn, type BoxPlayer, type EspnGame } from "./espn.ts";
+import { gradePending, type Boxes, type GameResult, type Hold, type PendingSlip, type Settlement } from "./grading.ts";
+import { isProp } from "./rules/props.ts";
 import {
   normalizeOdds,
   normalizeScores,
@@ -66,6 +67,25 @@ export interface Store {
   games(ids: string[]): Promise<Map<string, GameResult>>;
   settle(s: Settlement): Promise<boolean>;
   advanceWeek(): Promise<number | null>;
+  /** Final games with player props riding whose box score hasn't been read yet. */
+  gamesNeedingBoxes(): Promise<BoxNeeded[]>;
+  /** Stores a final game's box score (once); returns how many players it had. */
+  ingestBox(gameId: string, espnId: string, players: BoxPlayer[]): Promise<number>;
+  /**
+   * What's known of these games' players: box scores read so far, admins' rows, and who
+   * was ruled out (a game with none of these isn't in the map).
+   */
+  playerStats(gameIds: string[]): Promise<Boxes>;
+  /** Replaces the list of props waiting for an admin (Admin > Week & feeds). */
+  recordPropHolds(holds: (Hold & { bets: number })[]): Promise<void>;
+}
+
+export interface BoxNeeded {
+  gameId: string;
+  kickoffAt: string;
+  /** Full team names, as ESPN writes them. */
+  homeName: string;
+  awayName: string;
 }
 
 export interface PullOutcome {
@@ -277,16 +297,63 @@ export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, 
   }
 
   const errors: string[] = [];
+  // Player props are graded from the box score, read once from ESPN when a game with
+  // props riding goes final (or sent from the owner's PC, import-boxes). Free; nothing is
+  // fetched when no props are riding.
+  let boxFailed = new Set<string>();
+  try {
+    const need = await store.gamesNeedingBoxes();
+    if (need.length) {
+      const loaded = await loadBoxes(store, need, fetchImpl, (await store.settings()).timezone);
+      errors.push(...loaded.problems);
+      boxFailed = loaded.failed;
+    }
+  } catch (e) {
+    errors.push(`box scores: ${safeError(e)}`);
+  }
   const pending = await store.pendingSlips();
   const ids = [...new Set(pending.flatMap((s) => s.legs.map((l) => l.gameId)))];
   const games = ids.length ? await store.games(ids) : new Map<string, GameResult>();
+  const propGames = [...new Set(pending.flatMap((s) => s.legs.filter((l) => isProp(l.market)).map((l) => l.gameId)))];
+  const boxes: Boxes = propGames.length ? await store.playerStats(propGames) : new Map();
+  for (const id of boxFailed) {
+    const box = boxes.get(id);
+    if (box) box.failed = true;
+    else boxes.set(id, { loaded: false, rows: [], failed: true });
+  }
   let settled = 0;
-  for (const s of gradePending(pending, games, (slipId, e) => errors.push(`${slipId}: ${safeError(e)}`))) {
+  const ruledOut = new Set<string>();
+  // Props that can't be graded without an admin, with how many bets wait on each.
+  const holds = new Map<string, Hold & { slips: Set<string> }>();
+  const onHold = (slipId: string, h: Hold) => {
+    const k = `${h.gameId}|${h.player}`;
+    const cur = holds.get(k) ?? { ...h, slips: new Set<string>() };
+    cur.slips.add(slipId);
+    holds.set(k, cur);
+  };
+  for (const s of gradePending(pending, games, (slipId, e) => errors.push(`${slipId}: ${safeError(e)}`), boxes, onHold)) {
     try {
-      if (await store.settle(s)) settled++;
+      if (await store.settle(s)) {
+        settled++;
+        for (const m of s.ruledOut ?? []) ruledOut.add(`${m.player}|${m.gameId}`);
+      }
     } catch (e) {
       errors.push(`${s.slipId}: ${safeError(e)}`);
     }
+  }
+  // Players missing from the box score whose props came off the board once inactives
+  // were announced were ruled out: their props are void, and the admins see it.
+  for (const m of ruledOut) {
+    const [player, gameId] = m.split("|");
+    const label = games.get(gameId!)?.label ?? "his game";
+    await store.recordPull("scores", trigger, false,
+      `props: ${player} (${label}) isn't in the box score and his props came off the board once inactives were announced, so they were graded void as did not play. If he played, enter his stats under Player props waiting.`.slice(0, 500),
+      null, null).catch(() => undefined);
+  }
+  try {
+    await store.recordPropHolds([...holds.values()].map(({ slips, ...h }) => ({ ...h, bets: slips.size })));
+  } catch (e) {
+    errors.push(`props waiting: ${safeError(e)}`);
   }
   let advancedTo: number | null = null;
   try {
@@ -300,4 +367,48 @@ export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, 
     await store.recordPull("scores", trigger, false, `grading: ${errors.join("; ")}`.slice(0, 500), null, null).catch(() => undefined);
   }
   return { scores, settled, advancedTo, errors };
+}
+
+/**
+ * Reads the box score of each game in `need` from ESPN: finds the game's ESPN id on the
+ * scoreboard of its day, then reads its summary. Returns the problems, for the admins,
+ * and the games whose box score couldn't be read (they're tried again on the next run,
+ * or sent from the owner's PC, and their props wait).
+ */
+export async function loadBoxes(store: Store, need: BoxNeeded[], fetchImpl: Fetch, timeZone: string): Promise<{ problems: string[]; failed: Set<string> }> {
+  const problems: string[] = [];
+  const failed = new Set<string>();
+  const espn: EspnGame[] = [];
+  let scoreboardFailed = false;
+  for (const day of espnDays(need.map((g) => g.kickoffAt), timeZone)) {
+    try {
+      const res = await fetchImpl(espnUrl(day));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      espn.push(...parseEspn(await res.json()));
+    } catch (e) {
+      scoreboardFailed = true;
+      problems.push(`box scores: couldn't read ESPN's scoreboard for ${day} (${safeError(e)})`);
+    }
+  }
+  for (const g of need) {
+    const label = `${g.awayName} at ${g.homeName}`;
+    const match = findEspnGame(espn, g.homeName, g.awayName, g.kickoffAt);
+    if (!match?.id) {
+      failed.add(g.gameId);
+      if (!scoreboardFailed) problems.push(`box scores: ESPN doesn't list ${label}, so its props can't be graded yet. Enter its players' stats under Player props waiting if this lasts.`);
+      continue;
+    }
+    if (!match.completed) continue;
+    try {
+      const res = await fetchImpl(espnSummaryUrl(match.id));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const players = parseBox(await res.json());
+      if (!players.length) throw new Error("no players in the box score yet");
+      await store.ingestBox(g.gameId, match.id, players);
+    } catch (e) {
+      failed.add(g.gameId);
+      problems.push(`box scores: couldn't read ${label}'s box score (${safeError(e)})`);
+    }
+  }
+  return { problems, failed };
 }

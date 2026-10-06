@@ -20,7 +20,8 @@ export function BetCard({ slip, showEntry = true, undoMinutes = 0, onUndo, onVoi
   const hidden = slip.legCount - slip.legs.length;
   const firstLock = Math.min(...slip.legs.map((l) => Date.parse(l.game.locksAt)));
   const undoLeft = slip.placedAt ? Date.parse(slip.placedAt) + undoMinutes * 60_000 - now : 0;
-  const canUndo = onUndo && slip.status === "pending" && undoLeft > 0 && (!slip.legs.length || firstLock > now);
+  // A bet with a player prop can't be undone (undo_slip_internal refuses it).
+  const canUndo = onUndo && slip.status === "pending" && undoLeft > 0 && (!slip.legs.length || firstLock > now) && !slip.legs.some((l) => l.player);
   const title = slip.type === "teaser" ? `${slip.legCount}-leg ${slip.teaserPoints}-pt teaser` : slip.type === "parlay" ? `${slip.legCount}-leg parlay` : betTypeName.straight;
   const pays = slip.status === "pending" ? slip.potentialPayoutCents : slip.payoutCents ?? 0;
   // Another entry's parlay shows its odds and payout only once every leg is revealed.

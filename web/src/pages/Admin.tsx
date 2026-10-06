@@ -6,7 +6,7 @@ import { parsePairings, parseStandings, type Parsed } from "../lib/bulk.ts";
 import { ago, kickoff, matchup, odds, toCents } from "../lib/format.ts";
 import { useLoad } from "../lib/hooks.ts";
 import { useMe } from "../lib/me.ts";
-import type { GameView, League } from "../lib/types.ts";
+import type { AdminUser, GameView, League, PlayerStatsInput, PropHold } from "../lib/types.ts";
 import { inviteLink } from "./Leagues.tsx";
 import { RulesEditor } from "./RulesEditor.tsx";
 
@@ -192,6 +192,7 @@ function SiteStatus() {
   const lg = league.data;
   return (
     <div className="grid-2">
+      <PropHolds />
       <div className="card pad stack-sm">
         <h3>Feeds</h3>
         {lg ? (
@@ -200,6 +201,7 @@ function SiteStatus() {
             <dt>Last line pull</dt><dd>{ago(lg.lastPullAt)}</dd>
             <dt>Odds API credits</dt><dd className="num">{lg.creditsRemaining?.toLocaleString() ?? "unknown"}</dd>
             <dt>Line window</dt><dd>{lg.pullWindowStart}–{lg.pullWindowEnd} ET, every {lg.pullEveryMinutes} min ({lg.pullNearKickoffMinutes} in the {lg.nearKickoffHours} hours before a kickoff)</dd>
+            <dt>Player props</dt><dd>{lg.propsPulledAt ? `Pulled ${ago(lg.propsPulledAt)}` : "None yet"}: sent from the owner's own prop pulls (no credits). They can be bet for {lg.propMaxAgeMinutes % 60 === 0 ? `${lg.propMaxAgeMinutes / 60} hour${lg.propMaxAgeMinutes === 60 ? "" : "s"}` : `${lg.propMaxAgeMinutes} minutes`} after each pull, and within 90 minutes of a kickoff only on a pull made after the game's inactives were announced.</dd>
           </dl>
         ) : <Loading />}
       </div>
@@ -239,7 +241,7 @@ function Problems({ problems, empty }: { problems: ReturnType<typeof useLoad<imp
   );
 }
 
-const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game", fair_play: "Fair play" };
+const PROBLEM_KIND: Record<string, string> = { lines: "Line pull", scores: "Scores and grading", game: "Game", fair_play: "Fair play", props: "Player props import" };
 
 function Status({ reload }: { reload: () => void }) {
   const api = useApi();
@@ -304,6 +306,147 @@ function Status({ reload }: { reload: () => void }) {
   );
 }
 
+const HOLD_WHY: Record<PropHold["why"], string> = {
+  missing: "Not in the box score. Inactive, or never on the field? He didn't play. Played without a catch, carry or pass? He played with no stats.",
+  ambiguous: "Two players in the box score have this name. Enter his stats, or say he didn't play.",
+  name: "Not in the box score under this name, but a player with the same first initial and last name is.",
+  no_box: "The box score hasn't come in. It usually arrives within minutes of the final; if it doesn't, enter his stats.",
+};
+const ZERO: PlayerStatsInput = { passYds: 0, rushYds: 0, recYds: 0, receptions: 0, tds: 0 };
+const statsText = (s: PlayerStatsInput) =>
+  [s.passYds && `${s.passYds} pass yds`, s.rushYds && `${s.rushYds} rush yds`, s.receptions && `${s.receptions} rec`, s.recYds && `${s.recYds} rec yds`, s.tds && `${s.tds} TD`]
+    .filter(Boolean).join(", ") || "no stats";
+
+/**
+ * Player props the grader holds for an admin, with one-click answers. Each answer goes
+ * through admin_set_player_stats (logged with its reason), and his bets are graded on
+ * the next run.
+ */
+function PropHolds() {
+  const api = useApi();
+  const holds = useLoad(() => api.adminPropHolds(), [], 60_000);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [form, setForm] = useState({ passYds: "0", rushYds: "0", recYds: "0", receptions: "0", tds: "0" });
+  if (!holds.data?.length) return null;
+  const key = (h: PropHold) => `${h.gameId}|${h.player}`;
+  const answer = async (h: PropHold, stats: PlayerStatsInput | null, reason: string) => {
+    setBusy(key(h));
+    setMsg(null);
+    try {
+      await api.adminSetPlayerStats(h.gameId, h.player, stats, reason);
+      setMsg({ ok: true, text: `Saved for ${h.player}. His bets are graded on the next run (within 5 minutes).` });
+      setOpen(null);
+      holds.reload();
+    } catch (err) {
+      setMsg({ ok: false, text: errorText(err) });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const whole = (label: string, t: string, min = 0) => {
+    const n = Number(t.trim().replace(/^[−–]/, "-"));
+    if (t.trim() === "" || !Number.isInteger(n) || n < min) throw new Error(`${label} must be a whole number${min === 0 ? ", 0 or more" : ""}.`);
+    return n;
+  };
+  return (
+    <div className="card pad stack-sm" style={{ gridColumn: "1 / -1" }}>
+      <h3>Player props waiting for you ({holds.data.length})</h3>
+      <p className="small muted" style={{ margin: 0 }}>
+        These bets can't be graded until you say whether the player played. Check the game's box score or the NFL's inactive list.
+        If he didn't play, his props are void. If he played but didn't catch, run or throw the ball, he played with no stats, and his overs lose.
+      </p>
+      <div className="feed">
+        {holds.data.map((h) => {
+          const k = key(h);
+          const off = busy !== null;
+          return (
+            <div className="feed-item" key={k} style={{ display: "block" }}>
+              <div><b>{h.player}</b> <span className="muted">· {h.label} · {h.bets} bet{h.bets === 1 ? "" : "s"} waiting</span></div>
+              <div className="tiny muted">
+                {HOLD_WHY[h.why]}
+                {h.candidate ? ` The box score has ${h.candidate.player}: ${statsText(h.candidate.stats)}.` : ""}
+              </div>
+              <div className="row wrap" style={{ marginTop: 6 }}>
+                {h.candidate ? (
+                  <button className="btn small primary" disabled={off} onClick={() => answer(h, h.candidate!.stats, `Same player as ${h.candidate!.player} in the box score`)}>
+                    Same player: use {h.candidate.player}'s stats
+                  </button>
+                ) : null}
+                <button className="btn small" disabled={off} onClick={() => answer(h, null, "Didn't play (checked by an admin)")}>Didn't play</button>
+                {h.why === "missing" ? (
+                  <button className="btn small" disabled={off} onClick={() => answer(h, ZERO, "Played without a stat (checked by an admin)")}>Played, no stats</button>
+                ) : null}
+                <button className="btn small link" disabled={off} onClick={() => { setOpen(open === k ? null : k); setForm({ passYds: "0", rushYds: "0", recYds: "0", receptions: "0", tds: "0" }); }}>
+                  {open === k ? "Cancel" : "Enter his stats"}
+                </button>
+              </div>
+              {open === k ? (
+                <form className="stack-sm" style={{ marginTop: 8 }} onSubmit={(e) => {
+                  e.preventDefault();
+                  try {
+                    const stats = {
+                      passYds: whole("Passing yards", form.passYds, -99), rushYds: whole("Rushing yards", form.rushYds, -99),
+                      recYds: whole("Receiving yards", form.recYds, -99), receptions: whole("Receptions", form.receptions), tds: whole("Touchdowns", form.tds),
+                    };
+                    void answer(h, stats, "Stats entered by an admin");
+                  } catch (err) {
+                    setMsg({ ok: false, text: errorText(err) });
+                  }
+                }}>
+                  <div className="row wrap">
+                    <Field label="Passing yds"><input className="input num" value={form.passYds} onChange={(e) => setForm({ ...form, passYds: e.target.value })} /></Field>
+                    <Field label="Rushing yds"><input className="input num" value={form.rushYds} onChange={(e) => setForm({ ...form, rushYds: e.target.value })} /></Field>
+                    <Field label="Receiving yds"><input className="input num" value={form.recYds} onChange={(e) => setForm({ ...form, recYds: e.target.value })} /></Field>
+                    <Field label="Receptions"><input className="input num" value={form.receptions} onChange={(e) => setForm({ ...form, receptions: e.target.value })} /></Field>
+                    <Field label="TDs scored (not thrown)"><input className="input num" value={form.tds} onChange={(e) => setForm({ ...form, tds: e.target.value })} /></Field>
+                  </div>
+                  <div><button className="btn small primary" disabled={off}>{busy === k ? "Saving…" : "Save his stats"}</button></div>
+                </form>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      {msg ? <div className={`banner ${msg.ok ? "" : "bad"}`}>{msg.text}</div> : null}
+    </div>
+  );
+}
+
+/** An email to every member from the league's address, with a test-to-yourself first and a fallback to the admin's own email app. */
+function EmailLeague({ users }: { users: AdminUser[] }) {
+  const api = useApi();
+  const [f, setF] = useState({ subject: "", message: "", test: true });
+  const [armed, setArmed] = useState(false);
+  const count = users.filter((u) => u.email).length;
+  const mailto = `mailto:?bcc=${users.filter((u) => u.email).map((u) => encodeURIComponent(u.email)).join(",")}&subject=${encodeURIComponent(f.subject)}&body=${encodeURIComponent(f.message)}`;
+  return (
+    <Action title="Email the league" submit={f.test ? "Send me a test" : armed ? `Yes, email all ${count} members` : `Email all ${count} members`}
+      note="Goes from the site's email address (the one that sends password reset codes) under the league's name, with every member hidden in Bcc. Replies come to you. Each send, tests included, is noted in the admin log (the subject only). A league can email up to 100 recipients a day, tests included, so the site's account can still send password reset codes."
+      onSubmit={async () => {
+        if (!f.subject.trim() || !f.message.trim()) throw new Error("Write a subject and a message.");
+        if (!f.test && !armed) {
+          setArmed(true);
+          return `Click the button again to send it to all ${count} members.`;
+        }
+        setArmed(false);
+        const { sent } = await api.adminEmailLeague(f.subject, f.message, f.test);
+        if (f.test) {
+          setF({ ...f, test: false });
+          return `Test sent to you (${sent}). Check your inbox; when it looks right, send it to everyone.`;
+        }
+        setF({ subject: "", message: "", test: true });
+        return `Sent to ${sent} member${sent === 1 ? "" : "s"}.`;
+      }}>
+      <Field label="Subject"><input className="input" maxLength={150} value={f.subject} onChange={(e) => { setF({ ...f, subject: e.target.value }); setArmed(false); }} /></Field>
+      <Field label="Message"><textarea className="input" rows={6} maxLength={10_000} value={f.message} onChange={(e) => { setF({ ...f, message: e.target.value }); setArmed(false); }} /></Field>
+      <label className="row small"><input type="checkbox" checked={f.test} onChange={(e) => { setF({ ...f, test: e.target.checked }); setArmed(false); }} /> Send it only to me first, as a test</label>
+      <a className="small" href={mailto}>Or open it in my own email app (everyone in Bcc)</a>
+    </Action>
+  );
+}
+
 function Members() {
   const api = useApi();
   const users = useLoad(() => api.adminUsers(), []);
@@ -314,6 +457,7 @@ function Members() {
   const entries = entrants.data ?? [];
   return (
     <div className="grid-2">
+      <EmailLeague users={users.data ?? []} />
       <Action title="Add a member" submit="Add member" note="Adds someone by email, so they're in the league the first time they sign in. You can also send them the invite link (League tab)."
         onSubmit={async () => {
           const email = f.email.trim();
@@ -323,7 +467,7 @@ function Members() {
           if (!created) {
             return `${email} already belongs to a member, so nobody new was added${f.entry ? " (they now manage that entry)" : ""}. Check the email and try again if you meant someone else.`;
           }
-          return `Added. No email goes out now: they sign in on the site with ${email} and get a code there.`;
+          return `Added. Nobody is emailed now. To sign in the first time, they choose “Forgot your password?” on the sign-in page and enter ${email}, which sets their password.`;
         }}>
         <Field label="Email"><input className="input" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Display name (everyone sees it)"><input className="input" required maxLength={40} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -377,7 +521,7 @@ function Members() {
       </Action>
       <BulkBox
         title="Pair entries with members"
-        note="One line per entry and person: entry name | email | display name. Adds anyone new (the display name is only needed for them) and makes them a manager of that entry. Someone with two entries gets two lines; a shared entry gets a line per person. Nobody is emailed: each person signs in on the site with their email to get a code."
+        note="One line per entry and person: entry name | email | display name. Adds anyone new (the display name is only needed for them) and makes them a manager of that entry. Someone with two entries gets two lines; a shared entry gets a line per person. Nobody is emailed now: someone new sets a first password with “Forgot your password?” on the sign-in page, using that email."
         placeholder={"Entry name | email | display name"}
         submit="Pair them"
         parse={parsePairings}
@@ -509,6 +653,7 @@ function Games({ openWeek }: { openWeek: number | null }) {
   const [line, setLine] = useState({ market: "spread" as Market, pa: "", ra: "-110", pb: "", rb: "-110", offered: true, reason: "" });
   const [status, setStatus] = useState({ status: "postponed", kickoff: "", reason: "" });
   const [score, setScore] = useState({ home: "", away: "", reason: "" });
+  const [stats, setStats] = useState({ player: "", dnp: false, passYds: "0", rushYds: "0", recYds: "0", receptions: "0", tds: "0", reason: "" });
   if (!week) return weeks.loading ? <Loading /> : <Empty>The season hasn't started.</Empty>;
   const cur = (m: Market) => g?.lines.filter((l) => l.market === m) ?? [];
   const num = (s: string) => (s.trim() === "" ? null : Number(s));
@@ -578,6 +723,41 @@ function Games({ openWeek }: { openWeek: number | null }) {
             <div className="row"><Field label={`${g.away.shortName} (away)`}><input className="input num" required value={score.away} onChange={(e) => setScore({ ...score, away: e.target.value })} /></Field><Field label={`${g.home.shortName} (home)`}><input className="input num" required value={score.home} onChange={(e) => setScore({ ...score, home: e.target.value })} /></Field></div>
             <Field label="Reason"><input className="input" required minLength={3} value={score.reason} onChange={(e) => setScore({ ...score, reason: e.target.value })} /></Field>
           </Action>
+          {g.status === "final" ? (
+            <Action title="Set a player's stats" submit="Save stats"
+              note="Player props are graded from ESPN's box score. If a player is missing from it or it's wrong, enter his stats here; bets on his props are graded again on the next run (within 10 minutes). Use his name as the bets show it."
+              onSubmit={async () => {
+                const whole = (label: string, t: string, min = 0) => {
+                  const n = Number(t.trim().replace(/^[\u2212\u2013]/, "-"));
+                  if (t.trim() === "" || !Number.isInteger(n) || n < min) throw new Error(`${label} must be a whole number${min === 0 ? ", 0 or more" : ""}.`);
+                  return n;
+                };
+                const input = stats.dnp ? null : {
+                  passYds: whole("Passing yards", stats.passYds, -99), rushYds: whole("Rushing yards", stats.rushYds, -99),
+                  recYds: whole("Receiving yards", stats.recYds, -99), receptions: whole("Receptions", stats.receptions), tds: whole("Touchdowns", stats.tds),
+                };
+                if (!stats.player.trim()) throw new Error("Enter the player's name.");
+                await api.adminSetPlayerStats(g.id, stats.player.trim(), input, stats.reason);
+                return `Saved. Bets on ${stats.player.trim()}'s props will be graded again on the next run.`;
+              }}>
+              <Field label="Player"><input className="input" required value={stats.player} onChange={(e) => setStats({ ...stats, player: e.target.value })} placeholder="Josh Allen" /></Field>
+              <label className="row small"><input type="checkbox" checked={stats.dnp} onChange={(e) => setStats({ ...stats, dnp: e.target.checked })} /> He didn't play (his props are void)</label>
+              {!stats.dnp ? (
+                <>
+                  <div className="row">
+                    <Field label="Passing yds"><input className="input num" value={stats.passYds} onChange={(e) => setStats({ ...stats, passYds: e.target.value })} /></Field>
+                    <Field label="Rushing yds"><input className="input num" value={stats.rushYds} onChange={(e) => setStats({ ...stats, rushYds: e.target.value })} /></Field>
+                    <Field label="Receiving yds"><input className="input num" value={stats.recYds} onChange={(e) => setStats({ ...stats, recYds: e.target.value })} /></Field>
+                  </div>
+                  <div className="row">
+                    <Field label="Receptions"><input className="input num" value={stats.receptions} onChange={(e) => setStats({ ...stats, receptions: e.target.value })} /></Field>
+                    <Field label="TDs scored (not thrown)"><input className="input num" value={stats.tds} onChange={(e) => setStats({ ...stats, tds: e.target.value })} /></Field>
+                  </div>
+                </>
+              ) : null}
+              <Field label="Reason"><input className="input" required minLength={3} value={stats.reason} onChange={(e) => setStats({ ...stats, reason: e.target.value })} /></Field>
+            </Action>
+          ) : null}
         </div>
       )}
     </div>

@@ -20,15 +20,14 @@ The menu names below are as of September 2026. If a screen looks different, the 
    - the **publishable (anon) key**, which is meant to be public.
 3. In your Supabase account settings, create a **personal access token** for the deploy workflow.
 
-## 2. Site email for sign-in codes
+## 2. Site email for password resets
 
-Supabase's built-in email only reaches the project's own team, so everyone's sign-in codes need a real sender.
+Members sign in with an email and a password, so the site only sends email when someone forgets their password: a 6-digit code. Supabase's built-in email only reaches the project's own team, so everyone else's codes need a mailbox of the site's own, at Yahoo or Gmail.
 
-1. Create a Gmail account for the site.
-2. Turn on 2-Step Verification for it.
-3. Create an **app password**. Google lists it under the account's Security settings.
+- **Yahoo:** at [Account Security](https://login.yahoo.com/account/security), under **External connections**, choose **Create app password**. Yahoo keeps that button grayed out for the first days of a new account.
+- **Gmail:** turn on 2-Step Verification, then create an **app password** under the account's Security settings.
 
-The deploy works without this, but then only you can sign in, and with a link instead of a code: on Supabase's free plan, its own sender keeps its standard email (open the link in the browser you asked from). Add it before anyone else signs in; the next deploy switches everyone to codes.
+The address and its app password go in the `SMTP_USER` and `SMTP_PASS` secrets (step 4); the deploy picks Yahoo's or Gmail's mail server from the address. The deploy works without them, but then only you get reset emails, with a link instead of a code: on Supabase's free plan, its own sender keeps its standard email (open the link in the browser you asked from). Signing in and making an account never need email.
 
 ## 3. Google sign-in (optional for the trial)
 
@@ -36,7 +35,7 @@ The deploy works without this, but then only you can sign in, and with a link in
 2. Add this authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`
 3. Note the client ID and client secret.
 
-Until this is set up, the site doesn't show the "Continue with Google" button; members sign in with emailed codes. Add the two secrets any time and the button appears after the next deploy.
+Until this is set up, the site doesn't show the "Continue with Google" button; members sign in with their email and password. Add the two secrets any time and the button appears after the next deploy.
 
 ## 4. GitHub settings
 
@@ -49,8 +48,8 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_PROJECT_REF` | the project ref |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | the publishable (anon) key |
-| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` (the site's own address once step 9 is done) |
-| `CLOUDFLARE_ACCOUNT_ID` | from step 9 (optional) |
+| `SITE_URL` | the new repo's Pages address, e.g. `https://sharpslate.github.io/BettingLeague-Hub/` (the site's own address once step 10 is done) |
+| `CLOUDFLARE_ACCOUNT_ID` | from step 10 (optional) |
 
 **Secrets** tab:
 
@@ -60,11 +59,11 @@ In **Settings → Secrets and variables → Actions**:
 | `SUPABASE_DB_PASSWORD` | the database password from step 1 |
 | `ODDS_API_KEY` | your The Odds API key (one pull serves every league; a key shared with another site shares its monthly credits) |
 | `CRON_SECRET` | any long random string (it lets the scheduler call the functions) |
-| `SMTP_USER` | the site's Gmail address |
+| `SMTP_USER` | the site's Yahoo or Gmail address |
 | `SMTP_PASS` | its app password |
 | `GOOGLE_CLIENT_ID` | from step 3 (optional) |
 | `GOOGLE_CLIENT_SECRET` | from step 3 (optional) |
-| `CLOUDFLARE_API_TOKEN` | from step 9 (optional) |
+| `CLOUDFLARE_API_TOKEN` | from step 10 (optional) |
 
 Then in **Settings → Pages**, set **Source** to **GitHub Actions**.
 
@@ -75,7 +74,7 @@ Merge the working branch into `main`. The **Deploy** workflow then:
 2. applies the database migrations;
 3. applies the sign-in settings and function secrets;
 4. deploys the functions;
-5. publishes the site to the repo's Pages address (and to Cloudflare Pages once step 9 is done).
+5. publishes the site to the repo's Pages address (and to Cloudflare Pages once step 10 is done).
 
 You can watch it under the repo's **Actions** tab. After this, every merge to `main` redeploys.
 
@@ -107,14 +106,24 @@ Anyone signed in can start a league from the league menu (**Start or join a leag
 
 Commissioners have the powers the single-league site gave its admins, for their own league only: rules, entries and managers, bank adjustments, imports, opening and closing weeks, voiding bets, and making other members commissioners.
 
-## 9. The site's own address (optional)
+## 9. Player props (optional)
+
+Props come from the owner's own prop pulls, not from this site's Odds API key. After each run of the owner's **SharpSlate NFL Props** task, a step on the owner's PC (`sync/hub_props.py` in OneStopShop) sends the main lines to this site's `import-props` function. Nothing here needs setting up:
+- The sender presents a key, kept on the owner's PC in OneStopShop's `.env.hub` (`HUB_PROPS_URL`, `HUB_PROPS_KEY`). The database keeps only its SHA-256, in `app.prop_import_key`. To change the key, put a new one in `.env.hub` and its hash in that table (SQL editor: `update app.prop_import_key set sha256 = '<hash>';`).
+- Props only show for games already on the board, so they wait for the odds feed (step 7).
+- A league offers them once its commissioner turns them on (**Admin → Rules → Player props**, from a week that hasn't opened). The defaults for a new league are the recommended safeguards: 1 prop per game in a parlay, a stake cap of 2% of the maximum, at most 3 props in a parlay. **Site feeds** shows when props were last pulled; a failed import shows under **Recent problems**.
+- Props can be bet for 2 hours after each pull, and from 90 minutes before a kickoff only on a pull made after the teams name their inactive players. So the PC's prop task decides how much of the day props are open: on game days it should run about 75 minutes before each kickoff window (11:45am, 3:10pm and 7:05pm Eastern on Sundays; 7:00pm on Monday and Thursday nights).
+- Box scores: the site reads each game's box score from ESPN once it's final. If ESPN refuses the site's requests, the PC can send them instead: ESPN's summary of each final game (`site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=<id>`, its `header` and `boxscore`), posted as `{"source": "owner-pc", "summaries": [...]}` to the site's `import-boxes` function with the same `x-props-key` header as the props. Only games with props riding and no box score yet take one.
+- League emails (**Admin → Members → Email the league**) go out through the same Gmail as the reset codes (`SMTP_USER`, `SMTP_PASS`), under the league's name. To keep room for reset codes on that one account (Gmail takes about 500 recipients a day), a league can email at most 100 recipients a day and all leagues together 300, tests included (`league-email.ts`).
+
+## 10. The site's own address (optional)
 
 The site can live at **leagues.sharpslatesports.com** instead of the repo's Pages address. Cloudflare Pages serves it there: the domain's DNS is on Cloudflare, and the domain is verified on GitHub for the owner's personal account, which keeps GitHub Pages from serving its subdomains from this organization's repo.
 
 1. In Cloudflare, create an **API token** with one permission, *Account → Cloudflare Pages → Edit*, and note your **Account ID** (on the account's home page).
 2. Add them on step 4's page: the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`. The next deploy creates the Cloudflare Pages project `sharpslate-leagues` and publishes the site to it.
 3. In Cloudflare, open **Workers & Pages → sharpslate-leagues → Custom domains** and add `leagues.sharpslatesports.com`. Cloudflare adds its DNS record itself.
-4. Once Cloudflare shows the domain as **Active**, change the `SITE_URL` variable to `https://leagues.sharpslatesports.com/` and redeploy (**Actions → Deploy → Run workflow**). Sign-in emails and invite links then use the new address, and the GitHub Pages address sends its visitors there (an invite link keeps its code). Until then, every copy sends visitors to the `SITE_URL` address.
+4. Once Cloudflare shows the domain as **Active**, change the `SITE_URL` variable to `https://leagues.sharpslatesports.com/` and redeploy (**Actions → Deploy → Run workflow**). Password-reset emails, league emails and invite links then use the new address, and the GitHub Pages address sends its visitors there (an invite link keeps its code). Until then, every copy sends visitors to the `SITE_URL` address.
 
 Sign-ins belong to an address, so everyone signs in once more on the new one.
 
@@ -126,8 +135,10 @@ Site admins:
 - **A postponed game:** set it to **Postponed**. Its bets ride in every league. A league's week won't close by itself while the game is unplayed; its commissioner uses **Open next week** to move on.
 - **Something looks stuck:** **Site feeds → Recent problems** lists failed pulls, bets the grader couldn't settle, and games that need a hand.
 - **Betting closed early on a game that hasn't started:** mark it **Postponed**, **Pull lines**, then set it back to **Scheduled**.
+- **Player props waiting for you:** a player with props who isn't in the box score holds his bets in every league until you answer at the top of **Site feeds**: **Didn't play** (his props are void), **Played, no stats** (his overs lose), or his stats. A player the books took down once inactives were announced is voided on his own, and **Recent problems** says so; if he played after all, enter his stats with **Games & lines → Set a player's stats**.
 
 Commissioners:
 - **The last week of the season:** after its last game, **Close the season** on **Admin → Week**.
 - **An entry changes hands:** **Members → Entry managers.** Make the new manager first, then remove the old one.
+- **Email the league:** **Members → Email the league** sends to every member, in Bcc, with replies to you. Send yourself a test first. If it can't send, **Or open it in my own email app** puts everyone in Bcc in your own email.
 - **Fair play:** **Admin → Week → Recent problems** flags two entries of the league that share a manager and took opposite sides of a game, once both picks are public.

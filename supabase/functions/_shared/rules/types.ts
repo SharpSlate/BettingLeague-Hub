@@ -1,9 +1,13 @@
 // Shared types for the league's rules engine. Used by the web app and the
 // Edge Functions, so everything here is plain TypeScript with no imports.
 
-export type Market = "spread" | "total" | "moneyline";
-/** spread and moneyline use home/away; totals use over/under. */
-export type Side = "home" | "away" | "over" | "under";
+/** A game's own markets. */
+export type GameMarket = "spread" | "total" | "moneyline";
+/** Player props: one player's anytime touchdown, or the over/under on one of his stats. */
+export type PropMarket = "anytime_td" | "receptions" | "rush_yds" | "rec_yds" | "pass_yds";
+export type Market = GameMarket | PropMarket;
+/** spread and moneyline use home/away; totals and stat props over/under; an anytime TD is "yes". */
+export type Side = "home" | "away" | "over" | "under" | "yes";
 export type BetType = "straight" | "parlay" | "teaser";
 export type LegResult = "pending" | "won" | "lost" | "push" | "void";
 export type SlipResult = "pending" | "won" | "lost" | "push" | "void";
@@ -18,6 +22,8 @@ export interface Leg {
   point: number | null;
   /** American odds as quoted, e.g. -110 or +150. */
   price: number;
+  /** A player prop's player, as the line source names him. Null or absent for a game's own markets. */
+  player?: string | null;
 }
 
 export interface SlipInput {
@@ -42,21 +48,37 @@ export interface SameGameRules {
 /** Teaser prices: points ("6", "6.5") -> legs ("2".."10") -> American odds. */
 export type TeaserPriceTable = Record<string, Record<string, number>>;
 
+/**
+ * Player props. Fixed rules on top of these settings: props go in straight bets and
+ * parlays (never teasers), one pick per player per slip, and a prop can't share a
+ * parlay with its game's spread, total or moneyline.
+ */
+export interface PropRules {
+  enabled: boolean;
+  markets: PropMarket[];
+  /** In a parlay, at most this many legs from one game once one of them is a prop. */
+  maxPerGame: number;
+  /** A bet with a prop can stake at most this percent of the league's maximum stake. */
+  maxStakePct: number;
+  /** At most this many props in one parlay (1 to 10). Absent in rule sets from before it: no limit. */
+  maxPerParlay?: number;
+}
+
 export interface RuleSet {
   betTypes: {
-    straight: { enabled: boolean; markets: Market[] };
+    straight: { enabled: boolean; markets: GameMarket[] };
     parlay: {
       enabled: boolean;
       minLegs: number;
       maxLegs: number;
-      markets: Market[];
+      markets: GameMarket[];
       sameGame: SameGameRules;
     };
     teaser: {
       enabled: boolean;
       minLegs: number;
       maxLegs: number;
-      markets: Market[];
+      markets: GameMarket[];
       points: number[];
       prices: TeaserPriceTable;
       pushRule: TeaserPushRule;
@@ -103,6 +125,8 @@ export interface RuleSet {
   visibility: "kickoff_per_leg" | "on_placement" | "week_first_kickoff";
   lock: "game_kickoff" | "week_first_kickoff";
   bank: { startUnits: number; bonusUnits: number };
+  /** Missing from rule sets published before props existed, which means no props. */
+  props?: PropRules;
 }
 
 export interface Problem {
@@ -115,4 +139,14 @@ export interface Problem {
 export interface FinalScore {
   homeScore: number;
   awayScore: number;
+}
+
+/** One player's stats from a final box score, for grading props. */
+export interface PlayerStats {
+  passYds: number;
+  rushYds: number;
+  recYds: number;
+  receptions: number;
+  /** Touchdowns he scored himself: rushing, receiving, returns. Passing TDs don't count. */
+  tds: number;
 }

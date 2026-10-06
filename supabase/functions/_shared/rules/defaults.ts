@@ -1,3 +1,4 @@
+import { DEFAULT_PROPS } from "./props.ts";
 import type { RuleSet } from "./types.ts";
 
 // The day-one rule set agreed on 2026-09-28 (see DECISIONS.md). The 2- and
@@ -38,4 +39,6 @@ export const DAY_ONE_RULES: RuleSet = {
   visibility: "kickoff_per_leg",
   lock: "game_kickoff",
   bank: { startUnits: 10_000, bonusUnits: 5_000 },
+  // Off until a commissioner turns them on (2026-10-05).
+  props: DEFAULT_PROPS,
 };

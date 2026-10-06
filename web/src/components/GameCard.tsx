@@ -1,7 +1,7 @@
-import { effectivePrice, type Market, type RuleSet, type Side } from "@rules";
+import { activeProps, effectivePrice, PROP_LABEL, PROP_MARKETS, type Market, type PropMarket, type RuleSet, type Side } from "@rules";
 import { ago, clock, odds, pickLabel, point } from "../lib/format.ts";
 import { pickKey, useSlip } from "../lib/slip.tsx";
-import type { GameView, LineView } from "../lib/types.ts";
+import type { GameView, LineView, PropView } from "../lib/types.ts";
 
 const BOOK = { draftkings: "DraftKings", fanduel: "FanDuel", override: "Commissioner line" } as Record<string, string>;
 
@@ -41,7 +41,89 @@ function PriceButton({ game, line, market, side, rules }: { game: GameView; line
   );
 }
 
-export function GameCard({ game, now, rules }: { game: GameView; now: number; rules?: RuleSet }) {
+function PropButton({ game, prop, disabled }: { game: GameView; prop: PropView | undefined; disabled: boolean }) {
+  const slip = useSlip();
+  if (!prop) {
+    return <button type="button" className="price" disabled aria-label="Not offered"><span className="p2">—</span></button>;
+  }
+  const key = pickKey(game.id, prop.market, prop.side, prop.player);
+  const on = slip.has(key);
+  const top = prop.side === "yes" ? "Yes" : `${prop.side === "over" ? "O" : "U"} ${prop.point}`;
+  return (
+    <button
+      type="button"
+      className={`price${on ? " on" : ""}`}
+      aria-pressed={on}
+      aria-label={`${pickLabel(game, prop.market, prop.side, prop.point, prop.player)} ${odds(prop.price)}`}
+      disabled={slip.status.busy || (disabled && !on)}
+      onClick={() =>
+        slip.toggle({
+          key, gameId: game.id, market: prop.market, side: prop.side, point: prop.point, price: prop.price, player: prop.player,
+          home: game.home.shortName, away: game.away.shortName, kickoffAt: game.kickoffAt,
+        })
+      }
+    >
+      <span className="p1 num">{top}</span>
+      <span className="p2 num">{odds(prop.price)}</span>
+    </button>
+  );
+}
+
+/**
+ * The game's player props, by market, when the league offers them. closed says why they
+ * can't be bet right now: too old ("stale"), or pulled before the game's inactive players
+ * were announced ("inactives").
+ */
+function Props({ game, markets, closed, now }: { game: GameView; markets: PropMarket[]; closed: "stale" | "inactives" | null; now: number }) {
+  const stale = closed !== null;
+  const groups = PROP_MARKETS.filter((m) => markets.includes(m))
+    .map((m) => ({ market: m, players: [...new Set(game.props.filter((p) => p.market === m).map((p) => p.player))] }))
+    .filter((g) => g.players.length);
+  if (!groups.length) return null;
+  const asOf = game.props.reduce<string | null>((a, p) => (!a || p.asOf > a ? p.asOf : a), null);
+  const find = (market: PropMarket, player: string, side: Side) => game.props.find((p) => p.market === market && p.player === player && p.side === side);
+  return (
+    <details className="props">
+      <summary>
+        Player props <span className="muted">· {groups.reduce((a, g) => a + g.players.length, 0)}</span>
+      </summary>
+      <div className="tiny muted" style={{ margin: "6px 0" }}>
+        {closed === "inactives"
+          ? "This game's inactive players have been announced since these were pulled, so they can't be bet until the next update."
+          : closed === "stale" ? "These are out of date and can't be bet until the next update." : `Pulled ${ago(asOf, now)}.`}
+      </div>
+      {groups.map(({ market, players }) => (
+        <div key={market} className="prop-grid">
+          <span className="colhead prop-head">{PROP_LABEL[market]}</span>
+          {market === "anytime_td" ? <><span className="colhead">Yes</span><span /></> : (
+            <>
+              <span className="colhead">Over</span>
+              <span className="colhead">Under</span>
+            </>
+          )}
+          {players.map((player) => (
+            <div key={player} className="prop-row" style={{ display: "contents" }}>
+              <span className="prop-player">{player}</span>
+              {market === "anytime_td" ? (
+                <>
+                  <PropButton game={game} prop={find(market, player, "yes")} disabled={stale} />
+                  <span />
+                </>
+              ) : (
+                <>
+                  <PropButton game={game} prop={find(market, player, "over")} disabled={stale} />
+                  <PropButton game={game} prop={find(market, player, "under")} disabled={stale} />
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </details>
+  );
+}
+
+export function GameCard({ game, now, rules, propsClosed = null }: { game: GameView; now: number; rules?: RuleSet; propsClosed?: "stale" | "inactives" | null }) {
   // Picks show once a game kicks off (its kickoff passes, or its scores start coming in).
   const kicked = game.status === "live" || game.status === "final" || new Date(game.kickoffAt).getTime() <= now;
   const started = game.status !== "scheduled" || kicked;
@@ -110,6 +192,9 @@ export function GameCard({ game, now, rules }: { game: GameView; now: number; ru
           <PriceButton game={game} rules={rules} line={line("moneyline", "home")} market="moneyline" side="home" />
         </div>
       )}
+      {!locked && rules && activeProps(rules) && game.props.length ? (
+        <Props game={game} markets={activeProps(rules)!.markets} closed={propsClosed} now={now} />
+      ) : null}
     </article>
   );
 }
