@@ -11,7 +11,7 @@ import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shar
 import { MIN_PASSWORD } from "./auth.ts";
 import { TEAMS, team } from "./teams.ts";
 import type {
-  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry, PlacementRequest,
+  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameStatus, GameView, HiddenPick, InvitePreview, League, LeagueNotes, LeagueSummary, LegView, Me, MyEntry, PlacementRequest,
   PlaceResult, PlayerStatsInput, PropHold, RuleVersion, SlipView, SplashImport, StandingRow, UndoResult, WeekInfo,
 } from "./types.ts";
 
@@ -279,6 +279,7 @@ export class DemoApi implements Api {
 
   // The demo has one league; starting or joining others needs the real site.
   private leagueName = "Demo League";
+  private notes: LeagueNotes = { text: "$50 buy-in, paid to the commissioner before week 1.\nPayouts: 1st 60%, 2nd 30%, 3rd 10%.\nSettle up by the end of the regular season.", updatedAt: new Date(Date.now() - 3 * D).toISOString() };
   async myLeagues(): Promise<LeagueSummary[]> {
     return [{ id: DEMO_LEAGUE, name: this.leagueName, role: "commissioner", inviteCode: "DEMO234567", selfEntry: true, openWeek: OPEN_WEEK }];
   }
@@ -399,6 +400,7 @@ export class DemoApi implements Api {
       .map((s) => ({ entryId: s.entryId, name: this.entry(s.entryId).name, placedAt: new Date(s.placedAt).toISOString() }));
   }
 
+  async leagueNotes() { return { ...this.notes }; }
   async ruleVersions() { return [...this.s.rules].sort((a, b) => b.version - a.version); }
 
   async weeks(): Promise<WeekInfo[]> {
@@ -588,6 +590,13 @@ export class DemoApi implements Api {
     if (!name.trim()) throw new Error("bad_name");
     this.leagueName = name.trim();
     this.audit("league_updated", "league", DEMO_LEAGUE, { name: this.leagueName }, "");
+  }
+  async adminSetNotes(text: string) {
+    const t = text.trim();
+    if (t.length > 4000) throw new Error("notes_too_long");
+    if (t === this.notes.text) return;
+    this.audit("notes_updated", "league", DEMO_LEAGUE, { notes: t }, "");
+    this.notes = { text: t, updatedAt: new Date().toISOString() };
   }
   async adminSetCommissioner(userId: string, on: boolean) {
     const u = this.s.users.find((x) => x.id === userId);

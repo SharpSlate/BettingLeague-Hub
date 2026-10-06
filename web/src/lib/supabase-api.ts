@@ -4,7 +4,7 @@ import { createClient, FunctionsHttpError, type SupabaseClient } from "@supabase
 import type { RuleSet } from "@rules";
 import { authErrorText } from "./auth.ts";
 import type {
-  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueSummary, LegView, Me, MyEntry,
+  AdminProblem, AdminUser, Api, AuditRow, Entrant, GameView, HiddenPick, InvitePreview, League, LeagueNotes, LeagueSummary, LegView, Me, MyEntry,
   PlacementRequest, PlaceResult, PlayerStatsInput, PropHold,
   RuleVersion, SlipView, SplashImport, StandingRow, Team, UndoResult, WeekInfo,
 } from "./types.ts";
@@ -266,6 +266,10 @@ export class SupabaseApi implements Api {
     return rows.map((r) => ({ entryId: r.entry_id, name: r.name, placedAt: r.placed_at }));
   }
 
+  async leagueNotes(): Promise<LeagueNotes> {
+    const r = check(await this.db.from("leagues").select("notes, notes_updated_at").eq("id", this.lid).single()) as any;
+    return { text: r.notes ?? "", updatedAt: r.notes_updated_at ?? null };
+  }
   async ruleVersions(): Promise<RuleVersion[]> {
     const rows = check(await this.db.from("rule_sets").select("*").eq("league_id", this.lid).order("version", { ascending: false })) as any[];
     return rows.map((r) => ({ version: r.version, effectiveWeek: r.effective_week, document: r.document, note: r.note, createdAt: r.created_at }));
@@ -357,6 +361,9 @@ export class SupabaseApi implements Api {
   }
   async adminUpdateLeague(name: string, selfEntry: boolean, newInvite: boolean) {
     check(await this.db.rpc("admin_update_league", { p_league: this.lid, p_name: name, p_self_entry: selfEntry, p_new_invite: newInvite }));
+  }
+  async adminSetNotes(text: string) {
+    check(await this.db.rpc("admin_set_league_notes", { p_league: this.lid, p_notes: text }));
   }
   async adminSetCommissioner(userId: string, on: boolean) {
     check(await this.db.rpc("admin_set_commissioner", { p_user: userId, p_on: on, p_league: this.lid }));

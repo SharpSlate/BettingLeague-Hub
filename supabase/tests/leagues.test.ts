@@ -209,3 +209,25 @@ describe("commissioners and members", () => {
     expect(await db.q(member(ann), "select name from public.standings(null, null, null, $1)", [leagueB])).toEqual([{ name: "Bo" }]);
   });
 });
+
+describe("the commissioner's notes", () => {
+  it("the commissioner writes them, every member reads them, and nobody else sees them", async () => {
+    await db.q(member(bea), "select public.admin_set_league_notes($1, $2)", [leagueB, "  $20 buy-in.\nTop 3 paid.  "]);
+    const [l] = await db.q(member(ann), "select notes, notes_updated_at from public.leagues where id = $1", [leagueB]);
+    expect(l.notes).toBe("$20 buy-in.\nTop 3 paid.");
+    expect(l.notes_updated_at).not.toBeNull();
+    expect(await db.q(member(al), "select notes from public.leagues where id = $1", [leagueB])).toEqual([]);
+    await fails(db.q(member(ann), "select public.admin_set_league_notes($1, 'mine now')", [leagueB]), "commissioner_only");
+    await fails(db.q(member(bea), "select public.admin_set_league_notes($1, $2)", [leagueB, "x".repeat(4001)]), "notes_too_long");
+  });
+
+  it("a change is in the admin log with the old and new text; saving the same text isn't", async () => {
+    await db.q(member(bea), "select public.admin_set_league_notes($1, 'Top 2 paid.')", [leagueB]);
+    await db.q(member(bea), "select public.admin_set_league_notes($1, 'Top 2 paid.')", [leagueB]);
+    const log = await db.q(member(ann), "select before, after from public.audit_log where league_id = $1 and action = 'notes_updated' order by id", [leagueB]);
+    expect(log).toEqual([
+      { before: { notes: "" }, after: { notes: "$20 buy-in.\nTop 3 paid." } },
+      { before: { notes: "$20 buy-in.\nTop 3 paid." }, after: { notes: "Top 2 paid." } },
+    ]);
+  });
+});

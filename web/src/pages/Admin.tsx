@@ -767,8 +767,33 @@ function Games({ openWeek }: { openWeek: number | null }) {
 function RulesSection({ openWeek }: { openWeek: number | null }) {
   const api = useApi();
   const versions = useLoad(() => api.ruleVersions(), []);
+  const notes = useLoad(() => api.leagueNotes(), []);
   if (versions.loading && !versions.data) return <Loading />;
   const latest = versions.data?.[0];
   if (!latest) return <Empty>No rules published yet.</Empty>;
-  return <RulesEditor key={latest.version} current={latest} openWeek={openWeek} onPublished={versions.reload} />;
+  return (
+    <div className="stack">
+      {notes.data ? <NotesEditor current={notes.data.text} onSaved={notes.reload} /> : <Loading />}
+      <RulesEditor key={latest.version} current={latest} openWeek={openWeek} onPublished={versions.reload} />
+    </div>
+  );
+}
+
+const NOTES_MAX = 4000;
+
+/** The commissioner's own house rules, shown at the top of the league's Rules page. */
+function NotesEditor({ current, onSaved }: { current: string; onSaved: () => void }) {
+  const api = useApi();
+  const [text, setText] = useState(current);
+  return (
+    <Action title="Commissioner's notes" submit="Save notes"
+      note="Your league's own rules that the settings below don't cover, like the buy-in, prizes and payouts, or when to settle up. They show at the top of the Rules page for every member, as you write them here. Changes take effect at once and go in the admin log."
+      onSubmit={async () => { await api.adminSetNotes(text); onSaved(); return text.trim() ? "Saved. Members see them on the Rules page now." : "Cleared."; }}>
+      <Field label="Notes">
+        <textarea className="input" rows={6} maxLength={NOTES_MAX} value={text} onChange={(e) => setText(e.target.value)}
+          placeholder={"$50 buy-in, paid to the commissioner before week 1.\nPayouts: 1st 60%, 2nd 30%, 3rd 10%."} />
+      </Field>
+      <div className="tiny muted">{text.length.toLocaleString("en-US")} of {NOTES_MAX.toLocaleString("en-US")} characters</div>
+    </Action>
+  );
 }

@@ -64,6 +64,7 @@ export function errorText(e: unknown): string {
     last_commissioner: "The league needs at least one commissioner. Make someone else one first.",
     manages_entry: "They still manage an entry. Take them off it first (Entry managers).",
     bad_name: "Give it a name (up to 60 characters).",
+    notes_too_long: "Keep the notes to 4,000 characters.",
     reason_required: "Give a reason (at least 3 characters).",
     insufficient_units: "That would take the bank below zero.",
     entry_has_bets: "That entry already has bets here, so it can't be imported.",
