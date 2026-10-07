@@ -4,6 +4,7 @@ import { usePropHolds } from "../lib/alerts.ts";
 import { PUBLIC_DEMO, REAL_SITE, useApi } from "../lib/api.ts";
 import type { League, LeagueSummary, Me } from "../lib/types.ts";
 import { AdminIcon, BetsIcon, BoardIcon, LeagueIcon, PicksIcon, RulesIcon, StandingsIcon, UserIcon } from "./icons.tsx";
+import { SiteLogo, SiteMark } from "./SiteLogo.tsx";
 
 const TABS = [
   { to: "/", label: "Standings", icon: StandingsIcon, end: true },
@@ -81,6 +82,7 @@ export function Shell({ me, league, leagues, onChoose, children }: {
       ) : api.demo ? <div className="demo-ribbon">Demo with sample data: nothing here is real, and it resets when you reload.</div> : null}
       <div className="app">
         <nav className="sidebar" aria-label="Main">
+          <Link to="/leagues" className="site-home" aria-label="SharpSlate Leagues: your leagues"><SiteLogo /></Link>
           <Brand league={league} />
           <LeagueSwitch current={current} leagues={leagues} onChoose={onChoose} className="league-switch" />
           {TABS.map((t) => (
@@ -105,7 +107,8 @@ export function Shell({ me, league, leagues, onChoose, children }: {
         </nav>
         <div>
           <header className="topbar">
-            <Brand league={league} />
+            {/* On phones the switcher names the league, so the top bar carries the SharpSlate mark. */}
+            <Link to="/" className="brand only-sm" aria-label="Standings"><SiteMark /></Link>
             <span className="spacer" />
             <LeagueSwitch current={current} leagues={leagues} onChoose={onChoose} className="league-switch only-sm" />
             {admin ? (

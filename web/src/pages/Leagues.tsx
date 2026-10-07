@@ -3,12 +3,11 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { initials } from "../components/Shell.tsx";
+import { SiteLogo } from "../components/SiteLogo.tsx";
 import { errorText, Loading } from "../components/ui.tsx";
 import { PUBLIC_DEMO, REAL_SITE, useApi } from "../lib/api.ts";
 import { useLoad } from "../lib/hooks.ts";
 import type { LeagueSummary } from "../lib/types.ts";
-
-export const SITE_NAME = "Betting League";
 
 /** The link that joins a league, for its commissioners to share. */
 export function inviteLink(code: string): string {
@@ -19,12 +18,9 @@ function Page({ children }: { children: ReactNode }) {
   return (
     <div className="signin">
       <div className="card">
-        <div className="row">
-          <span className="brand-mark" aria-hidden="true">{initials(SITE_NAME)}</span>
-          <div>
-            <h1 style={{ fontSize: 18 }}>{SITE_NAME}</h1>
-            <div className="small muted">NFL betting leagues · play units</div>
-          </div>
+        <div className="stack-sm">
+          <h1><SiteLogo large /></h1>
+          <div className="small muted">NFL betting leagues · play units</div>
         </div>
         {children}
       </div>

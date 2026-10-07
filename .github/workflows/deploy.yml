@@ -247,11 +247,11 @@ jobs:
           # A first publish can take a minute to show up.
           for i in $(seq 1 18); do
             code=$(curl -s -o site.html -w "%{http_code}" "$SITE_URL") || code=000
-            [ "$code" = "200" ] && grep -q "Betting League" site.html && break
+            [ "$code" = "200" ] && grep -q "SharpSlate Leagues" site.html && break
             sleep 10
           done
           [ "$code" = "200" ] || fail "The site answered $code at $SITE_URL"
-          grep -q "Betting League" site.html || fail "The page at $SITE_URL isn't this site"
+          grep -q "SharpSlate Leagues" site.html || fail "The page at $SITE_URL isn't this site"
           js=$(grep -o 'assets/[^"]*\.js' site.html | head -1)
           curl -sf -o app.js "${SITE_URL%/}/$js" || fail "The site's script $js didn't load"
           grep -q "$SUPABASE_URL" app.js || fail "The site's script doesn't point at $SUPABASE_URL"

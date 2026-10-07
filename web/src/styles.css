@@ -1,45 +1,51 @@
-/* BALTIMORE DEGENERATES: mobile-first. Dark by default, light when the phone asks for it. */
+/* SharpSlate Leagues: mobile-first. Dressed like sharpslatesports.com ("Night Game": near
+   black and violet, Archivo with Saira Semi Condensed for numbers). Dark by default, light
+   when the phone asks for it; SharpSlate itself is dark only, so the light colors are ours. */
 
 :root {
   color-scheme: dark;
-  --bg: #0f0b1a;
-  --surface: #1a1330;
-  --surface-2: #241a42;
-  --surface-3: #2f2354;
-  --border: #372a60;
-  --text: #f4f1fb;
-  --muted: #a79fc3;
-  --accent: #f2b705;
-  --accent-ink: #1b1433;
-  --accent-soft: rgba(242, 183, 5, 0.14);
-  --pick: #7c5cff;
-  --pick-ink: #ffffff;
-  --good: #3ecf8e;
-  --bad: #ff6b6b;
-  --warn: #ffb020;
-  --push: #9aa4b2;
-  --radius: 12px;
-  --radius-sm: 8px;
+  --bg: #0b0b0c;
+  --surface: #111113;
+  --surface-2: #161618;
+  --surface-3: #1e1e21;
+  --border: #262629;
+  --text: #f3f3f4;
+  --muted: #a0a0a7;
+  --accent: #8f7dff;
+  --accent-ink: #0d0a26;
+  --accent-soft: rgba(143, 125, 255, 0.16);
+  --pick: #8f7dff;
+  --pick-ink: #0d0a26;
+  --good: #27c46b;
+  --bad: #f04848;
+  --warn: #e6b41e;
+  --push: #86868e;
+  --radius: 8px;
+  --radius-sm: 6px;
   --gutter: 16px;
   --tabbar: 64px;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --font-num: "Saira Semi Condensed", "Arial Narrow", sans-serif;
+  --display-stretch: 68%;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --bg: #f5f3fa;
+    --bg: #f4f4f6;
     --surface: #ffffff;
-    --surface-2: #f1edf9;
-    --surface-3: #e6e0f4;
-    --border: #ddd5ef;
-    --text: #1b1433;
-    --muted: #5f5780;
-    --accent: #5b2fc9;
+    --surface-2: #efeff2;
+    --surface-3: #e3e3e8;
+    --border: #dcdce2;
+    --text: #0b0b0c;
+    --muted: #5b5b64;
+    --accent: #5b45e0;
     --accent-ink: #ffffff;
-    --accent-soft: rgba(91, 47, 201, 0.1);
-    --pick: #5b2fc9;
+    --accent-soft: rgba(91, 69, 224, 0.1);
+    --pick: #5b45e0;
+    --pick-ink: #ffffff;
     --good: #0f9f64;
     --bad: #d93b3b;
     --warn: #b76e00;
@@ -49,17 +55,18 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f5f3fa;
+  --bg: #f4f4f6;
   --surface: #ffffff;
-  --surface-2: #f1edf9;
-  --surface-3: #e6e0f4;
-  --border: #ddd5ef;
-  --text: #1b1433;
-  --muted: #5f5780;
-  --accent: #5b2fc9;
+  --surface-2: #efeff2;
+  --surface-3: #e3e3e8;
+  --border: #dcdce2;
+  --text: #0b0b0c;
+  --muted: #5b5b64;
+  --accent: #5b45e0;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(91, 47, 201, 0.1);
-  --pick: #5b2fc9;
+  --accent-soft: rgba(91, 69, 224, 0.1);
+  --pick: #5b45e0;
+  --pick-ink: #ffffff;
   --good: #0f9f64;
   --bad: #d93b3b;
   --warn: #b76e00;
@@ -80,10 +87,11 @@ body {
 a { color: inherit; }
 button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
-h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
-h2 { font-size: 17px; font-weight: 750; }
+h1, h2 { font-family: var(--font-display); font-stretch: var(--display-stretch); font-weight: 800; letter-spacing: 0.01em; }
+h1 { font-size: 26px; }
+h2 { font-size: 19px; }
 h3 { font-size: 15px; font-weight: 700; }
-.num { font-variant-numeric: tabular-nums; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .tiny { font-size: 12px; }
@@ -119,10 +127,33 @@ h3 { font-size: 15px; font-weight: 700; }
   background: var(--accent); color: var(--accent-ink);
   font-weight: 900; font-size: 13px; letter-spacing: -0.02em;
 }
-.brand-name { font-weight: 850; font-size: 14px; letter-spacing: 0.04em; line-height: 1.15; }
+.brand-name {
+  font-family: var(--font-display); font-stretch: var(--display-stretch);
+  font-weight: 800; font-size: 17px; letter-spacing: 0.02em; line-height: 1.1; text-transform: uppercase;
+}
 .brand-name span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-sub { font-size: 12px; color: var(--muted); }
 .topbar .spacer { flex: 1; }
+
+/* The SharpSlate logo: the version for the theme in use shows, the other hides. */
+.site-mark { display: inline-grid; flex: none; }
+.site-mark img, .site-logo-text img { display: block; }
+.site-logo { display: inline-flex; align-items: center; gap: 8px; }
+.site-logo-text { display: grid; gap: 3px; justify-items: start; }
+.site-logo-sub {
+  font-family: var(--font-display); font-weight: 700; font-size: 11px; line-height: 1;
+  letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
+}
+.site-logo.large { gap: 12px; }
+.site-logo.large .site-logo-sub { font-size: 13px; }
+.site-home { display: block; padding: 4px 8px 14px; text-decoration: none; }
+.on-light { display: none !important; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .on-light { display: block !important; }
+  :root:not([data-theme="dark"]) .on-dark { display: none !important; }
+}
+:root[data-theme="light"] .on-light { display: block !important; }
+:root[data-theme="light"] .on-dark { display: none !important; }
 .icon-btn {
   position: relative;
   display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
@@ -247,7 +278,7 @@ h3 { font-size: 15px; font-weight: 700; }
 /* ---------- standings ---------- */
 
 .table { width: 100%; border-collapse: collapse; }
-.table th { text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table th { text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .table td { padding: 11px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .table tr:last-child td { border-bottom: 0; }
 .table .num, .table th.num { text-align: right; }
@@ -276,7 +307,10 @@ h3 { font-size: 15px; font-weight: 700; }
 
 .board-layout { display: grid; gap: 16px; }
 @media (min-width: 1100px) { .board-layout { grid-template-columns: 1fr 360px; align-items: start; } }
-.day-label { font-size: 13px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 8px 2px 8px; }
+.day-label {
+  font-family: var(--font-display); font-stretch: var(--display-stretch); font-size: 16px; font-weight: 700;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin: 8px 2px 8px;
+}
 .games { display: grid; gap: 10px; }
 .game { padding: 12px; }
 .game-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
@@ -432,8 +466,6 @@ details.card > .body { padding: 14px; }
 
 .league-switch { min-height: 36px; padding: 6px 10px; font-size: 13px; font-weight: 650; }
 .topbar .league-switch { width: auto; max-width: 60vw; }
-/* On phones the switcher names the league, so the top bar shows only the badge. */
-.topbar .brand > span:last-child { display: none; }
 .sidebar .league-switch { margin: 0 4px 12px; width: calc(100% - 8px); }
 .league-list { display: grid; gap: 8px; }
 .league-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); cursor: pointer; text-align: left; width: 100%; color: inherit; font: inherit; }
