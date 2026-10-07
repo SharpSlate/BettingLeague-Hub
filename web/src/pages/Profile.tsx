@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { PageHead, Segmented } from "../components/ui.tsx";
-import { useApi } from "../lib/api.ts";
+import { PUBLIC_DEMO, useApi } from "../lib/api.ts";
 import { MIN_PASSWORD } from "../lib/auth.ts";
 import { useMe } from "../lib/me.ts";
 import { PasswordField } from "./SignIn.tsx";
@@ -50,7 +50,8 @@ export function Profile({ onChanged }: { onChanged: () => void }) {
           <button className="btn primary" disabled={!name.trim() || name === me.displayName}>Save</button>
           {saved ? <span className="small good">Saved.</span> : null}
         </form>
-        <ChangePassword />
+        {/* The example league's visitor has no account, so no password. */}
+        {PUBLIC_DEMO ? null : <ChangePassword />}
         <div className="card pad stack-sm">
           <b>Appearance</b>
           <Segmented<Theme>
@@ -64,7 +65,7 @@ export function Profile({ onChanged }: { onChanged: () => void }) {
             options={[{ value: "auto", label: "Match phone" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]}
           />
         </div>
-        <button className="btn danger" onClick={() => api.signOut()}>Sign out</button>
+        <button className="btn danger" onClick={() => api.signOut()}>{PUBLIC_DEMO ? "Leave the example" : "Sign out"}</button>
       </div>
     </>
   );

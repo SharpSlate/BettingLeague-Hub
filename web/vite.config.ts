@@ -6,11 +6,13 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 
 // The site builds to web/dist as static files for GitHub Pages. Asset paths are
 // relative so the same build works under /BettingLeague/ or any other folder.
-// A build is either the demo (VITE_DEMO=1) or the real site with its Supabase
-// settings; a real build missing them fails here rather than shipping the demo.
+// A build is either the demo (VITE_DEMO=1, or "public" for the example league in the
+// site's demo/ folder) or the real site with its Supabase settings; a real build
+// missing them fails here rather than shipping the demo.
 export default defineConfig(({ command, mode }) => {
   const env = { ...loadEnv(mode, root, "VITE_"), ...process.env };
-  if (command === "build" && env.VITE_DEMO !== "1" && (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY)) {
+  const demo = env.VITE_DEMO === "1" || env.VITE_DEMO === "public";
+  if (command === "build" && !demo && (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY)) {
     throw new Error("Building the site needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. For the demo, set VITE_DEMO=1.");
   }
   return {

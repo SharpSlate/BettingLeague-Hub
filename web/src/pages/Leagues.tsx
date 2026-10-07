@@ -4,7 +4,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { initials } from "../components/Shell.tsx";
 import { errorText, Loading } from "../components/ui.tsx";
-import { useApi } from "../lib/api.ts";
+import { PUBLIC_DEMO, REAL_SITE, useApi } from "../lib/api.ts";
 import { useLoad } from "../lib/hooks.ts";
 import type { LeagueSummary } from "../lib/types.ts";
 
@@ -110,27 +110,41 @@ export function Leagues({ leagues, current, onChoose }: { leagues: LeagueSummary
           </div>
         </div>
       ) : (
-        <p className="small muted" style={{ margin: 0 }}>You're not in a league yet. Start one and invite your friends, or join one with the invite link you were sent.</p>
+        <p className="small muted" style={{ margin: 0 }}>
+          You're not in a league yet. Start one and invite your friends, or join one with the invite link you were sent.
+          {api.demo ? null : <> Not sure yet? <a href="demo/">Look around an example league</a>.</>}
+        </p>
       )}
-      <form className="stack-sm" onSubmit={create.run(async () => go(await api.createLeague(name.trim())))}>
-        <b>Start a league</b>
-        <label className="field">
-          <span>League name</span>
-          <input className="input" required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sunday Sharps" />
-        </label>
-        <p className="tiny muted" style={{ margin: 0 }}>You'll be its commissioner. It starts on the standard rules, which you can change for any week that hasn't opened. Then you get a link to invite people.</p>
-        <button className="btn primary" disabled={create.busy || !name.trim()}>{create.busy ? "Starting…" : "Start league"}</button>
-        {create.error ? <div className="banner bad" role="alert">{create.error}</div> : null}
-      </form>
-      <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); navigate(`/join/${codeFrom(code)}`); }}>
-        <b>Join a league</b>
-        <label className="field">
-          <span>Invite link or code</span>
-          <input className="input" required value={code} onChange={(e) => setCode(e.target.value)} />
-        </label>
-        <button className="btn" disabled={!code.trim()}>Continue</button>
-      </form>
-      <button type="button" className="btn link" onClick={() => api.signOut()}>Sign out</button>
+      {PUBLIC_DEMO ? (
+        // The example league's visitor has no account: starting a league happens on the real site.
+        <div className="stack-sm">
+          <b>Start your own league</b>
+          <p className="tiny muted" style={{ margin: 0 }}>Make an account, name your league, and you're its commissioner. It starts on the standard rules, which you can change, and you get a link to invite people.</p>
+          <a className="btn primary" href={`${REAL_SITE}#/signup`}>Create an account</a>
+        </div>
+      ) : (
+        <>
+          <form className="stack-sm" onSubmit={create.run(async () => go(await api.createLeague(name.trim())))}>
+            <b>Start a league</b>
+            <label className="field">
+              <span>League name</span>
+              <input className="input" required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sunday Sharps" />
+            </label>
+            <p className="tiny muted" style={{ margin: 0 }}>You'll be its commissioner. It starts on the standard rules, which you can change for any week that hasn't opened. Then you get a link to invite people.</p>
+            <button className="btn primary" disabled={create.busy || !name.trim()}>{create.busy ? "Starting…" : "Start league"}</button>
+            {create.error ? <div className="banner bad" role="alert">{create.error}</div> : null}
+          </form>
+          <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); navigate(`/join/${codeFrom(code)}`); }}>
+            <b>Join a league</b>
+            <label className="field">
+              <span>Invite link or code</span>
+              <input className="input" required value={code} onChange={(e) => setCode(e.target.value)} />
+            </label>
+            <button className="btn" disabled={!code.trim()}>Continue</button>
+          </form>
+        </>
+      )}
+      <button type="button" className="btn link" onClick={() => api.signOut()}>{PUBLIC_DEMO ? "Leave the example" : "Sign out"}</button>
     </Page>
   );
 }

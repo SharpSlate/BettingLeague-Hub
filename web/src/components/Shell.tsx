@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { useApi } from "../lib/api.ts";
+import { PUBLIC_DEMO, REAL_SITE, useApi } from "../lib/api.ts";
 import type { League, LeagueSummary, Me } from "../lib/types.ts";
 import { AdminIcon, BetsIcon, BoardIcon, LeagueIcon, PicksIcon, RulesIcon, StandingsIcon, UserIcon } from "./icons.tsx";
 
@@ -69,7 +69,11 @@ export function Shell({ me, league, leagues, onChoose, children }: {
   const current = league?.id ?? leagues[0]?.id ?? "";
   return (
     <>
-      {api.demo ? <div className="demo-ribbon">Demo with sample data: nothing here is real, and it resets when you reload.</div> : null}
+      {PUBLIC_DEMO ? (
+        <div className="demo-ribbon">
+          Example league: made-up people and bets. Try anything; nothing is saved. <a href={`${REAL_SITE}#/signup`}>Start your own league</a>
+        </div>
+      ) : api.demo ? <div className="demo-ribbon">Demo with sample data: nothing here is real, and it resets when you reload.</div> : null}
       <div className="app">
         <nav className="sidebar" aria-label="Main">
           <Brand league={league} />

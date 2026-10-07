@@ -187,6 +187,7 @@ h3 { font-size: 15px; font-weight: 700; }
   padding: 6px var(--gutter); text-align: center; font-size: 12px; font-weight: 650;
   background: var(--accent); color: var(--accent-ink);
 }
+.demo-ribbon a { color: inherit; text-decoration: underline; white-space: nowrap; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
 
 /* ---------- controls ---------- */
