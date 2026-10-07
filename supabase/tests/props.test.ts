@@ -190,20 +190,24 @@ describe("betting on props", () => {
     await setProps(PROPS_ON);
   });
 
-  it("a bet with a player prop can't be undone, even mixed with a game line", async () => {
+  it("a bet with a player prop undoes like any other, until a newer import moves its prop", async () => {
     const leg = propLeg(gDet, "rec_yds", "Amon-Ra St. Brown", "under", 78.5, -115);
+    const sinceFor = async (slip: string, user: string) =>
+      (await db.q(service, "select public.undo_slip_internal($1, $2, true) as since", [slip, user]))[0].since as Date | null;
+    // Props alone: the prop is checked against the latest import, so no pull is needed.
     const a = await place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 10_000, legs: [leg] as never });
-    await fails(db.q(service, "select public.undo_slip_internal($1, $2, true)", [a, carol]), "undo_props");
-    await fails(undo(db, a, carol), "undo_props");
-    expect(await status(a)).toBe("pending");
+    expect(await sinceFor(a, carol)).toBeNull();
+    await undo(db, a, carol);
+    expect(await status(a)).toBe("undone");
+    // Mixed with a game line: the game line still needs a fresh pull.
     const mixed = await place(db, { entry: daveEntry, user: dave, type: "parlay", stakeCents: 10_000, legs: [
       propLeg(gKc, "anytime_td", "James Cook", "yes", null, -110), { gameId: gDet, market: "total", side: "over", point: 47.5, price: -110 },
     ] as never });
-    await fails(undo(db, mixed, dave), "undo_props");
-    // A bet of game lines alone still undoes as before.
-    const spread = await place(db, { entry: daveEntry, user: dave, type: "straight", stakeCents: 10_000, legs: [{ gameId: gDet, market: "spread", side: "home", point: -2.5, price: -110 }] as never });
-    await undo(db, spread, dave);
-    expect(await status(spread)).toBe("undone");
+    expect(await sinceFor(mixed, dave)).not.toBeNull();
+    await undo(db, mixed, dave);
+    expect(await status(mixed)).toBe("undone");
+    // Once a newer import moves the prop, it stays.
+    const b = await place(db, { entry: carolEntry, user: carol, type: "straight", stakeCents: 10_000, legs: [leg] as never });
     await importProps([
       ...ou("KCBUF", "player_pass_yds", "Josh Allen", 240.5),
       ...ou("KCBUF", "player_pass_yds", "Patrick Mahomes", 252.5, "fanduel"),
@@ -211,6 +215,8 @@ describe("betting on props", () => {
       td("KCBUF", "James Cook", -110),
       ...ou("DETGB", "player_reception_yds", "Amon-Ra St. Brown", 74.5),
     ]);
+    await fails(undo(db, b, carol), "undo_line_moved");
+    expect(await status(b)).toBe("pending");
   });
 
   it("props can be bet only on a pull from the last 2 hours", async () => {

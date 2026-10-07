@@ -52,7 +52,6 @@ export function Board() {
   // One request undoes them all, against one fresh pull of the lines, each bet on its
   // own: one that can't be undone (its line moved, say) doesn't stop the rest. Only the
   // bets worth another try (the lines couldn't be pulled just then) keep the Undo button.
-  // Bets with a player prop can't be undone, so they never get it.
   const undoAll = async () => {
     const shown = toast;
     if (!shown || undoing) return;

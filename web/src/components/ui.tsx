@@ -75,7 +75,6 @@ export function errorText(e: unknown): string {
     not_pending: "That bet isn't pending any more.",
     undo_window_passed: "The undo window has passed.",
     undo_line_moved: "A line on that bet has moved since you placed it, so it can't be undone.",
-    undo_props: "A bet with a player prop can't be undone.",
     subject_required: "Give the email a subject.",
     message_required: "Write a message.",
     spread_points_must_mirror: "The two spread numbers must mirror each other (e.g. −3 and +3).",

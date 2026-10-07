@@ -867,7 +867,7 @@ describe("player props: grading", () => {
     expect(store.settled).toEqual(["x"]);
     expect(store.pulls).toContainEqual({
       kind: "scores", trigger: "schedule", ok: false,
-      error: "props: Joe Nobody (Bills at Chiefs) isn't in the box score and his props came off the board once inactives were announced, so they were graded void as did not play. If he played, enter his stats under Player props waiting.",
+      error: "props: Joe Nobody (Bills at Chiefs) isn't in the box score and his props came off the board once inactives were announced, so they were graded void as did not play. If he played, enter his stats under Admin > Games & lines.",
     });
   });
   it("leaves props waiting, and says why, when ESPN can't be read", async () => {
@@ -881,7 +881,7 @@ describe("player props: grading", () => {
     expect(store.ingestedBoxes).toEqual([]);
     const empty = async () => new Response(JSON.stringify({ events: [] }), { status: 200 });
     expect(await loadBoxes(store, need, empty, "America/New_York")).toEqual({
-      problems: ["box scores: ESPN doesn't list Buffalo Bills at Kansas City Chiefs, so its props can't be graded yet. Enter its players' stats under Player props waiting if this lasts."],
+      problems: ["box scores: ESPN doesn't list Buffalo Bills at Kansas City Chiefs, so its props can't be graded yet. Enter its players' stats under Admin > Games & lines if this lasts."],
       failed: new Set(["a"]),
     });
   });

@@ -76,7 +76,7 @@ export interface Store {
    * was ruled out (a game with none of these isn't in the map).
    */
   playerStats(gameIds: string[]): Promise<Boxes>;
-  /** Replaces the list of props waiting for an admin (Admin > Week & feeds). */
+  /** Replaces the list of props waiting for an admin (Admin > Alerts). */
   recordPropHolds(holds: (Hold & { bets: number })[]): Promise<void>;
 }
 
@@ -347,7 +347,7 @@ export async function runScores(store: Store, apiKey: string, fetchImpl: Fetch, 
     const [player, gameId] = m.split("|");
     const label = games.get(gameId!)?.label ?? "his game";
     await store.recordPull("scores", trigger, false,
-      `props: ${player} (${label}) isn't in the box score and his props came off the board once inactives were announced, so they were graded void as did not play. If he played, enter his stats under Player props waiting.`.slice(0, 500),
+      `props: ${player} (${label}) isn't in the box score and his props came off the board once inactives were announced, so they were graded void as did not play. If he played, enter his stats under Admin > Games & lines.`.slice(0, 500),
       null, null).catch(() => undefined);
   }
   try {
@@ -395,7 +395,7 @@ export async function loadBoxes(store: Store, need: BoxNeeded[], fetchImpl: Fetc
     const match = findEspnGame(espn, g.homeName, g.awayName, g.kickoffAt);
     if (!match?.id) {
       failed.add(g.gameId);
-      if (!scoreboardFailed) problems.push(`box scores: ESPN doesn't list ${label}, so its props can't be graded yet. Enter its players' stats under Player props waiting if this lasts.`);
+      if (!scoreboardFailed) problems.push(`box scores: ESPN doesn't list ${label}, so its props can't be graded yet. Enter its players' stats under Admin > Games & lines if this lasts.`);
       continue;
     }
     if (!match.completed) continue;

@@ -106,10 +106,10 @@ describe("the Rules page says what the rules enforce", () => {
     expect(t).toContain("a parlay can take at most 1 pick from a game with a prop on the slip and at most 3 props in all.");
     expect(t).toContain("Props can be bet for 2 hours after each update.");
     expect(t).toContain("Teams name their inactive players 90 minutes before kickoff");
-    expect(t).toContain("No undo. A bet with a player prop is final once placed.");
+    expect(t).not.toContain("No undo.");
     expect(t).toContain("if he plays without recording a stat, his over loses.");
     expect(t).toContain("A bet with a player prop can stake at most 5,000 units (2% of the usual maximum).");
-    expect(undoText(r)).toBe("You can undo within 5 minutes if the line hasn't moved, except a bet with a player prop.");
-    expect(rulesPage(r, league).glance.find((g) => g.label === "Player props")).toEqual({ label: "Player props", value: "On", detail: "at most 1 per game in a parlay; no undo" });
+    expect(undoText(r)).toBe("You can undo within 5 minutes if the line hasn't moved.");
+    expect(rulesPage(r, league).glance.find((g) => g.label === "Player props")).toEqual({ label: "Player props", value: "On", detail: "at most 1 per game in a parlay" });
   });
 });

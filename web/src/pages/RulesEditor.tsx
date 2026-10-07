@@ -213,7 +213,7 @@ export function RulesEditor({ current, openWeek, onPublished }: { current: RuleV
                 </label>
               </div>
               <div className="tiny muted">
-                Always: one pick per player on a slip, no prop in a parlay with its own game's spread, total or moneyline, and no undo on a bet with a prop.
+                Always: one pick per player on a slip, and no prop in a parlay with its own game's spread, total or moneyline.
                 Props can only be bet on recently pulled lines (Week &amp; feeds says how recent), and within 90 minutes of kickoff only on lines pulled after inactives are announced.
                 A player who doesn't play voids his prop; one missing from the box score waits for an admin to check.
                 Recommended: 1 pick per game, a stake cap near 2%, and at most 3 props in a parlay.

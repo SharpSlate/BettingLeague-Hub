@@ -140,6 +140,19 @@ describe("the game controls can't show picks early or reopen betting", () => {
     await fails(db.q(member(owner), "select public.admin_set_game_status($1, 'scheduled', null, 'oops')", [ids.LIVE]), "game_started");
   });
 
+  it("a game stopped after kickoff is voided, and its later scores don't bring it back", async () => {
+    await setKickoff("LIVE", "now() - interval '30 minutes'");
+    await scores([{ id: "LIVE", completed: false, homeScore: 14, awayScore: 0 }]);
+    await db.q(member(owner), "select public.admin_set_game_status($1, 'postponed', null, 'Suspended in the 2nd quarter')", [ids.LIVE]);
+    const status = async () => (await db.su("select status from public.games where id = $1", [ids.LIVE]))[0].status;
+    expect(await status()).toBe("void");
+    const [log] = await db.q(member(bob), "select after from public.audit_log where action = 'game_status_set' and target_id = $1 order by id desc limit 1", [ids.LIVE]);
+    expect(log.after).toMatchObject({ status: "void", stoppedAfterKickoff: true });
+    await scores([{ id: "LIVE", completed: true, homeScore: 21, awayScore: 3 }]);
+    await scores([{ id: "LIVE", completed: true, homeScore: 21, awayScore: 3 }]);
+    expect(await status()).toBe("void");
+  });
+
   it("a game that hasn't started can move later, and the log shows both kickoffs", async () => {
     const to = hoursFromNow(9).toISOString();
     await db.q(member(owner), "select public.admin_set_game_status($1, 'scheduled', $2, 'Flexed to the late window')", [ids.LATE, to]);

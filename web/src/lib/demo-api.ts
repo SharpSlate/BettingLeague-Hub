@@ -181,7 +181,7 @@ function seed(now: number) {
     slip("e-crab", YOU, OPEN_WEEK, "straight", 100_000, [leg("g-thu", "rec_yds", "over", { player: "CeeDee Lamb", result: "won" })],
       { quotedAmerican: -115, potentialPayoutCents: 186_957, status: "won", payoutCents: 186_957, placedAt: now - 2 * D, settledAt: now - 22 * H }),
     // A prop on a player who isn't in Thursday's box score: it waits for an admin (Admin >
-    // Week & feeds > Player props waiting) rather than being refunded.
+    // Alerts) rather than being refunded.
     slip("e-canton", "u-mo", OPEN_WEEK, "straight", 50_000, [{ legNo: 0, gameId: "g-thu", market: "receptions", side: "over", point: 1.5, price: 120, teasedPoint: null, book: "draftkings", result: "pending", player: "Jalen Tolbert" }],
       { quotedAmerican: 120, potentialPayoutCents: 110_000, placedAt: now - 2 * D }),
     // Live now, so revealed.
@@ -518,8 +518,6 @@ export class DemoApi implements Api {
     const s = this.s.slips.find((x) => x.id === slipId);
     if (!s || !this.mine(s.entryId)) throw new Error("not_found");
     if (s.status !== "pending") throw new Error("not_pending");
-    // As undo_slip_internal does: a bet with a player prop is final once placed.
-    if (s.legs.some((l) => l.player)) throw new Error("undo_props");
     if (Date.now() > s.placedAt + rules.undoMinutes * 60_000) throw new Error("undo_window_passed");
     if (this.revealed(s)) throw new Error("game_started");
     // As undo_slip_internal does: no undo once a line on the bet has moved (a teaser's
@@ -682,11 +680,15 @@ export class DemoApi implements Api {
     if (to < g.kickoffAt) throw new Error("kickoff_earlier");
     if (status === "scheduled" && (!["scheduled", "postponed"].includes(g.status) || g.kickoffAt <= now)) throw new Error("game_started");
     const before = { status: g.status, kickoffAt: new Date(g.kickoffAt).toISOString() };
-    const regraded = status === "void" && g.status === "final" ? this.reopen(gameId, reason) : 0;
-    g.status = status;
+    // A game stopped after kickoff voids its bets.
+    const stopped = status === "postponed" && g.status === "live";
+    const next = stopped ? "void" : status;
+    const regraded = next === "void" && g.status === "final" ? this.reopen(gameId, reason) : 0;
+    g.status = next;
     g.kickoffAt = to;
     this.s.audit.unshift({ id: this.nextId++, actorName: "You", action: "game_status_set", targetType: "game", targetId: gameId, before,
-      after: { status, kickoffAt: new Date(to).toISOString(), betsRegraded: regraded }, reason, createdAt: new Date().toISOString() });
+      after: { status: next, kickoffAt: new Date(to).toISOString(), betsRegraded: regraded, ...(stopped ? { stoppedAfterKickoff: true } : {}) },
+      reason, createdAt: new Date().toISOString() });
     this.grade();
   }
   async adminSetFinalScore(gameId: string, home: number, away: number, reason: string) {
