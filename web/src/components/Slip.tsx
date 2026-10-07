@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
+import { isProp, quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
 import { clock, lineNumber, odds, point, toCents, units } from "../lib/format.ts";
 import { pushRuleText, undoText } from "../lib/rules-text.ts";
 import { matchupText, pickText, useSlip, type Pick } from "../lib/slip.tsx";
+import type { PropLabIndex } from "../lib/prop-lab.ts";
 import type { MyEntry } from "../lib/types.ts";
+import { PlayerLink, usePropLab } from "./PlayerLink.tsx";
 import { Segmented } from "./ui.tsx";
 
 const COMBO = "combo";
@@ -17,6 +19,17 @@ function legOf(p: Pick): Leg {
 function teasedLabel(p: Pick, pts: number): string {
   if ((p.market !== "spread" && p.market !== "total") || p.point === null) return `${pickText(p)} (can't be teased)`;
   return `${pickText(p, teasedPoint(legOf(p), pts))} (from ${p.market === "total" ? p.point : point(p.point)})`;
+}
+
+/** A pick's label, with a player prop's player linking to his Prop Lab card (in a new tab). */
+function withPlayerLink(p: Pick, text: string, lab: PropLabIndex | null) {
+  if (!p.player || !text.startsWith(p.player)) return text;
+  return (
+    <>
+      <PlayerLink player={p.player} market={isProp(p.market) ? p.market : null} teams={[p.away, p.home]} index={lab} />
+      {text.slice(p.player.length)}
+    </>
+  );
 }
 
 /**
@@ -65,6 +78,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
     }
     return { items: [{ key: COMBO, input, problems, quote }], stake: stakeCents, payout: problems.length ? 0 : quote?.payoutCents ?? 0 };
   }, [rules, entry, mode, picks, slip.stakes, slip.teaserPoints]);
+  const lab = usePropLab(picks.some((p) => !!p.player));
 
   if (!picks.length) {
     return <div className="empty">Tap a price on the board to add it to your slip.</div>;
@@ -198,7 +212,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         {picks.map((p, i) => (
           <div className="slip-leg" key={p.key}>
             <div>
-              <div><b>{mode === "teaser" ? teasedLabel(p, slip.teaserPoints) : pickText(p)}</b>{" "}
+              <div><b>{withPlayerLink(p, mode === "teaser" ? teasedLabel(p, slip.teaserPoints) : pickText(p), lab)}</b>{" "}
                 {mode !== "teaser" ? <span className="muted num">{odds(p.price)}</span> : null}
               </div>
               <div className="tiny muted">{matchupText(p)} · {clock(p.kickoffAt)}</div>
