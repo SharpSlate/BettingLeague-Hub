@@ -230,7 +230,6 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 1. **Standings definitions** for Net, Risk and Return, from the Splash inventory.
 2. **Branding:** the name is BALTIMORE DEGENERATES; colors, logo and web address are still open.
 3. **The commissioner's own complaints** about Splash.
-4. **The review-fix defaults** listed under "Awaiting the owner" in `DECISIONS.md`.
 
 ## 13. Known limits
 
