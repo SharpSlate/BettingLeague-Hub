@@ -68,7 +68,6 @@ const FRIENDLY: Record<string, string> = {
   same_player: "Only one pick per player on a slip.",
   same_game_props: "A game's picks in a parlay with a player prop must all be props, within the league's limit per game.",
   too_many_props: "That's more player props than the league allows in one parlay.",
-  undo_props: "A bet with a player prop can't be undone.",
   not_found: "That bet couldn't be found.",
   not_pending: "That bet isn't pending any more.",
   week_closed: "That bet's week has closed, so it can't be undone.",

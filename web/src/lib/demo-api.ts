@@ -518,8 +518,6 @@ export class DemoApi implements Api {
     const s = this.s.slips.find((x) => x.id === slipId);
     if (!s || !this.mine(s.entryId)) throw new Error("not_found");
     if (s.status !== "pending") throw new Error("not_pending");
-    // As undo_slip_internal does: a bet with a player prop is final once placed.
-    if (s.legs.some((l) => l.player)) throw new Error("undo_props");
     if (Date.now() > s.placedAt + rules.undoMinutes * 60_000) throw new Error("undo_window_passed");
     if (this.revealed(s)) throw new Error("game_started");
     // As undo_slip_internal does: no undo once a line on the bet has moved (a teaser's

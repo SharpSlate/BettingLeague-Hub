@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { isProp, quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
+import { quoteSlip, teasedPoint, validateSlip, type BetType, type Leg, type RuleSet, type SlipInput } from "@rules";
 import { useApi } from "../lib/api.ts";
 import { clock, lineNumber, odds, point, toCents, units } from "../lib/format.ts";
 import { pushRuleText, undoText } from "../lib/rules-text.ts";
@@ -99,7 +99,7 @@ export function SlipBody({ rules, entries, onPlaced }: {
         }
         if (r.ok) {
           placed.push(r.slipId);
-          if (!item.input.legs.some((l) => isProp(l.market))) undoable.push(r.slipId);
+          undoable.push(r.slipId);
           slip.forgetRef(item.key);
           if (mode === "straight") slip.remove(item.key);
           continue;

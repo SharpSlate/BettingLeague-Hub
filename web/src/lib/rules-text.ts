@@ -64,7 +64,7 @@ export function pushRuleText(r: RuleSet): string {
 /** The undo rule in a few words, for the bet slip. */
 export function undoText(r: RuleSet): string {
   if (r.undoMinutes <= 0) return "Bets are final once placed.";
-  return `You can undo within ${minutes(r.undoMinutes)}${r.undoAfterLineMove ? "" : " if the line hasn't moved"}${activeProps(r) ? ", except a bet with a player prop" : ""}.`;
+  return `You can undo within ${minutes(r.undoMinutes)}${r.undoAfterLineMove ? "" : " if the line hasn't moved"}.`;
 }
 
 /** What each leg must win, on average, for a teaser card at the first points option to break even. */
@@ -146,10 +146,6 @@ function propItems(r: RuleSet, league: League | null): RuleItem[] {
       text: `When the league's prop pulls come in, not as often as game lines.${age !== null ? ` Props can be bet for ${age % 60 === 0 ? `${age / 60} hour${age === 60 ? "" : "s"}` : minutes(age)} after each update. Teams name their inactive players 90 minutes before kickoff, so from then on a game's props can only be bet on lines updated after that. A prop the books stop offering comes off the board.` : ""}`,
     },
     {
-      lead: "No undo.",
-      text: "A bet with a player prop is final once placed. Prop lines can't be re-checked on the spot, so undo could be used to take a prop back after news broke.",
-    },
-    {
       lead: "Grading.",
       text: `From the game's box score once it's final. An anytime TD wins if the player scores a rushing, receiving or return touchdown; touchdowns he throws don't count. If he doesn't play, the prop is void${multi ? " (in a parlay, the leg drops out)" : ""}, as at the books; if he plays without recording a stat, his over loses. A player missing from the box score is checked by a site admin before his bets are graded, unless the books took his props down once inactives were announced. If the box score is wrong, a site admin can correct his stats, and every bet on them is graded again.`,
     },
@@ -192,7 +188,7 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
       detail: r.undoMinutes > 0 ? (r.undoAfterLineMove ? "before kickoff" : "if the line hasn't moved") : undefined,
     },
     ...(activeProps(r)
-      ? [{ label: "Player props", value: "On", detail: `at most ${activeProps(r)!.maxPerGame} per game in a parlay; no undo` }]
+      ? [{ label: "Player props", value: "On", detail: `at most ${activeProps(r)!.maxPerGame} per game in a parlay` }]
       : []),
     {
       label: "Picks shown",
