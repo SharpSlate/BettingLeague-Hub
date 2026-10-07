@@ -198,6 +198,13 @@ jobs:
           VITE_EMAIL_CODES: ${{ secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' }}
           # The site's address. A copy opened anywhere else sends the visitor there.
           VITE_SITE_URL: ${{ vars.SITE_URL }}
+      # The example league anyone can look around before starting one, in the site's demo/
+      # folder. It's the demo on sample data, built without the backend's settings, so it
+      # can't reach the database, the odds feed or the league email.
+      - name: Build the example league
+        run: VITE_SITE_URL="${SITE_URL%/}/demo/" npm run build:example
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -249,6 +256,16 @@ jobs:
           curl -sf -o app.js "${SITE_URL%/}/$js" || fail "The site's script $js didn't load"
           grep -q "$SUPABASE_URL" app.js || fail "The site's script doesn't point at $SUPABASE_URL"
           echo "Site: $SITE_URL is up and points at $SUPABASE_URL"
+
+          # The example league is up, and nothing in it knows the backend's address.
+          demo="${SITE_URL%/}/demo/"
+          code=$(curl -s -o demo.html -w "%{http_code}" "$demo") || code=000
+          [ "$code" = "200" ] || fail "The example league answered $code at $demo"
+          js=$(grep -o 'assets/[^"]*\.js' demo.html | head -1)
+          curl -sf -o demo.js "$demo$js" || fail "The example league's script $js didn't load"
+          grep -q "Example league" demo.js || fail "The page at $demo isn't the example league"
+          if grep -q "$SUPABASE_URL" demo.js; then fail "The example league's script points at $SUPABASE_URL"; fi
+          echo "Example league: $demo is up, on sample data only"
 
           curl -sf "$SUPABASE_URL/auth/v1/settings" -H "apikey: $SUPABASE_ANON_KEY" -o auth.json || fail "Supabase sign-in settings didn't answer"
           python3 - <<'PY' || exit 1

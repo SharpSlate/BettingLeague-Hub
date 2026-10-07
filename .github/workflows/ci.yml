@@ -42,3 +42,5 @@ jobs:
         run: npm run test:db
       - name: Build the site
         run: npm run build:demo
+      - name: Build the example league
+        run: npm run build:example

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { HashRouter, MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Shell } from "./components/Shell.tsx";
 import { Loading } from "./components/ui.tsx";
-import { useApi } from "./lib/api.ts";
+import { PUBLIC_DEMO, useApi } from "./lib/api.ts";
 import { useLoad } from "./lib/hooks.ts";
 import { MeContext } from "./lib/me.ts";
 import { SlipProvider, slipStorageKey } from "./lib/slip.tsx";
@@ -34,7 +34,9 @@ export function App() {
   return <SignedIn />;
 }
 
-const LAST_LEAGUE = "blh.league";
+// The example league shares the site's address, so it keeps its own, or a visit to it
+// would change which league a member's next visit to the real site opens.
+const LAST_LEAGUE = PUBLIC_DEMO ? "blh.example.league" : "blh.league";
 function storedLeague(): string | null {
   try {
     return localStorage.getItem(LAST_LEAGUE);

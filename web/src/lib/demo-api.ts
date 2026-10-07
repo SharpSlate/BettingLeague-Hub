@@ -8,6 +8,7 @@ import {
 import { gradePending, type Boxes, type GameResult, type Hold, type PendingSlip, type StatRow } from "../../../supabase/functions/_shared/grading.ts";
 import { readLeagueEmail } from "../../../supabase/functions/_shared/league-email.ts";
 import { checkPlacement, type GameInfo } from "../../../supabase/functions/_shared/placement.ts";
+import { REAL_SITE } from "./api.ts";
 import { MIN_PASSWORD } from "./auth.ts";
 import { TEAMS, team } from "./teams.ts";
 import type {
@@ -232,12 +233,23 @@ const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
 
 export class DemoApi implements Api {
   readonly demo = true;
+  /**
+   * A visitor to the example league (PUBLIC_DEMO): already in, as the league's commissioner
+   * but not a site admin, which is what someone who starts a league gets. The example has
+   * no sign-in page, so leaving it goes back to the real site.
+   */
+  private readonly visitor: boolean;
   private s = seed(Date.now());
-  private signedIn = false;
+  private signedIn: boolean;
   private listeners = new Set<() => void>();
   private nextId = 1000;
   /** Bets placed, by the id the site sent with each, so a retry returns the same bet. */
   private placedRefs = new Map<string, { slipId: string; payoutCents: number; american: number; bet: string }>();
+
+  constructor({ visitor = false }: { visitor?: boolean } = {}) {
+    this.visitor = visitor;
+    this.signedIn = visitor;
+  }
 
   private emit() { for (const l of this.listeners) l(); }
   private entry(id: string) { return this.s.entries.find((e) => e.id === id)!; }
@@ -274,8 +286,13 @@ export class DemoApi implements Api {
   }
   async setPassword(password: string) { await wait(); this.checkPassword(password); this.newPassword = false; this.emit(); }
   async signInWithGoogle() { await wait(); this.signedIn = true; this.emit(); }
-  async signOut() { this.signedIn = false; this.newPassword = false; this.emit(); }
-  async me(): Promise<Me> { return { id: YOU, displayName: this.s.users[0]!.displayName, isSiteAdmin: true, isCommissioner: true }; }
+  async signOut() {
+    if (this.visitor) return window.location.assign(REAL_SITE);
+    this.signedIn = false;
+    this.newPassword = false;
+    this.emit();
+  }
+  async me(): Promise<Me> { return { id: YOU, displayName: this.s.users[0]!.displayName, isSiteAdmin: !this.visitor, isCommissioner: true }; }
 
   // The demo has one league; starting or joining others needs the real site.
   private leagueName = "Demo League";

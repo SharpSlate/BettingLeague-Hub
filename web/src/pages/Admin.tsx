@@ -432,12 +432,17 @@ function EmailLeague({ users }: { users: AdminUser[] }) {
         }
         setArmed(false);
         const { sent } = await api.adminEmailLeague(f.subject, f.message, f.test);
+        // The demo sends nothing, and says so.
         if (f.test) {
           setF({ ...f, test: false });
-          return `Test sent to you (${sent}). Check your inbox; when it looks right, send it to everyone.`;
+          return api.demo
+            ? "Demo: no email was sent. In a real league the test goes to you; when it looks right, you send it to everyone."
+            : `Test sent to you (${sent}). Check your inbox; when it looks right, send it to everyone.`;
         }
         setF({ subject: "", message: "", test: true });
-        return `Sent to ${sent} member${sent === 1 ? "" : "s"}.`;
+        return api.demo
+          ? `Demo: no email was sent. In a real league it would go to ${sent} member${sent === 1 ? "" : "s"}.`
+          : `Sent to ${sent} member${sent === 1 ? "" : "s"}.`;
       }}>
       <Field label="Subject"><input className="input" maxLength={150} value={f.subject} onChange={(e) => { setF({ ...f, subject: e.target.value }); setArmed(false); }} /></Field>
       <Field label="Message"><textarea className="input" rows={6} maxLength={10_000} value={f.message} onChange={(e) => { setF({ ...f, message: e.target.value }); setArmed(false); }} /></Field>

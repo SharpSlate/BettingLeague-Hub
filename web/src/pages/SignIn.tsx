@@ -56,6 +56,9 @@ export function PasswordField({ label, value, onChange, isNew }: { label: string
 
 type Mode = "signin" | "signup" | "forgot";
 
+/** The example league's "Start your own league" link opens the site on #/signup. */
+const firstMode = (): Mode => (window.location.hash === "#/signup" ? "signup" : "signin");
+
 export function SignIn() {
   const api = useApi();
   // The deploy sets VITE_GOOGLE once the site has a Google sign-in client, and
@@ -63,7 +66,7 @@ export function SignIn() {
   // email is Supabase's standard one, which has a link rather than a code.
   const google = api.demo || import.meta.env.VITE_GOOGLE === "true";
   const codes = api.demo || import.meta.env.VITE_EMAIL_CODES === "true";
-  const [mode, setMode] = useState<Mode>("signin");
+  const [mode, setMode] = useState<Mode>(firstMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -151,6 +154,9 @@ export function SignIn() {
             </div>
           </>
         )}
+        {!api.demo && (mode === "signin" || mode === "signup") ? (
+          <a className="btn block" href="demo/">See an example league first</a>
+        ) : null}
         <p className="tiny muted" style={{ margin: 0 }}>Start a league, or join one with its invite link. Play units only: no real money changes hands on this site.</p>
       </form>
     </div>
