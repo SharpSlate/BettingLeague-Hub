@@ -22,7 +22,6 @@ Defaults chosen while fixing the review findings (Sept 28–29), adding player p
 | Default | Why |
 |---|---|
 | A co-manager added mid-week sees the entry's hidden bets placed before they joined only at kickoff, like everyone else. | Otherwise an admin could add themselves to any entry and see its picks. |
-| Other members see a parlay's odds and payout only after every leg kicks off. | The combined odds give away the hidden legs. |
 | A bet can't be undone once its week has been closed, even inside the 5 minutes. | An early close could otherwise be used to dodge the 30% minimum. |
 | The season's last week is closed by an admin with its own "Close the season" step; "Open next week" won't close a week until the next week's games are on the board. | The site can't tell "the season is over" from "next week's games aren't posted yet", and betting should never stall with no week open. |
 | Once a week is open, an admin can move a kickoff later but not earlier; real schedule changes come from the feed, and "postponed" stops betting on a game at once. | Moving a kickoff earlier would show its picks early. |
@@ -47,6 +46,7 @@ Defaults chosen while fixing the review findings (Sept 28–29), adding player p
 
 | Date | Decision | By | Notes |
 |---|---|---|---|
+| 2026-10-07 | **Parlay odds stay hidden:** other members see a parlay's odds and payout only after every leg has kicked off. | Owner | Was a default awaiting the owner (Sept 28–29). The combined odds would give away the hidden legs. |
 | 2026-10-07 | **Score corrections:** correcting a final score regrades that game's bets automatically. Payouts are taken back and paid again, each as its own ledger row, even if that leaves a bank below zero until it's won back. Bets an admin voided stay void. | Owner | Was a default awaiting the owner (Sept 28–29). |
 | 2026-10-07 | **Final scores:** a game pays out only once two score pulls in a row agree (about 10 minutes after the final) and ESPN's free scoreboard shows the same final. If ESPN disagrees, doesn't list the game or can't be reached, the game stays live and Recent problems says why; an admin enters the final by hand. | Owner | Was a default awaiting the owner (Sept 28–29). |
 | 2026-10-06 | **Web address:** the site moves to leagues.sharpslatesports.com, served by Cloudflare Pages. | Owner | GitHub Pages can't serve it there: the domain is verified on GitHub for the owner's personal account. The github.io address keeps working and sends visitors to the new one, invite links included. SETUP.md step 10. |
