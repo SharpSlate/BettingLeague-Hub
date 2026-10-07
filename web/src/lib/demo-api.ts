@@ -181,7 +181,7 @@ function seed(now: number) {
     slip("e-crab", YOU, OPEN_WEEK, "straight", 100_000, [leg("g-thu", "rec_yds", "over", { player: "CeeDee Lamb", result: "won" })],
       { quotedAmerican: -115, potentialPayoutCents: 186_957, status: "won", payoutCents: 186_957, placedAt: now - 2 * D, settledAt: now - 22 * H }),
     // A prop on a player who isn't in Thursday's box score: it waits for an admin (Admin >
-    // Week & feeds > Player props waiting) rather than being refunded.
+    // Alerts) rather than being refunded.
     slip("e-canton", "u-mo", OPEN_WEEK, "straight", 50_000, [{ legNo: 0, gameId: "g-thu", market: "receptions", side: "over", point: 1.5, price: 120, teasedPoint: null, book: "draftkings", result: "pending", player: "Jalen Tolbert" }],
       { quotedAmerican: 120, potentialPayoutCents: 110_000, placedAt: now - 2 * D }),
     // Live now, so revealed.

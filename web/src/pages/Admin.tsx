@@ -1,10 +1,11 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { Market } from "@rules";
 import { Empty, errorText, Loading, PageHead } from "../components/ui.tsx";
+import { alertsChanged, usePropHolds } from "../lib/alerts.ts";
 import { useApi } from "../lib/api.ts";
 import { parsePairings, parseStandings, type Parsed } from "../lib/bulk.ts";
 import { ago, kickoff, matchup, odds, toCents } from "../lib/format.ts";
-import { useLoad } from "../lib/hooks.ts";
+import { useLoad, type Loaded } from "../lib/hooks.ts";
 import { useMe } from "../lib/me.ts";
 import type { AdminUser, GameView, League, PlayerStatsInput, PropHold } from "../lib/types.ts";
 import { inviteLink } from "./Leagues.tsx";
@@ -96,10 +97,10 @@ function BulkBox<T>({ title, note, placeholder, submit, parse, run }: {
   );
 }
 
-type Section = "status" | "league" | "members" | "entries" | "rules" | "site" | "games";
+type Section = "alerts" | "status" | "league" | "members" | "entries" | "rules" | "site" | "games";
 
 const SECTION_NAMES: Record<Section, string> = {
-  status: "Week", league: "League", members: "Members", entries: "Entries & banks", rules: "Rules",
+  alerts: "Alerts", status: "Week", league: "League", members: "Members", entries: "Entries & banks", rules: "Rules",
   site: "Site feeds", games: "Games & lines",
 };
 
@@ -110,12 +111,21 @@ const SECTION_NAMES: Record<Section, string> = {
 export function Admin() {
   const api = useApi();
   const me = useMe();
+  const holds = usePropHolds(me.isSiteAdmin);
+  const alerts = holds.data?.length ?? 0;
   const sections: Section[] = [
+    ...(me.isSiteAdmin ? (["alerts"] as Section[]) : []),
     ...(me.isCommissioner ? (["status", "league", "members", "entries", "rules"] as Section[]) : []),
     ...(me.isSiteAdmin ? (["site", "games"] as Section[]) : []),
   ];
   const [picked, setSection] = useState<Section | null>(null);
-  const section = picked && sections.includes(picked) ? picked : sections[0];
+  // Opens on Alerts while something is waiting there, otherwise on the first of the rest.
+  // Once it has opened on Alerts it stays there, so answering the last one shows it's clear.
+  const openOnAlerts = picked === null && alerts > 0;
+  useEffect(() => {
+    if (openOnAlerts) setSection("alerts");
+  }, [openOnAlerts]);
+  const section = picked && sections.includes(picked) ? picked : alerts ? "alerts" : sections.find((s) => s !== "alerts");
   const league = useLoad(() => api.league(), []);
   if (!section) return <Empty>This page is for the league's commissioners.</Empty>;
   return (
@@ -129,11 +139,13 @@ export function Admin() {
             {sections.map((s) => (
               <button key={s} type="button" className={section === s ? "on" : ""} onClick={() => setSection(s)}>
                 {SECTION_NAMES[s]}
+                {s === "alerts" && alerts ? <span className="nav-badge">{alerts}</span> : null}
               </button>
             ))}
           </div>
         </div>
-        {section === "status" ? <Status reload={league.reload} />
+        {section === "alerts" ? <Alerts holds={holds} />
+          : section === "status" ? <Status reload={league.reload} />
           : section === "league" ? (league.data ? <LeagueSettings league={league.data} reload={league.reload} /> : <Loading />)
           : section === "members" ? <Members />
           : section === "entries" ? <Entries />
@@ -192,7 +204,6 @@ function SiteStatus() {
   const lg = league.data;
   return (
     <div className="grid-2">
-      <PropHolds />
       <div className="card pad stack-sm">
         <h3>Feeds</h3>
         {lg ? (
@@ -317,14 +328,27 @@ const statsText = (s: PlayerStatsInput) =>
   [s.passYds && `${s.passYds} pass yds`, s.rushYds && `${s.rushYds} rush yds`, s.receptions && `${s.receptions} rec`, s.recYds && `${s.recYds} rec yds`, s.tds && `${s.tds} TD`]
     .filter(Boolean).join(", ") || "no stats";
 
+/** What's waiting for a site admin: bets that can't be graded until an admin answers. */
+function Alerts({ holds }: { holds: Loaded<PropHold[]> }) {
+  if (!holds.data) return holds.error ? <div className="banner bad" role="alert">{holds.error}</div> : <Loading />;
+  if (!holds.data.length) {
+    return (
+      <Empty>
+        Nothing is waiting for you. When a player with props riding is missing from a game's box score, his bets wait here
+        until you say whether he played, and the Admin menu shows a count.
+      </Empty>
+    );
+  }
+  return <div className="grid-2"><PropHolds holds={holds} /></div>;
+}
+
 /**
  * Player props the grader holds for an admin, with one-click answers. Each answer goes
  * through admin_set_player_stats (logged with its reason), and his bets are graded on
  * the next run.
  */
-function PropHolds() {
+function PropHolds({ holds }: { holds: Loaded<PropHold[]> }) {
   const api = useApi();
-  const holds = useLoad(() => api.adminPropHolds(), [], 60_000);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -338,7 +362,7 @@ function PropHolds() {
       await api.adminSetPlayerStats(h.gameId, h.player, stats, reason);
       setMsg({ ok: true, text: `Saved for ${h.player}. His bets are graded on the next run (within 5 minutes).` });
       setOpen(null);
-      holds.reload();
+      alertsChanged();
     } catch (err) {
       setMsg({ ok: false, text: errorText(err) });
     } finally {

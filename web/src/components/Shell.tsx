@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
+import { usePropHolds } from "../lib/alerts.ts";
 import { PUBLIC_DEMO, REAL_SITE, useApi } from "../lib/api.ts";
 import type { League, LeagueSummary, Me } from "../lib/types.ts";
 import { AdminIcon, BetsIcon, BoardIcon, LeagueIcon, PicksIcon, RulesIcon, StandingsIcon, UserIcon } from "./icons.tsx";
@@ -66,6 +67,10 @@ export function Shell({ me, league, leagues, onChoose, children }: {
 }) {
   const api = useApi();
   const admin = me.isCommissioner || me.isSiteAdmin;
+  // Bets waiting for a site admin to grade by hand: a count on Admin until they're answered.
+  const alerts = usePropHolds(me.isSiteAdmin).data?.length ?? 0;
+  const badge = alerts ? <span className="nav-badge" aria-hidden="true">{alerts}</span> : null;
+  const adminLabel = alerts ? `Admin, ${alerts} waiting for you` : "Admin";
   const current = league?.id ?? leagues[0]?.id ?? "";
   return (
     <>
@@ -85,9 +90,10 @@ export function Shell({ me, league, leagues, onChoose, children }: {
             </NavLink>
           ))}
           {admin ? (
-            <NavLink to="/admin" className={({ isActive }) => `side-link${isActive ? " active" : ""}`}>
+            <NavLink to="/admin" className={({ isActive }) => `side-link${isActive ? " active" : ""}`} aria-label={adminLabel}>
               <AdminIcon />
               Admin
+              {badge}
             </NavLink>
           ) : null}
           <div className="foot">
@@ -103,7 +109,7 @@ export function Shell({ me, league, leagues, onChoose, children }: {
             <span className="spacer" />
             <LeagueSwitch current={current} leagues={leagues} onChoose={onChoose} className="league-switch only-sm" />
             {admin ? (
-              <Link to="/admin" className="icon-btn only-sm" aria-label="Admin"><AdminIcon /></Link>
+              <Link to="/admin" className="icon-btn only-sm" aria-label={adminLabel}><AdminIcon />{badge}</Link>
             ) : null}
             <Link to="/profile" className="icon-btn only-sm" aria-label="Profile"><UserIcon /></Link>
           </header>

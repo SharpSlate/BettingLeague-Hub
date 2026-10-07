@@ -87,7 +87,7 @@ Site admins run what every league shares: the line and score feeds, line overrid
    ```sql
    select app.bootstrap_admin('your-email@example.com');
    ```
-3. Reload the site: **Admin** now has **Site feeds** and **Games & lines**.
+3. Reload the site: **Admin** now has **Alerts**, **Site feeds** and **Games & lines**.
 
 ## 7. Turn on the odds feed
 
@@ -135,7 +135,7 @@ Site admins:
 - **A postponed game:** set it to **Postponed**. Its bets ride in every league. A league's week won't close by itself while the game is unplayed; its commissioner uses **Open next week** to move on.
 - **Something looks stuck:** **Site feeds → Recent problems** lists failed pulls, bets the grader couldn't settle, and games that need a hand.
 - **Betting closed early on a game that hasn't started:** mark it **Postponed**, **Pull lines**, then set it back to **Scheduled**.
-- **Player props waiting for you:** a player with props who isn't in the box score holds his bets in every league until you answer at the top of **Site feeds**: **Didn't play** (his props are void), **Played, no stats** (his overs lose), or his stats. A player the books took down once inactives were announced is voided on his own, and **Recent problems** says so; if he played after all, enter his stats with **Games & lines → Set a player's stats**.
+- **Player props waiting for you:** a player with props who isn't in the box score holds his bets in every league until you answer under **Admin → Alerts** (the Admin menu shows a count while any are waiting): **Didn't play** (his props are void), **Played, no stats** (his overs lose), or his stats. A player the books took down once inactives were announced is voided on his own, and **Recent problems** says so; if he played after all, enter his stats with **Games & lines → Set a player's stats**.
 
 Commissioners:
 - **The last week of the season:** after its last game, **Close the season** on **Admin → Week**.

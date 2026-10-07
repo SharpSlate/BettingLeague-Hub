@@ -124,9 +124,18 @@ h3 { font-size: 15px; font-weight: 700; }
 .brand-sub { font-size: 12px; color: var(--muted); }
 .topbar .spacer { flex: 1; }
 .icon-btn {
+  position: relative;
   display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface); cursor: pointer; text-decoration: none;
 }
+/* A count of things waiting for an admin, on the Admin link and the Alerts tab. */
+.nav-badge {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: auto;
+  border-radius: 10px; background: var(--bad); color: var(--bg); font-size: 12px; font-weight: 750;
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+.icon-btn .nav-badge { position: absolute; top: -6px; right: -6px; margin: 0; min-width: 18px; height: 18px; padding: 0 5px; font-size: 11px; }
+.seg button .nav-badge { margin-left: 6px; min-width: 18px; height: 18px; font-size: 11px; }
 
 .main { padding: 16px var(--gutter) calc(var(--tabbar) + 88px); max-width: 1180px; margin: 0 auto; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
