@@ -338,6 +338,9 @@ h3 { font-size: 15px; font-weight: 700; }
 .prop-grid .colhead { font-size: 11px; font-weight: 700; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: 0.05em; }
 .prop-grid .prop-head { text-align: left; }
 .prop-player { font-weight: 650; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A player's name, linking to his prop card on sharpslatesports.com in a new tab. */
+.player-link { text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
+.player-link:hover, .player-link:focus-visible { color: var(--accent); text-decoration-style: solid; }
 
 /* ---------- slip ---------- */
 

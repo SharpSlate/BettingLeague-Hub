@@ -267,6 +267,19 @@ jobs:
           if grep -q "$SUPABASE_URL" demo.js; then fail "The example league's script points at $SUPABASE_URL"; fi
           echo "Example league: $demo is up, on sample data only"
 
+          # A player prop's name links to his card in SharpSlate's Prop Lab, found through the
+          # Prop Lab's player list, read from here. Without it the links still open the Prop
+          # Lab, just not on his card, so this only warns: that site isn't this repo's.
+          lab="https://sharpslatesports.com/data/nfl/prop-lab.json"
+          code=$(curl -s -o lab.json -D lab.h -w "%{http_code}" -H "Origin: ${SITE_URL%/}" "$lab") || code=000
+          if [ "$code" != "200" ]; then
+            echo "::warning::SharpSlate's Prop Lab player list answered $code at $lab: player links open the Prop Lab's front page"
+          elif ! tr -d '\r' < lab.h > lab.hdr || ! grep -Eqi "^access-control-allow-origin: (\*|${SITE_URL%/})$" lab.hdr; then
+            echo "::warning::SharpSlate's Prop Lab player list can't be read from this site (no CORS header): player links open the Prop Lab's front page"
+          else
+            echo "Prop cards: the Prop Lab's player list reads from this site ($(python3 -c 'import json; print(len(json.load(open("lab.json")).get("players", [])))') players)"
+          fi
+
           curl -sf "$SUPABASE_URL/auth/v1/settings" -H "apikey: $SUPABASE_ANON_KEY" -o auth.json || fail "Supabase sign-in settings didn't answer"
           python3 - <<'PY' || exit 1
           import json

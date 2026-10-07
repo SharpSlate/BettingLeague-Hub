@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { activeProps, effectivePrice, PROP_LABEL, PROP_MARKETS, type Market, type PropMarket, type RuleSet, type Side } from "@rules";
 import { ago, clock, odds, pickLabel, point } from "../lib/format.ts";
 import { pickKey, useSlip } from "../lib/slip.tsx";
 import type { GameView, LineView, PropView } from "../lib/types.ts";
+import { PlayerLink, usePropLab } from "./PlayerLink.tsx";
 
 const BOOK = { draftkings: "DraftKings", fanduel: "FanDuel", override: "Commissioner line" } as Record<string, string>;
 
@@ -75,6 +77,9 @@ function PropButton({ game, prop, disabled }: { game: GameView; prop: PropView |
  * were announced ("inactives").
  */
 function Props({ game, markets, closed, now }: { game: GameView; markets: PropMarket[]; closed: "stale" | "inactives" | null; now: number }) {
+  const [open, setOpen] = useState(false);
+  // Each player's name links to his Prop Lab card; its player list loads once props are opened.
+  const lab = usePropLab(open);
   const stale = closed !== null;
   const groups = PROP_MARKETS.filter((m) => markets.includes(m))
     .map((m) => ({ market: m, players: [...new Set(game.props.filter((p) => p.market === m).map((p) => p.player))] }))
@@ -83,7 +88,7 @@ function Props({ game, markets, closed, now }: { game: GameView; markets: PropMa
   const asOf = game.props.reduce<string | null>((a, p) => (!a || p.asOf > a ? p.asOf : a), null);
   const find = (market: PropMarket, player: string, side: Side) => game.props.find((p) => p.market === market && p.player === player && p.side === side);
   return (
-    <details className="props">
+    <details className="props" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>
         Player props <span className="muted">· {groups.reduce((a, g) => a + g.players.length, 0)}</span>
       </summary>
@@ -103,7 +108,7 @@ function Props({ game, markets, closed, now }: { game: GameView; markets: PropMa
           )}
           {players.map((player) => (
             <div key={player} className="prop-row" style={{ display: "contents" }}>
-              <span className="prop-player">{player}</span>
+              <PlayerLink className="prop-player" player={player} market={market} teams={[game.away.name, game.home.name]} index={lab} />
               {market === "anytime_td" ? (
                 <>
                   <PropButton game={game} prop={find(market, player, "yes")} disabled={stale} />
