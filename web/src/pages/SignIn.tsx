@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { initials } from "../components/Shell.tsx";
+import { SiteLogo } from "../components/SiteLogo.tsx";
 import { useApi } from "../lib/api.ts";
 import { MIN_PASSWORD } from "../lib/auth.ts";
-import { SITE_NAME } from "./Leagues.tsx";
 
 /** One sign-in step at a time: busy while it runs, and its refusal if it fails. */
 function useStep() {
@@ -24,12 +23,9 @@ function useStep() {
 
 function Brand() {
   return (
-    <div className="row">
-      <span className="brand-mark" aria-hidden="true">{initials(SITE_NAME)}</span>
-      <div>
-        <h1 style={{ fontSize: 18 }}>{SITE_NAME}</h1>
-        <div className="small muted">NFL betting leagues · play units</div>
-      </div>
+    <div className="stack-sm">
+      <h1><SiteLogo large /></h1>
+      <div className="small muted">NFL betting leagues · play units</div>
     </div>
   );
 }

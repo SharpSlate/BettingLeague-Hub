@@ -51,7 +51,7 @@ max_frequency = "60s"
 email_sent = 100
 
 [auth.email.template.recovery]
-subject = "Reset your Betting League password"
+subject = "Reset your SharpSlate Leagues password"
 content_path = "./supabase/templates/reset-code.html"
 
 # The site's own mailbox, with an app password. Supabase's built-in sender only reaches
@@ -64,7 +64,7 @@ port = 465
 user = "env(SMTP_USER)"
 pass = "env(SMTP_PASS)"
 admin_email = "env(SMTP_USER)"
-sender_name = "Betting League"
+sender_name = "SharpSlate Leagues"
 
 [auth.external.google]
 enabled = true

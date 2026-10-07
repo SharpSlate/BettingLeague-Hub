@@ -228,7 +228,7 @@ Phones get a bottom tab bar with five tabs; desktop gets a sidebar.
 ## 12. Still open
 
 1. **Standings definitions** for Net, Risk and Return, from the Splash inventory.
-2. **Branding:** the name is BALTIMORE DEGENERATES; colors, logo and web address are still open.
+2. **Branding:** settled 2026-10-07: SharpSlate Leagues, at leagues.sharpslatesports.com, in SharpSlate's colors, fonts and logo (DECISIONS.md).
 3. **The commissioner's own complaints** about Splash.
 
 ## 13. Known limits
