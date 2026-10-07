@@ -701,7 +701,7 @@ function Games({ openWeek }: { openWeek: number | null }) {
             <Field label="Reason"><input className="input" required minLength={3} value={line.reason} onChange={(e) => setLine({ ...line, reason: e.target.value })} /></Field>
             <button type="button" className="btn small" onClick={async () => { await api.adminClearLine(g.id, line.market, line.reason || "Back to the feed's line"); games.reload(); }}>Clear override (use the feed)</button>
           </Action>
-          <Action title="Game status" submit="Save status" note="Postponing closes betting on the game and holds up the automatic week change; its bets ride until it's played or voided. Voiding grades every leg on the game as void (and regrades bets already graded). Betting can only reopen, and a kickoff only move, while the game's kickoff is still ahead."
+          <Action title="Game status" submit="Save status" note="Postponing closes betting on the game and holds up the automatic week change; its bets ride until it's played or voided. Postponing a game that's already under way voids it instead: its bets get their stakes back, even if it's finished later. Voiding grades every leg on the game as void (and regrades bets already graded). Betting can only reopen, and a kickoff only move, while the game's kickoff is still ahead."
             onSubmit={async () => { await api.adminSetGameStatus(g.id, status.status as "scheduled" | "postponed" | "void", status.kickoff ? new Date(status.kickoff).toISOString() : null, status.reason); games.reload(); }}>
             <Field label="Status">
               <select className="input" value={status.status} onChange={(e) => setStatus({ ...status, status: e.target.value })}>

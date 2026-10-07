@@ -290,7 +290,9 @@ export function rulesPage(r: RuleSet, league: League | null): RulesPage {
     ...(teaser.enabled ? [{ lead: "Teasers.", text: pushRuleText(r) }] : []),
     {
       lead: "Called-off games.",
-      text: multi ? "A leg on a game that's voided drops out, and the card is priced on the legs that are left." : "A bet on a game that's voided gets its stake back.",
+      text: multi
+        ? "A leg on a game that's called off, or stopped after kickoff, drops out, and the card is priced on the legs that are left. A stopped game counts as called off even if it's finished later."
+        : "A bet on a game that's called off, or stopped after kickoff, gets its stake back. A stopped game counts as called off even if it's finished later.",
     },
     { lead: "Score corrections.", text: "If a final score is corrected, every bet on the game is graded again. Winnings already paid are taken back first, which can leave a bank below zero until it's won back; an entry can't bet while it has nothing available." },
   ];

@@ -682,11 +682,15 @@ export class DemoApi implements Api {
     if (to < g.kickoffAt) throw new Error("kickoff_earlier");
     if (status === "scheduled" && (!["scheduled", "postponed"].includes(g.status) || g.kickoffAt <= now)) throw new Error("game_started");
     const before = { status: g.status, kickoffAt: new Date(g.kickoffAt).toISOString() };
-    const regraded = status === "void" && g.status === "final" ? this.reopen(gameId, reason) : 0;
-    g.status = status;
+    // A game stopped after kickoff voids its bets.
+    const stopped = status === "postponed" && g.status === "live";
+    const next = stopped ? "void" : status;
+    const regraded = next === "void" && g.status === "final" ? this.reopen(gameId, reason) : 0;
+    g.status = next;
     g.kickoffAt = to;
     this.s.audit.unshift({ id: this.nextId++, actorName: "You", action: "game_status_set", targetType: "game", targetId: gameId, before,
-      after: { status, kickoffAt: new Date(to).toISOString(), betsRegraded: regraded }, reason, createdAt: new Date().toISOString() });
+      after: { status: next, kickoffAt: new Date(to).toISOString(), betsRegraded: regraded, ...(stopped ? { stoppedAfterKickoff: true } : {}) },
+      reason, createdAt: new Date().toISOString() });
     this.grade();
   }
   async adminSetFinalScore(gameId: string, home: number, away: number, reason: string) {
