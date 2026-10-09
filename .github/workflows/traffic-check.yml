@@ -1,6 +1,5 @@
-# One-off, read-only traffic count for the owner. Counts only: no names, emails or
-# addresses are printed, since this repo's logs are public. Runs only on this branch,
-# which is deleted after the count.
+# One-off check that the live pages carry Cloudflare's visitor counter. Reads only the
+# public pages: no secrets, no database. Runs only on this side branch.
 name: Traffic check
 
 on:
@@ -11,123 +10,19 @@ permissions:
   contents: read
 
 jobs:
-  count:
+  beacon:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      REF: ${{ vars.SUPABASE_PROJECT_REF }}
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
-      - name: Count accounts, leagues and bets
+      - name: Is the visitor counter on the pages?
         run: |
-          python3 - <<'PY'
-          import json, os, urllib.error, urllib.request
-          ref, tok = os.environ["REF"], os.environ["SUPABASE_ACCESS_TOKEN"]
-          def q(sql):
-              req = urllib.request.Request(
-                  f"https://api.supabase.com/v1/projects/{ref}/database/query",
-                  data=json.dumps({"query": sql, "read_only": True}).encode(),
-                  headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json", "User-Agent": "traffic-check"},
-                  method="POST")
-              try:
-                  return json.load(urllib.request.urlopen(req, timeout=60))
-              except urllib.error.HTTPError as e:
-                  return {"error": e.code, "body": e.read().decode()[:300]}
-          def show(title, rows):
-              print(f"\n== {title}")
-              if not isinstance(rows, list) or not rows:
-                  print(rows); return
-              cols = list(rows[0].keys())
-              print(" | ".join(cols))
-              for r in rows: print(" | ".join(str(r[c]) for c in cols))
-          ET = "'America/New_York'"
-          show("Totals", q(f"""
-            select
-              (select count(*) from auth.users) as accounts,
-              (select count(*) from public.profiles where is_admin) as site_admin_accounts,
-              (select count(*) from auth.users where created_at > now() - interval '24 hours') as new_accounts_24h,
-              (select count(*) from auth.users where created_at > now() - interval '7 days') as new_accounts_7d,
-              (select count(distinct user_id) from auth.refresh_tokens where created_at > now() - interval '24 hours') as active_users_24h,
-              (select count(distinct user_id) from auth.refresh_tokens where created_at > now() - interval '7 days') as active_users_7d,
-              (select count(*) from auth.users where last_sign_in_at > now() - interval '7 days') as signed_in_7d,
-              (select count(*) from public.leagues) as leagues,
-              (select count(distinct user_id) from public.league_members) as users_in_a_league,
-              (select count(*) from public.slips) as bets,
-              (select count(*) from public.slips where placed_at > now() - interval '7 days') as bets_7d,
-              (select max(created_at) at time zone {ET} from auth.users) as newest_account_et
-          """))
-          show("By day (Eastern), last 14 days", q(f"""
-            with d as (select generate_series((now() at time zone {ET})::date - 13, (now() at time zone {ET})::date, interval '1 day')::date as day)
-            select d.day,
-              (select count(*) from auth.users u where (u.created_at at time zone {ET})::date = d.day) as new_accounts,
-              (select count(distinct r.user_id) from auth.refresh_tokens r where (r.created_at at time zone {ET})::date = d.day) as active_users,
-              (select count(*) from public.leagues l where (l.created_at at time zone {ET})::date = d.day) as new_leagues,
-              (select count(*) from public.league_members m where (m.joined_at at time zone {ET})::date = d.day) as league_joins,
-              (select count(*) from public.slips s where (s.placed_at at time zone {ET})::date = d.day) as bets
-            from d order by d.day
-          """))
-          show("Leagues (no names)", q(f"""
-            select row_number() over (order by l.created_at) as n,
-              (l.created_at at time zone {ET})::date as started,
-              coalesce(p.is_admin, false) as started_by_site_admin,
-              (select count(*) from public.league_members m where m.league_id = l.id) as members,
-              (select count(*) from public.entries e where e.league_id = l.id) as entries,
-              (select count(*) from public.slips s where s.league_id = l.id) as bets
-            from public.leagues l left join public.profiles p on p.id = l.created_by
-            order by l.created_at
-          """))
-          PY
-      - name: Count requests to the backend
-        run: |
-          python3 - <<'PY'
-          import json, os, urllib.error, urllib.parse, urllib.request, collections, datetime
-          ref, tok = os.environ["REF"], os.environ["SUPABASE_ACCESS_TOKEN"]
-          def get(path):
-              req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{ref}/{path}",
-                  headers={"Authorization": f"Bearer {tok}", "User-Agent": "traffic-check"})
-              try:
-                  return json.load(urllib.request.urlopen(req, timeout=60))
-              except urllib.error.HTTPError as e:
-                  return {"error": e.code, "body": e.read().decode()[:300]}
-          r = get("analytics/endpoints/usage.api-counts?interval=7day")
-          print("== Backend requests by day (UTC), last 7 days")
-          rows = r.get("result") if isinstance(r, dict) else None
-          if not rows:
-              print(str(r)[:300])
-          else:
-              days = collections.OrderedDict()
-              for x in rows:
-                  d = str(x.get("timestamp"))[:10]
-                  t = days.setdefault(d, collections.Counter())
-                  for k in ("total_auth_requests", "total_rest_requests", "total_realtime_requests", "total_storage_requests"):
-                      t[k] += int(x.get(k) or 0)
-              print("day | auth | database | realtime | storage")
-              for d, t in days.items():
-                  print(f"{d} | {t['total_auth_requests']} | {t['total_rest_requests']} | {t['total_realtime_requests']} | {t['total_storage_requests']}")
-          # Distinct browsers in the last day (the free plan keeps a day of logs). Counted, never printed.
-          end = datetime.datetime.now(datetime.timezone.utc)
-          start = end - datetime.timedelta(hours=24)
-          sql = """
-            select r.path as path, h.cf_connecting_ip as ip, h.user_agent as ua
-            from edge_logs cross join unnest(metadata) as m cross join unnest(m.request) as r cross join unnest(r.headers) as h
-            limit 10000
-          """
-          qs = urllib.parse.urlencode({"sql": sql, "iso_timestamp_start": start.isoformat(), "iso_timestamp_end": end.isoformat()})
-          r = get(f"analytics/endpoints/logs.all?{qs}")
-          rows = r.get("result") if isinstance(r, dict) else None
-          print("\n== Backend visitors, last 24 hours")
-          if rows is None or r.get("error"):
-              print("not available:", str(r)[:300])
-          else:
-              people = [x for x in rows if (x.get("path") or "").startswith(("/auth/v1", "/rest/v1")) and "Mozilla" in (x.get("ua") or "")]
-              print(f"requests logged: {len(rows)}{' (capped)' if len(rows) >= 10000 else ''}")
-              print(f"browser requests to sign-in or data: {len(people)}")
-              print(f"distinct browser addresses: {len({x.get('ip') for x in people if x.get('ip')})}")
-          PY
-      - name: Is a visitor counter on the pages?
-        run: |
-          for u in https://leagues.sharpslatesports.com/ https://leagues.sharpslatesports.com/demo/ https://sharpslatesports.com/; do
-            body=$(curl -sL --max-time 20 "$u" || true)
-            if echo "$body" | grep -qi "cloudflareinsights"; then echo "$u: Cloudflare Web Analytics beacon found"; else echo "$u: no Cloudflare Web Analytics beacon in the page"; fi
-            echo "$body" | grep -oiE "googletagmanager|gtag\(|plausible|umami|goatcounter|simpleanalytics" | sort -u | sed "s#^#$u: other counter: #" || true
+          for u in https://leagues.sharpslatesports.com/ https://leagues.sharpslatesports.com/demo/ https://sharpslate.github.io/BettingLeague-Hub/; do
+            code=$(curl -sL --max-time 20 -o page.html -w "%{http_code}" "$u" || echo 000)
+            if grep -qi "static.cloudflareinsights.com/beacon" page.html; then
+              echo "$u ($code): Cloudflare Web Analytics beacon found"
+            else
+              echo "$u ($code): no Cloudflare Web Analytics beacon in the page"
+            fi
           done
+          # Anything in the site's headers that could stop the beacon from loading or reporting.
+          curl -sI --max-time 20 https://leagues.sharpslatesports.com/ | grep -iE "^(content-security-policy|cf-cache-status|server):" || true
